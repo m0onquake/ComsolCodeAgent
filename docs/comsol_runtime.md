@@ -206,7 +206,8 @@ Agent-facing tools are:
 - `simulation_search_artifacts`: search by run id, model name, source, paths, or metadata
 - `simulation_read_artifact`: read a compact preview of a specific archived run or report
 - `simulation_compare_artifacts`: compare archived sweep CSV metrics and rank cases
-- `simulation_export_artifact_report`: export a Markdown report from archived sweep comparisons
+- `simulation_export_artifact_report`: export a Markdown/HTML report from archived sweep comparisons or template execution runs
+- `simulation_rerun_artifact`: replay archived sweep or template execution artifacts with bounded overrides
 - `simulation_retrieve_api_docs`: retrieve compact, cited local documentation snippets for API repair/code generation
 
 For isolated tests or project-specific archives, pass `archive_path` to
@@ -229,6 +230,8 @@ Inside the interactive CLI, use slash commands for quick artifact review:
 /artifacts compare agent_sweep_smoke mean T max
 /artifacts report agent_sweep_smoke mean T max
 /artifacts report agent_sweep_smoke mean T max html
+/artifacts template-runs template_smoke_model
+/artifacts report-template template_smoke_model html
 ```
 
 Local documentation retrieval for repair/code generation is available through
@@ -363,9 +366,21 @@ Export a companion self-contained HTML report for browser review:
 
 Exported reports write both `<report_id>.md` and
 `<report_id>.manifest.json`. With `--format html` or `--format both`, they also
-write `<report_id>.html`. Reports are indexed in the archive as
-`comparison_report` artifacts, so they can be found later with
+write `<report_id>.html`. Sweep reports are indexed in the archive as
+`comparison_report` artifacts, and template execution reports are indexed as
+`template_execution_report` artifacts, so they can be found later with
 `/artifacts search <report_name>`.
+
+Export a template execution report instead of a sweep comparison:
+
+```bash
+.venv/bin/python scripts/export_sweep_report.py \
+  --kind template_execution \
+  --query template_smoke_model \
+  --output-dir runtime_smoke/reports \
+  --report-name template_smoke_summary \
+  --format html
+```
 
 Replay an archived sweep through the real COMSOL runtime:
 
@@ -378,11 +393,15 @@ Replay an archived sweep through the real COMSOL runtime:
   --artifact-name replay_agent_sweep
 ```
 
-The Agent-facing tool is `simulation_rerun_artifact`. It reads the archived JSON
-record, reconstructs the original model source, parameter axes, and output
-expressions, then applies optional `parameter_overrides` and
-`expression_overrides` before calling `simulation_run_parameter_sweep` again.
-Artifacts from the replay are persisted and indexed as a new run.
+The Agent-facing tool is `simulation_rerun_artifact`. For sweep artifacts, it
+reads the archived JSON record, reconstructs the original model source,
+parameter axes, and output expressions, then applies optional
+`parameter_overrides` and `expression_overrides` before calling
+`simulation_run_parameter_sweep` again. For `template_execution` artifacts, it
+reconstructs `simulation_run_template` from the archived template code/parameter
+snapshot when available, or from the archived template name for older records.
+Use `params_overrides`, `model_name`, or `create_model_name` to adjust the
+replay target. Artifacts from the replay are persisted and indexed as a new run.
 
 Run the full DeepSeek + AgentLoop + high-level parameter sweep smoke test:
 

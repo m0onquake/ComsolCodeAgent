@@ -898,9 +898,10 @@ def register_all_tools() -> None:
     register_sync(
         name="simulation_export_artifact_report",
         description=(
-            "Generate a Markdown report from archived parameter sweep artifacts and their "
-            "comparison metrics. Use this when the user asks to export, save, or share "
-            "a readable experiment report."
+            "Generate a Markdown report from archived simulation artifacts. For parameter "
+            "sweeps it compares numeric metrics; for template executions it summarizes "
+            "validation/execution outcomes. Use this when the user asks to export, save, "
+            "or share a readable experiment report."
         ),
         parameters={
             "type": "object",
@@ -947,6 +948,11 @@ def register_all_tools() -> None:
                     "enum": ["markdown", "html", "both"],
                     "description": "Report output format. Markdown is always archived; html/both also write a self-contained HTML file.",
                 },
+                "kind": {
+                    "type": "string",
+                    "enum": ["parameter_sweep", "template_execution"],
+                    "description": "Artifact report type. Defaults to parameter_sweep; use template_execution for template run artifacts.",
+                },
                 "archive_path": {
                     "type": "string",
                     "description": "Optional archive SQLite path. Defaults to ~/.comsol_agent/archive/archive.sqlite3.",
@@ -959,8 +965,9 @@ def register_all_tools() -> None:
     register_sync(
         name="simulation_rerun_artifact",
         description=(
-            "Replay an archived parameter sweep artifact, optionally overriding parameter axes "
-            "or expressions. Use this when the user asks to rerun, reproduce, or extend a previous sweep."
+            "Replay an archived parameter sweep or template execution artifact. Sweeps support "
+            "parameter/expression overrides; template executions support params/model target "
+            "overrides. Use this when the user asks to rerun, reproduce, or extend a previous artifact."
         ),
         parameters={
             "type": "object",
@@ -977,13 +984,25 @@ def register_all_tools() -> None:
                     "type": "array",
                     "description": "Optional replacement list of COMSOL expressions to evaluate.",
                 },
+                "params_overrides": {
+                    "type": "object",
+                    "description": "Optional template parameter overrides when replaying a template_execution artifact.",
+                },
                 "model_name": {
                     "type": "string",
                     "description": "Optional loaded model name when replaying an artifact whose source was a loaded model.",
                 },
+                "create_model_name": {
+                    "type": "string",
+                    "description": "Optional new model name when replaying a template_execution artifact by creating a model.",
+                },
                 "max_cases": {
                     "type": "integer",
                     "description": "Optional safety cap for replayed cases.",
+                },
+                "validate_first": {
+                    "type": "boolean",
+                    "description": "Whether to validate template code before replaying a template_execution artifact.",
                 },
                 "artifact_name": {
                     "type": "string",

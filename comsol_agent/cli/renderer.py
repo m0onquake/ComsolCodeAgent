@@ -177,7 +177,7 @@ def render_help() -> None:
         ("/memory", "View/manage agent memory"),
         ("/sessions", "List/search/show archived sessions"),
         ("/archive", "Summarize/export/cleanup archive records"),
-        ("/artifacts", "List/search/compare simulation artifacts"),
+        ("/artifacts", "List/search/show/compare/report simulation artifacts"),
         ("/repairs", "List/show auto-repair reports"),
         ("/models", "List loaded COMSOL models"),
         ("/config", "View or modify configuration"),

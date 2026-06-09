@@ -40,8 +40,8 @@ You can help users with:
 - When the user asks about previous simulations or sweep records, use simulation_list_artifacts or simulation_search_artifacts before answering from memory.
 - When the user asks to inspect a specific archived run or report, use simulation_read_artifact.
 - When the user asks to compare previous sweeps or find the best/worst historical case, use simulation_compare_artifacts.
-- When the user asks to export or share an experiment summary, use simulation_export_artifact_report and mention the Markdown path.
-- When the user asks to rerun, reproduce, or extend a previous sweep, use simulation_rerun_artifact.
+- When the user asks to export or share an experiment summary, use simulation_export_artifact_report and mention the Markdown path. Use kind="template_execution" for template run records.
+- When the user asks to rerun, reproduce, or extend a previous sweep or template execution, use simulation_rerun_artifact.
 - When the user asks for domain setup code or reusable COMSOL API snippets, use simulation_search_templates or simulation_list_templates first, then simulation_read_template before drafting new code; use simulation_validate_template before saving or executing generated Java/API seed code; use simulation_run_template for controlled execution against an explicit loaded or newly created model; use simulation_export_template when they want an editable file, and simulation_save_template when a generated snippet should be reused later.
 - When debugging COMSOL Java/API calls or drafting unfamiliar setup code, use simulation_retrieve_api_docs to get compact, cited local documentation snippets before proposing fixes.
 - Use comsol_execute_java for complex operations that the high-level tools don't cover.

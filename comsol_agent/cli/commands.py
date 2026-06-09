@@ -379,7 +379,10 @@ async def handle_command(
         from comsol_agent.cli.renderer import render_info
         from comsol_agent.simulation.comparison import compare_archived_sweeps
         from comsol_agent.simulation.artifact_reader import read_archived_artifact
-        from comsol_agent.simulation.reporting import write_comparison_report
+        from comsol_agent.simulation.reporting import (
+            write_comparison_report,
+            write_template_execution_report,
+        )
 
         archive_store = getattr(agent, "archive_store", None)
         if archive_store is None:
@@ -411,6 +414,18 @@ async def handle_command(
                         render_info(f"Could not read artifact: {exc}")
                     else:
                         _render_artifact_preview(artifact_preview)
+            elif subcommand == "template-runs":
+                query = " ".join(artifact_parts[1:]).strip()
+                artifacts = (
+                    [
+                        artifact
+                        for artifact in archive_store.search_simulation_artifacts(query, limit=10)
+                        if artifact.kind == "template_execution"
+                    ]
+                    if query
+                    else archive_store.list_simulation_artifacts(kind="template_execution", limit=10)
+                )
+                _render_template_execution_artifacts(artifacts)
             elif subcommand == "compare":
                 if len(artifact_parts) < 2:
                     render_info("Usage: /artifacts compare <query> [metric] [expression] [max|min]")
@@ -486,6 +501,29 @@ async def handle_command(
                             render_info(f"Could not generate report: {exc}")
                         else:
                             render_info(f"Report written: {report['path']}")
+                            if report.get("html_path"):
+                                render_info(f"HTML written: {report['html_path']}")
+            elif subcommand == "report-template":
+                if len(artifact_parts) < 2:
+                    render_info("Usage: /artifacts report-template <query> [markdown|html|both]")
+                else:
+                    query = artifact_parts[1]
+                    output_format = artifact_parts[2] if len(artifact_parts) > 2 else "markdown"
+                    if output_format not in {"markdown", "html", "both"}:
+                        render_info("Output format must be 'markdown', 'html', or 'both'.")
+                    else:
+                        try:
+                            report = write_template_execution_report(
+                                archive_store,
+                                query=query,
+                                report_name=f"{query}_template_runs",
+                                output_format=output_format,
+                                archive_path=archive_store.db_path,
+                            )
+                        except Exception as exc:
+                            render_info(f"Could not generate template execution report: {exc}")
+                        else:
+                            render_info(f"Template execution report written: {report['path']}")
                             if report.get("html_path"):
                                 render_info(f"HTML written: {report['html_path']}")
             else:
@@ -790,6 +828,36 @@ def _render_artifacts_table(artifacts, title: str = "Simulation Artifacts") -> N
     Console().print(table)
 
 
+def _render_template_execution_artifacts(artifacts, title: str = "Template Execution Runs") -> None:
+    """Render template execution artifacts as a compact table."""
+    from rich.console import Console
+    from rich.table import Table
+    from comsol_agent.cli.renderer import render_info
+
+    if not artifacts:
+        render_info("No template execution artifacts found.")
+        return
+
+    table = Table(title=title, border_style="dim")
+    table.add_column("Run ID", style="cyan")
+    table.add_column("Model")
+    table.add_column("Template")
+    table.add_column("Success")
+    table.add_column("Validation")
+    table.add_column("Error Type")
+    for artifact in artifacts:
+        metadata = artifact.metadata or {}
+        table.add_row(
+            artifact.run_id,
+            artifact.model_name or "",
+            str(metadata.get("template_name") or (artifact.source or {}).get("name") or ""),
+            str(metadata.get("execution_success", "")),
+            str(metadata.get("validation_status") or ""),
+            str(metadata.get("execution_error_type") or metadata.get("execution_exception_type") or ""),
+        )
+    Console().print(table)
+
+
 def _render_sessions_table(sessions, title: str = "Archived Sessions") -> None:
     """Render archived sessions as a compact table."""
     from rich.console import Console
@@ -897,6 +965,8 @@ def _render_artifact_preview(artifact_preview: dict) -> None:
             for row in rows[:10]:
                 row_table.add_row(*(str(row.get(column, "")) for column in columns))
             console.print(row_table)
+    elif "summary" in preview:
+        console.print(Panel(str(preview["summary"]), title="Artifact Summary", border_style="dim"))
 
 
 def _format_parameters(parameters: dict) -> str:

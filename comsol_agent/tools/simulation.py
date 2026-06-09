@@ -16,8 +16,11 @@ from comsol_agent.simulation.artifacts import persist_template_execution_result
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
-from comsol_agent.simulation.replay import build_replay_request
-from comsol_agent.simulation.reporting import write_comparison_report
+from comsol_agent.simulation.replay import build_replay_request, build_template_replay_request
+from comsol_agent.simulation.reporting import (
+    write_comparison_report,
+    write_template_execution_report,
+)
 from comsol_agent.simulation.sweeps import plan_parameter_sweep
 from comsol_agent.tools.comsol.model_ops import (
     comsol_close_model,
@@ -354,6 +357,12 @@ def simulation_run_template(
             java_code=effective_code,
             params=effective_params,
         )
+        template_snapshot = _template_execution_snapshot(
+            name=name or (template.name if template else None),
+            domain=template.domain if template else None,
+            java_code=effective_code,
+            params=effective_params,
+        )
         if validate_first and validation["errors"]:
             result = {
                 "success": False,
@@ -362,6 +371,8 @@ def simulation_run_template(
                 "template_name": name or (template.name if template else None),
                 "model_name": model_name or create_model_name,
                 "source": source,
+                "params": effective_params,
+                "template": template_snapshot,
                 "validation": validation,
             }
             if persist_results:
@@ -385,6 +396,8 @@ def simulation_run_template(
                     "template_name": name or (template.name if template else None),
                     "model_name": create_model_name,
                     "source": source,
+                    "params": effective_params,
+                    "template": template_snapshot,
                     "validation": validation,
                     "create": create_result,
                 }
@@ -414,6 +427,8 @@ def simulation_run_template(
             "template_name": name or (template.name if template else None),
             "model_name": active_model_name,
             "source": source,
+            "params": effective_params,
+            "template": template_snapshot,
             "validation": validation,
             "create": create_result,
             "execution": execution,
@@ -553,15 +568,38 @@ def simulation_export_artifact_report(
     report_name: str | None = None,
     title: str | None = None,
     output_format: str = "markdown",
+    kind: str = "parameter_sweep",
     archive_path: str | None = None,
 ) -> dict:
-    """Generate a Markdown and optionally HTML report from archived sweep comparisons."""
+    """Generate a Markdown and optionally HTML report from archived simulation artifacts."""
     try:
         if direction not in {"max", "min"}:
             return {"success": False, "error": "direction must be 'max' or 'min'."}
         if output_format not in {"markdown", "html", "both"}:
             return {"success": False, "error": "output_format must be 'markdown', 'html', or 'both'."}
+        if kind not in {"parameter_sweep", "template_execution"}:
+            return {"success": False, "error": "kind must be 'parameter_sweep' or 'template_execution'."}
         store = _archive_store(archive_path)
+        if kind == "template_execution":
+            report = write_template_execution_report(
+                store,
+                run_ids=run_ids,
+                query=query,
+                limit=limit,
+                output_dir=output_dir,
+                report_name=report_name,
+                title=title,
+                output_format=output_format,
+                archive_path=archive_path,
+            )
+            return {
+                "success": True,
+                "archive_path": str(store.db_path),
+                "kind": kind,
+                "report": report,
+                "summary": report["summary"],
+            }
+
         comparison = compare_archived_sweeps(
             store,
             run_ids=run_ids,
@@ -582,6 +620,7 @@ def simulation_export_artifact_report(
         return {
             "success": True,
             "archive_path": str(store.db_path),
+            "kind": kind,
             "report": report,
             "comparison": {
                 "metric": comparison["metric"],
@@ -601,16 +640,45 @@ def simulation_rerun_artifact(
     run_id: str,
     parameter_overrides: dict[str, list[str]] | None = None,
     expression_overrides: list[str] | None = None,
+    params_overrides: dict[str, str] | None = None,
     model_name: str | None = None,
+    create_model_name: str | None = None,
     max_cases: int | None = None,
+    validate_first: bool | None = None,
     artifact_name: str | None = None,
     artifact_dir: str | None = None,
     archive_path: str | None = None,
     close_model: bool | None = None,
 ) -> dict:
-    """Replay an archived parameter sweep, optionally overriding parameters/expressions."""
+    """Replay an archived sweep or template execution artifact."""
     try:
         store = _archive_store(archive_path)
+        artifact = store.get_simulation_artifact(run_id)
+        if artifact.kind == "template_execution":
+            replay = build_template_replay_request(
+                store,
+                run_id=run_id,
+                params_overrides=params_overrides,
+                model_name=model_name,
+                create_model_name=create_model_name,
+                validate_first=validate_first,
+            )
+            request = dict(replay["request"])
+            result = simulation_run_template(
+                **request,
+                close_model=close_model,
+                artifact_dir=artifact_dir,
+                artifact_name=artifact_name or f"rerun_{run_id}",
+                archive_path=archive_path,
+            )
+            result["replay"] = replay
+            return result
+        if artifact.kind != "parameter_sweep":
+            return {
+                "success": False,
+                "error": f"Artifact kind {artifact.kind!r} is not replayable.",
+                "source_run_id": run_id,
+            }
         replay = build_replay_request(
             store,
             run_id=run_id,
@@ -1037,6 +1105,21 @@ def _template_run_name(template_name: str | None, model_name: str | None) -> str
     raw = "_".join(part for part in (template_name or "template", model_name or "model") if part)
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip()).strip("._-")
     return slug or "template_execution"
+
+
+def _template_execution_snapshot(
+    *,
+    name: str | None,
+    domain: str | None,
+    java_code: str,
+    params: dict,
+) -> dict:
+    return {
+        "name": name,
+        "domain": domain,
+        "params": params,
+        "java_code": java_code,
+    }
 
 
 def _archive_store(archive_path: str | None) -> ArchiveStore:

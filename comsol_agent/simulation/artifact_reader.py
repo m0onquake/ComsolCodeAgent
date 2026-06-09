@@ -26,12 +26,14 @@ def read_archived_artifact(
         "preview": {},
     }
 
-    if artifact.kind == "comparison_report":
+    if artifact.kind in {"comparison_report", "template_execution_report"}:
         result["preview"]["markdown"] = _read_text_preview(Path(artifact.json_path), max_lines=max_lines)
     elif artifact.kind == "parameter_sweep":
         result["preview"]["summary"] = _sweep_json_summary(Path(artifact.json_path))
         if artifact.csv_path:
             result["preview"]["csv"] = _read_csv_preview(Path(artifact.csv_path), max_rows=max_lines)
+    elif artifact.kind == "template_execution":
+        result["preview"]["summary"] = _template_execution_summary(Path(artifact.json_path))
     else:
         result["preview"]["content"] = _read_text_preview(Path(artifact.json_path), max_lines=max_lines)
 
@@ -98,6 +100,41 @@ def _sweep_json_summary(path: Path) -> dict[str, Any]:
             "estimated_runs": (payload.get("plan") or {}).get("estimated_runs"),
             "output_expressions": (payload.get("plan") or {}).get("output_expressions"),
             "axes": (payload.get("plan") or {}).get("axes"),
+        },
+        "artifacts": payload.get("artifacts"),
+    }
+
+
+def _template_execution_summary(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    if payload is None:
+        return {"exists": False, "path": str(path)}
+    if "error" in payload:
+        return payload
+
+    validation = payload.get("validation") or {}
+    execution = payload.get("execution") or {}
+    template = payload.get("template") or {}
+    return {
+        "exists": True,
+        "path": str(path),
+        "success": payload.get("success"),
+        "executed": payload.get("executed"),
+        "model_name": payload.get("model_name"),
+        "template_name": payload.get("template_name") or template.get("name"),
+        "source": payload.get("source"),
+        "params": payload.get("params") or template.get("params") or {},
+        "validation": {
+            "status": validation.get("status"),
+            "errors": validation.get("errors") or [],
+            "warnings": validation.get("warnings") or [],
+        },
+        "execution": {
+            "success": execution.get("success"),
+            "error": execution.get("error"),
+            "error_type": execution.get("error_type"),
+            "exception_type": execution.get("exception_type"),
+            "modified": execution.get("modified"),
         },
         "artifacts": payload.get("artifacts"),
     }

@@ -1,4 +1,4 @@
-"""Export a Markdown report for archived COMSOL sweep artifacts."""
+"""Export a Markdown report for archived COMSOL simulation artifacts."""
 
 from __future__ import annotations
 
@@ -15,7 +15,13 @@ from comsol_agent.tools.simulation import simulation_export_artifact_report
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export an archived sweep comparison report.")
+    parser = argparse.ArgumentParser(description="Export an archived simulation artifact report.")
+    parser.add_argument(
+        "--kind",
+        choices=["parameter_sweep", "template_execution"],
+        default="parameter_sweep",
+        help="Artifact report type.",
+    )
     parser.add_argument("--run-id", action="append", dest="run_ids", default=None)
     parser.add_argument("--query", default=None, help="Archive search query when run IDs are omitted.")
     parser.add_argument("--metric", default="mean", help="Metric column to rank.")
@@ -40,6 +46,7 @@ def main() -> None:
         report_name=args.report_name,
         title=args.title,
         output_format=args.format,
+        kind=args.kind,
         archive_path=args.archive_path,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

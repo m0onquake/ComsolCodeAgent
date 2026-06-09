@@ -133,13 +133,23 @@ def persist_template_execution_result(
     archive_error = None
     if archive_results:
         try:
+            execution = result.get("execution") or {}
+            validation = result.get("validation") or {}
+            template = result.get("template") or {}
             archive_record = _index_manifest(
                 manifest,
                 archive_path=archive_path,
                 metadata={
                     "template_name": result.get("template_name"),
-                    "validation_status": (result.get("validation") or {}).get("status"),
+                    "template_domain": template.get("domain"),
+                    "params": result.get("params") or template.get("params") or {},
+                    "validation_status": validation.get("status"),
+                    "validation_errors": len(validation.get("errors") or []),
+                    "validation_warnings": len(validation.get("warnings") or []),
                     "execution_success": result.get("success"),
+                    "execution_error_type": execution.get("error_type"),
+                    "execution_exception_type": execution.get("exception_type"),
+                    "tool_sequence": result.get("tool_sequence") or [],
                 },
             )
         except Exception as exc:

@@ -1,4 +1,4 @@
-"""Replay an archived COMSOL sweep artifact."""
+"""Replay an archived COMSOL sweep or template execution artifact."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from comsol_agent.tools.simulation import simulation_rerun_artifact
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Replay an archived COMSOL sweep artifact.")
-    parser.add_argument("run_id", help="Archived sweep run ID.")
+    parser = argparse.ArgumentParser(description="Replay an archived COMSOL simulation artifact.")
+    parser.add_argument("run_id", help="Archived artifact run ID.")
     parser.add_argument(
         "--parameter",
         action="append",
@@ -34,6 +34,15 @@ def main() -> None:
         help="Replacement expression to evaluate. Can be repeated.",
     )
     parser.add_argument("--model-name", default=None, help="Loaded model name for loaded-model artifacts.")
+    parser.add_argument("--create-model-name", default=None, help="New model name for template execution replay.")
+    parser.add_argument(
+        "--template-param",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Override a template parameter when replaying template_execution artifacts. Can be repeated.",
+    )
+    parser.add_argument("--no-validate-first", action="store_true", help="Skip template validation before replay.")
     parser.add_argument("--max-cases", type=int, default=None)
     parser.add_argument("--artifact-name", default=None)
     parser.add_argument("--artifact-dir", default=None)
@@ -53,8 +62,11 @@ def main() -> None:
             run_id=args.run_id,
             parameter_overrides=_parse_sweep_parameters(args.parameter) or None,
             expression_overrides=args.expressions,
+            params_overrides=_parse_template_params(args.template_param) or None,
             model_name=args.model_name,
+            create_model_name=args.create_model_name,
             max_cases=args.max_cases,
+            validate_first=False if args.no_validate_first else None,
             artifact_name=args.artifact_name,
             artifact_dir=args.artifact_dir,
             archive_path=args.archive_path,
@@ -81,13 +93,29 @@ def _parse_sweep_parameters(assignments: list[str]) -> dict[str, list[str]]:
     return parameters
 
 
+def _parse_template_params(assignments: list[str]) -> dict[str, str]:
+    parameters = {}
+    for assignment in assignments:
+        if "=" not in assignment:
+            raise ValueError(f"Invalid template parameter assignment: {assignment!r}")
+        name, value = assignment.split("=", 1)
+        if not name.strip() or not value.strip():
+            raise ValueError(f"Invalid template parameter assignment: {assignment!r}")
+        parameters[name.strip()] = value.strip()
+    return parameters
+
+
 def _compact_result(result: dict) -> dict:
     return {
         "success": result.get("success"),
         "error": result.get("error"),
         "source_run_id": (result.get("replay") or {}).get("source_run_id") or result.get("source_run_id"),
         "model_name": result.get("model_name"),
+        "template_name": result.get("template_name"),
         "executed_cases": result.get("executed_cases"),
+        "executed": result.get("executed"),
+        "validation": result.get("validation"),
+        "execution": result.get("execution"),
         "artifacts": result.get("artifacts"),
         "cases": [
             {

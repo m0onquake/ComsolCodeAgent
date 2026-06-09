@@ -17,13 +17,14 @@ local agent prototype:
   project COMSOL tool layer.
 - Core CLI, AgentLoop, tool registry, repair reporting, memory/archive records,
   simulation artifacts, parameter sweeps, report export, template management,
-  template validation, and initial template execution artifacts are implemented.
+  template validation, template execution artifacts, and template execution
+  replay/reporting are implemented.
 - The latest full offline test run passed:
 
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 101 passed, 1 skipped
+# 104 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -78,7 +79,10 @@ the syntax failure seen when executing multi-line templates.
 - Built-in example model execution is implemented through
   `simulation_run_example_model`.
 - Sweep rerun support is implemented through `simulation_rerun_artifact`.
-- Sweep comparison and Markdown/HTML report export are implemented.
+- Sweep and template execution rerun support is implemented through
+  `simulation_rerun_artifact`.
+- Sweep comparison plus Markdown/HTML report export are implemented.
+- Template execution Markdown/HTML report export is implemented.
 
 ### Archive and Memory
 
@@ -143,7 +147,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `101 passed, 1 skipped`.
+- Full unit test suite passed with `104 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -269,12 +273,22 @@ Exit criteria:
 
 Goal: make every meaningful COMSOL action reproducible from archive records.
 
+Status: template execution records are now reproducible from archive snapshots.
+Example-model runs and direct Java/API calls still need dedicated artifact types
+before they can be replayed with the same fidelity.
+
 Tasks:
 
-1. Extend artifact metadata for template runs, example runs, and Java/API runs.
-2. Add replay support for `template_execution` artifacts.
-3. Make report export handle template execution artifacts, not just sweeps.
-4. Add a compact CLI view for template run results.
+1. Done for template runs: artifact metadata now records template name/domain,
+   params, validation counts, execution error classification, and tool sequence.
+   Deferred: define first-class artifact records for example-model runs and raw
+   Java/API calls.
+2. Done: added replay support for `template_execution` artifacts through
+   `simulation_rerun_artifact`.
+3. Done: report export handles `template_execution` artifacts as Markdown/HTML
+   reports and archives them as `template_execution_report`.
+4. Done: added compact CLI views through `/artifacts template-runs <query>` and
+   `/artifacts report-template <query> [markdown|html|both]`.
 
 Exit criteria:
 

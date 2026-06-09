@@ -1,4 +1,4 @@
-"""Replay helpers for archived COMSOL sweep artifacts."""
+"""Replay helpers for archived COMSOL simulation artifacts."""
 
 from __future__ import annotations
 
@@ -42,6 +42,67 @@ def build_replay_request(
             "executed_cases": payload.get("executed_cases"),
             "source": payload.get("source"),
             "expressions": _expressions_from_payload(payload),
+        },
+        "request": request,
+    }
+
+
+def build_template_replay_request(
+    archive_store: ArchiveStore,
+    *,
+    run_id: str,
+    params_overrides: dict[str, Any] | None = None,
+    model_name: str | None = None,
+    create_model_name: str | None = None,
+    validate_first: bool | None = None,
+) -> dict[str, Any]:
+    """Build a `simulation_run_template` request from an archived template run."""
+    artifact = archive_store.get_simulation_artifact(run_id)
+    if artifact.kind != "template_execution":
+        raise ValueError(
+            f"Artifact {run_id!r} is {artifact.kind!r}, not a template_execution artifact."
+        )
+
+    payload = _load_payload(artifact)
+    source = payload.get("source") or artifact.source or {}
+    template_snapshot = payload.get("template") or {}
+    template_name = payload.get("template_name") or template_snapshot.get("name") or source.get("name")
+    java_code = template_snapshot.get("java_code")
+    params = dict(template_snapshot.get("params") or payload.get("params") or {})
+    if params_overrides:
+        params.update(params_overrides)
+
+    request: dict[str, Any] = {
+        "params": params,
+        "validate_first": validate_first if validate_first is not None else True,
+    }
+    if java_code:
+        request["java_code"] = java_code
+        if template_name:
+            request["name"] = template_name
+    elif template_name:
+        request["name"] = template_name
+    else:
+        raise ValueError(
+            "Archived template execution has no template name or java_code snapshot to replay."
+        )
+
+    target_kwargs = _template_target_kwargs(
+        payload,
+        model_name=model_name,
+        create_model_name=create_model_name,
+    )
+    request.update(target_kwargs)
+
+    return {
+        "source_run_id": run_id,
+        "source_artifact": _artifact_summary(artifact),
+        "source_payload_summary": {
+            "model_name": payload.get("model_name"),
+            "template_name": template_name,
+            "source": source,
+            "validation_status": (payload.get("validation") or {}).get("status"),
+            "execution_success": (payload.get("execution") or {}).get("success"),
         },
         "request": request,
     }
@@ -118,6 +179,29 @@ def _source_kwargs(
     raise ValueError(
         "Archived sweep source cannot be replayed automatically; provide model_name for a loaded model."
     )
+
+
+def _template_target_kwargs(
+    payload: dict[str, Any],
+    *,
+    model_name: str | None,
+    create_model_name: str | None,
+) -> dict[str, str]:
+    if model_name and create_model_name:
+        raise ValueError("Provide at most one of model_name or create_model_name for replay.")
+    if create_model_name:
+        return {"create_model_name": create_model_name}
+    if model_name:
+        return {"model_name": model_name}
+
+    original_model_name = payload.get("model_name")
+    if payload.get("create") or "comsol_create_model" in (payload.get("tool_sequence") or []):
+        if not original_model_name:
+            raise ValueError("Archived template run did not record a created model name.")
+        return {"create_model_name": original_model_name}
+    if original_model_name:
+        return {"model_name": original_model_name}
+    raise ValueError("Archived template run has no recoverable model target.")
 
 
 def _artifact_summary(artifact: SimulationArtifact) -> dict[str, Any]:

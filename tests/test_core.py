@@ -2734,6 +2734,213 @@ class TestParameterSweeps:
             ("evaluate", "loaded", "T"),
         ]
 
+    def test_build_template_replay_request_uses_archived_snapshot(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.simulation.artifacts import persist_template_execution_result
+        from comsol_agent.simulation.replay import build_template_replay_request
+
+        archive_path = tmp_path / "archive.sqlite3"
+        source_artifact = persist_template_execution_result(
+            {
+                "success": True,
+                "executed": True,
+                "template_name": "thermal_seed",
+                "model_name": "template_model",
+                "source": {"type": "template", "name": "thermal_seed", "domain": "thermal"},
+                "params": {"power": "10[W]"},
+                "template": {
+                    "name": "thermal_seed",
+                    "domain": "thermal",
+                    "params": {"power": "10[W]"},
+                    "java_code": "model.param().set('power', power);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "create": {"success": True, "model_name": "template_model"},
+                "execution": {"success": True, "stdout": "", "error": None},
+                "tool_sequence": [
+                    "comsol_create_model",
+                    "simulation_validate_template",
+                    "comsol_execute_java",
+                    "comsol_close_model",
+                ],
+            },
+            output_dir=tmp_path / "artifacts",
+            run_name="template_replay_source",
+            archive_path=archive_path,
+        )
+
+        replay = build_template_replay_request(
+            ArchiveStore(archive_path),
+            run_id=source_artifact["run_id"],
+            params_overrides={"power": "20[W]"},
+        )
+
+        request = replay["request"]
+        assert replay["source_run_id"] == source_artifact["run_id"]
+        assert request["name"] == "thermal_seed"
+        assert request["java_code"] == "model.param().set('power', power);"
+        assert request["params"] == {"power": "20[W]"}
+        assert request["create_model_name"] == "template_model"
+        assert request["validate_first"] is True
+
+    def test_simulation_rerun_artifact_dispatches_template_execution(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        import comsol_agent.tools.simulation as simulation_tools
+        from comsol_agent.simulation.artifacts import persist_template_execution_result
+
+        archive_path = tmp_path / "archive.sqlite3"
+        source_artifact = persist_template_execution_result(
+            {
+                "success": True,
+                "executed": True,
+                "template_name": "thermal_seed",
+                "model_name": "template_model",
+                "source": {"type": "template", "name": "thermal_seed", "domain": "thermal"},
+                "params": {"power": "10[W]"},
+                "template": {
+                    "name": "thermal_seed",
+                    "domain": "thermal",
+                    "params": {"power": "10[W]"},
+                    "java_code": "model.param().set('power', power);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "create": {"success": True, "model_name": "template_model"},
+                "execution": {"success": True},
+                "tool_sequence": ["comsol_create_model", "comsol_execute_java"],
+            },
+            output_dir=tmp_path / "artifacts",
+            run_name="template_dispatch_source",
+            archive_path=archive_path,
+        )
+        captured = {}
+
+        def fake_run_template(**kwargs):
+            captured.update(kwargs)
+            return {
+                "success": True,
+                "executed": True,
+                "model_name": kwargs.get("create_model_name"),
+                "template_name": kwargs.get("name"),
+            }
+
+        monkeypatch.setattr(simulation_tools, "simulation_run_template", fake_run_template)
+
+        result = simulation_tools.simulation_rerun_artifact(
+            source_artifact["run_id"],
+            params_overrides={"power": "25[W]"},
+            create_model_name="template_model_replay",
+            artifact_name="template_replay",
+            artifact_dir=str(tmp_path / "reruns"),
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["replay"]["source_run_id"] == source_artifact["run_id"]
+        assert captured["name"] == "thermal_seed"
+        assert captured["params"] == {"power": "25[W]"}
+        assert captured["create_model_name"] == "template_model_replay"
+        assert captured["artifact_name"] == "template_replay"
+
+    def test_simulation_export_artifact_report_handles_template_execution(self, tmp_path):
+        from comsol_agent.simulation.artifacts import persist_template_execution_result
+        from comsol_agent.tools.simulation import (
+            simulation_export_artifact_report,
+            simulation_read_artifact,
+            simulation_search_artifacts,
+        )
+
+        archive_path = tmp_path / "archive.sqlite3"
+        artifact_dir = tmp_path / "artifacts"
+        persist_template_execution_result(
+            {
+                "success": True,
+                "executed": True,
+                "template_name": "thermal_seed",
+                "model_name": "template_model_ok",
+                "source": {"type": "template", "name": "thermal_seed", "domain": "thermal"},
+                "params": {"power": "10[W]"},
+                "template": {
+                    "name": "thermal_seed",
+                    "domain": "thermal",
+                    "params": {"power": "10[W]"},
+                    "java_code": "model.param().set('power', power);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "execution": {"success": True},
+                "tool_sequence": ["comsol_execute_java"],
+            },
+            output_dir=artifact_dir,
+            run_name="template_report_ok",
+            archive_path=archive_path,
+        )
+        persist_template_execution_result(
+            {
+                "success": False,
+                "executed": True,
+                "template_name": "thermal_seed",
+                "model_name": "template_model_fail",
+                "source": {"type": "template", "name": "thermal_seed", "domain": "thermal"},
+                "params": {"power": "bad"},
+                "template": {
+                    "name": "thermal_seed",
+                    "domain": "thermal",
+                    "params": {"power": "bad"},
+                    "java_code": "model.param().set('power', power);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "execution": {
+                    "success": False,
+                    "error": "Unknown parameter",
+                    "error_type": "api_error",
+                },
+                "tool_sequence": ["comsol_execute_java"],
+            },
+            output_dir=artifact_dir,
+            run_name="template_report_fail",
+            archive_path=archive_path,
+        )
+
+        result = simulation_export_artifact_report(
+            query="template_report_",
+            kind="template_execution",
+            output_dir=str(tmp_path / "reports"),
+            report_name="template_report",
+            output_format="html",
+            archive_path=str(archive_path),
+        )
+
+        report_path = Path(result["report"]["path"])
+        html_path = Path(result["report"]["html_path"])
+        content = report_path.read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert result["kind"] == "template_execution"
+        assert result["summary"]["run_count"] == 2
+        assert result["summary"]["success_count"] == 1
+        assert result["summary"]["failure_count"] == 1
+        assert result["report"]["archive"]["kind"] == "template_execution_report"
+        assert "# COMSOL Template Execution Report" in content
+        assert "template_model_fail" in content
+        assert "<!doctype html>" in html_path.read_text(encoding="utf-8")
+
+        search_result = simulation_search_artifacts(
+            query="template_report",
+            archive_path=str(archive_path),
+        )
+        assert search_result["success"] is True
+        assert any(item["kind"] == "template_execution_report" for item in search_result["artifacts"])
+
+        read_result = simulation_read_artifact(
+            run_id=result["report"]["report_id"],
+            archive_path=str(archive_path),
+            max_lines=5,
+        )
+        assert read_result["success"] is True
+        assert read_result["artifact"]["kind"] == "template_execution_report"
+        assert read_result["preview"]["markdown"]["lines"][0] == "# COMSOL Template Execution Report"
+
     def test_simulation_run_parameter_sweep_loads_and_closes_example(
         self,
         monkeypatch,
