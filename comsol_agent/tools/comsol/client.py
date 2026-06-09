@@ -284,7 +284,8 @@ class COMSOLClient:
             # Prepare and execute the code using the model's Java object
             # The Java code can reference 'model' as the current model object
             local_vars: dict[str, Any] = {"model": java_model, "output": output_buffer}
-            indented_code = textwrap.indent(java_code, "    ")
+            executable_code = _strip_java_line_comments(java_code)
+            indented_code = textwrap.indent(executable_code, "    ")
             exec(
                 f"""
 _result = None
@@ -403,3 +404,35 @@ except Exception as _e:
     def _ensure_started(self) -> None:
         if not self._started:
             raise RuntimeError("COMSOL session not started. Call client.start() first.")
+
+
+def _strip_java_line_comments(java_code: str) -> str:
+    """Remove Java-style line comments while preserving string literals."""
+    cleaned_lines = []
+    for line in java_code.splitlines():
+        in_single = False
+        in_double = False
+        escaped = False
+        comment_at = None
+        for index, char in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == "'" and not in_double:
+                in_single = not in_single
+            elif char == '"' and not in_single:
+                in_double = not in_double
+            elif (
+                char == "/"
+                and index + 1 < len(line)
+                and line[index + 1] == "/"
+                and not in_single
+                and not in_double
+            ):
+                comment_at = index
+                break
+        cleaned_lines.append(line[:comment_at] if comment_at is not None else line)
+    return "\n".join(cleaned_lines)

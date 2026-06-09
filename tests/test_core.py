@@ -2826,7 +2826,7 @@ class TestLocalDocsSearch:
         from comsol_agent.tools.simulation import simulation_search_local_docs
 
         result = simulation_search_local_docs(
-            query="COMSOL Agent architecture",
+            query="ToolDefinition format",
             directory="docs",
             max_results=2,
         )
@@ -3087,6 +3087,40 @@ class TestCOMSOLRuntimeConfig:
         assert list_result["parameters"] == [
             {"name": "L", "value": "1[mm]", "description": ""}
         ]
+        COMSOLClient.reset_instance()
+
+    def test_comsol_execute_java_strips_java_comments_and_runs_multiline_code(self):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+
+        class FakeJavaModel:
+            def __init__(self):
+                self.values = {}
+
+            def param(self):
+                return self
+
+            def set(self, name, value):
+                self.values[name] = value
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        fake_model = FakeJavaModel()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake"] = ModelHandle(name="fake", java_model=fake_model)
+
+        output = client.execute_java(
+            "model.param().set('power', '10[W]');\n"
+            "model.param().set('T_ambient', '293.15[K]');\n"
+            "// Add geometry, material, physics, mesh, and study before solve.",
+            model_name="fake",
+        )
+
+        assert output == "Code executed successfully (no output)."
+        assert fake_model.values == {
+            "power": "10[W]",
+            "T_ambient": "293.15[K]",
+        }
         COMSOLClient.reset_instance()
 
     def test_comsol_evaluate_array_sample_is_flat_and_compact(self):

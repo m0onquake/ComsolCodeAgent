@@ -23,11 +23,11 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 95 passed, 1 skipped
+# 96 passed, 1 skipped
 ```
 
-The current working directory is not a Git repository, so progress must be
-tracked through files and command output rather than `git status` or commits.
+The current working directory is now a Git repository on branch `main`, tracking
+`origin/main` at `git@github.com:m0onquake/ComsolCodeAgent.git`.
 
 ## Implemented Capabilities
 
@@ -140,22 +140,25 @@ Template export path safety follows the same model as file tools:
 
 ## Verification Record
 
-Confirmed in the latest pause pass:
+Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `95 passed, 1 skipped`.
+- Full unit test suite passed with `96 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
   exported Java template.
-- A real COMSOL template-run smoke was attempted with elevated permissions.
-  COMSOL startup, model creation, and model close succeeded. The first execution
-  attempt exposed the multi-line Java/API indentation bug in
-  `COMSOLClient.execute_java()`. That bug has been patched and covered by the
-  subsequent compile/test run, but the real COMSOL template-run smoke has not
-  been rerun after the patch because development is now paused.
+- A real COMSOL template-run smoke passed with elevated permissions. COMSOL
+  startup, model creation, Java/API template execution, model close, artifact
+  writing, and archive indexing all succeeded.
+- The generated artifact was read back through `scripts/read_artifact.py`, and
+  `simulation_search_artifacts("template_smoke_model")` found the
+  `template_execution` archive record with `execution_success: true`.
+- During this pass, two Java/API execution wrapping issues were fixed:
+  multi-line snippets are now indented before `exec`, and Java-style `//` line
+  comments are stripped before execution.
 
-Recommended first verification command after resuming:
+Verified real template execution command:
 
 ```bash
 .venv/bin/python scripts/list_templates.py \
@@ -173,9 +176,9 @@ ports.
 
 ## Known Constraints and Risks
 
-- The repository folder is not currently a Git repository. Before longer
-  development, initialize or attach version control so changes are easy to
-  review and revert.
+- The repository is now tracked in Git and pushed to GitHub. Keep committing
+  small verified increments and avoid committing runtime archives, `.mph`
+  outputs, `.venv`, or local configuration.
 - Real COMSOL runs may fail in a restricted sandbox unless COMSOL can write to
   user preference/log directories and probe local ports.
 - `simulation_validate_template` is intentionally a conservative offline lint,
@@ -185,8 +188,8 @@ ports.
   target model to avoid modifying the wrong COMSOL model.
 - The default archive under `~/.comsol_agent` can be inconvenient in sandboxed
   tests. Continue using workspace archive paths for smoke tests.
-- The template execution artifact path is implemented, but the real post-patch
-  COMSOL smoke still needs to be rerun before calling that flow fully verified.
+- Template execution is verified for the current built-in thermal seed template.
+  More complex geometry/physics templates still need real COMSOL validation.
 
 ## Next Development Plan
 
@@ -195,15 +198,18 @@ ports.
 Goal: prove the full `template -> validate -> run -> artifact -> archive`
 workflow after the multi-line execution fix.
 
+Status: complete for `thermal_heat_transfer_seed` on a newly created smoke
+model.
+
 Tasks:
 
-1. Rerun the real template smoke command listed above.
-2. Confirm that `simulation_run_template` returns `success: true`.
-3. Confirm that a `template_execution` artifact is indexed in the workspace
+1. Done: reran the real template smoke command listed above.
+2. Done: confirmed that `simulation_run_template` returns `success: true`.
+3. Done: confirmed that a `template_execution` artifact is indexed in the workspace
    archive.
-4. Confirm `/artifacts search template_smoke_model` and
-   `/artifacts show <run_id>` can read the generated artifact.
-5. Add or update a dedicated real smoke script if the generic
+4. Done: confirmed `simulation_search_artifacts("template_smoke_model")` and
+   `scripts/read_artifact.py <run_id>` can read the generated artifact.
+5. Optional: add or update a dedicated real smoke script if the generic
    `scripts/list_templates.py --run` command feels too overloaded.
 
 Exit criteria:
