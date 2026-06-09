@@ -164,8 +164,16 @@ def render_status_bar(
     )
 
 
-def render_help() -> None:
+def render_help(topic: str | None = None) -> None:
     """Display help information."""
+    normalized_topic = (topic or "").strip().lower()
+    if normalized_topic in {"templates", "/templates"}:
+        _render_templates_help()
+        return
+    if normalized_topic in {"artifacts", "/artifacts"}:
+        _render_artifacts_help()
+        return
+
     help_table = Table(title="COMSOL Agent Commands", show_header=False, border_style="dim")
     help_table.add_column("Command", style="cyan")
     help_table.add_column("Description")
@@ -191,6 +199,57 @@ def render_help() -> None:
         help_table.add_row(cmd, desc)
 
     console.print(help_table)
+    console.print("[dim]Use /help templates or /help artifacts for detailed subcommands.[/dim]")
+
+
+def _render_templates_help() -> None:
+    """Display detailed template command help."""
+    table = Table(title="/templates subcommands", show_header=True, border_style="dim")
+    table.add_column("Command", style="cyan")
+    table.add_column("Purpose")
+    table.add_column("Notes")
+    rows = [
+        ("/templates", "List recent templates", "Shows name, domain, params, and code preview."),
+        ("/templates domain <domain>", "List templates by domain", "Example: /templates domain thermal"),
+        ("/templates search <query> [domain]", "Search templates", "Searches name, domain, code, and params."),
+        ("/templates show <template_name>", "Show template source", "Prints metadata and Java/API seed code."),
+        ("/templates validate <template_name>", "Run offline validation", "Shows errors, warnings, and notes."),
+        ("/templates export <template_name> [path]", "Export Java seed file", "Writes under allowed project/config roots."),
+        ("/templates save <name> <domain> <java_file> [params_json_file]", "Save custom template", "Validates before archiving."),
+        (
+            "/templates run <template_name> create <model_name>",
+            "Create a new model and run",
+            "Persists a template_execution artifact.",
+        ),
+        (
+            "/templates run <template_name> model <model_name> --allow-modify-loaded",
+            "Run against an existing loaded model",
+            "Flag is required because this modifies a loaded COMSOL model.",
+        ),
+    ]
+    for row in rows:
+        table.add_row(*row)
+    console.print(table)
+
+
+def _render_artifacts_help() -> None:
+    """Display detailed artifact command help."""
+    table = Table(title="/artifacts subcommands", show_header=True, border_style="dim")
+    table.add_column("Command", style="cyan")
+    table.add_column("Purpose")
+    table.add_column("Notes")
+    rows = [
+        ("/artifacts", "List recent sweep artifacts", "Shows run id, kind, model, cases, and CSV path."),
+        ("/artifacts search <query>", "Search archived artifacts", "Searches run id, kind, model, source, paths, metadata."),
+        ("/artifacts show <run_id> [max_lines]", "Inspect one artifact", "Shows structured preview for sweeps, reports, and template runs."),
+        ("/artifacts compare <query> [metric] [expression] [max|min]", "Rank sweep rows", "Uses persisted CSV metrics."),
+        ("/artifacts report <query> [metric] [expression] [max|min] [markdown|html|both]", "Export sweep report", "Archives report as comparison_report."),
+        ("/artifacts template-runs [query]", "List template execution runs", "Shows success, validation, and error type."),
+        ("/artifacts report-template <query> [markdown|html|both]", "Export template run report", "Archives report as template_execution_report."),
+    ]
+    for row in rows:
+        table.add_row(*row)
+    console.print(table)
 
 
 def render_welcome(config_summary: str) -> None:
@@ -201,6 +260,39 @@ def render_welcome(config_summary: str) -> None:
             f"[dim]{config_summary}[/dim]\n"
             "Type [cyan]/help[/cyan] for commands, [cyan]/exit[/cyan] to quit.",
             border_style="cyan",
+        )
+    )
+
+
+def render_startup_status(
+    *,
+    provider: str,
+    model: str,
+    comsol_executable: str | None,
+    comsol_version: str | None,
+    archive_path: str,
+    session_dir: str | None = None,
+    api_key_present: bool = False,
+    base_url: str | None = None,
+) -> None:
+    """Display a non-secret startup status panel."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column()
+    table.add_row("LLM", f"{provider}/{model}")
+    table.add_row("API key", "configured" if api_key_present else "missing")
+    table.add_row("Base URL", base_url or "provider default")
+    table.add_row("COMSOL executable", comsol_executable or "auto-detect")
+    table.add_row("COMSOL version", comsol_version or "auto-detect")
+    table.add_row("Archive", archive_path)
+    if session_dir:
+        table.add_row("Sessions", session_dir)
+    console.print(
+        Panel(
+            table,
+            title="Startup Status",
+            border_style="cyan",
+            subtitle="Secrets hidden",
         )
     )
 

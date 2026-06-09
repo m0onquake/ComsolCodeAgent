@@ -2054,6 +2054,8 @@ class TestSimulationSkills:
         params_file.write_text(json.dumps({"power": "30[W]"}), encoding="utf-8")
         agent = SimpleNamespace(archive_store=archive)
 
+        assert await handle_command("/help templates", agent, Config()) == CommandResult.CONTINUE
+        assert await handle_command("/templates help", agent, Config()) == CommandResult.CONTINUE
         assert await handle_command("/templates", agent, Config()) == CommandResult.CONTINUE
         assert await handle_command("/templates domain thermal", agent, Config()) == CommandResult.CONTINUE
         assert await handle_command("/templates search ambient thermal", agent, Config()) == CommandResult.CONTINUE
@@ -2113,6 +2115,40 @@ class TestSimulationSkills:
         ) == CommandResult.CONTINUE
         assert calls[0]["name"] == "thermal_heat_transfer_seed"
         assert calls[0]["create_model_name"] == "cli_template_model"
+
+        assert await handle_command(
+            "/templates run thermal_heat_transfer_seed model loaded_model",
+            agent,
+            Config(),
+        ) == CommandResult.CONTINUE
+        assert len(calls) == 1
+
+        assert await handle_command(
+            "/templates run thermal_heat_transfer_seed model loaded_model --allow-modify-loaded",
+            agent,
+            Config(),
+        ) == CommandResult.CONTINUE
+        assert calls[1]["model_name"] == "loaded_model"
+
+    def test_startup_status_hides_api_secret(self, capsys):
+        from comsol_agent.cli.renderer import render_startup_status
+
+        render_startup_status(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            api_key_present=True,
+            base_url="https://api.deepseek.com",
+            comsol_executable="/Applications/COMSOL62/Multiphysics/bin/comsol",
+            comsol_version="6.2",
+            archive_path="/tmp/archive.sqlite3",
+            session_dir="/tmp/sessions",
+        )
+
+        output = capsys.readouterr().out
+        assert "deepseek/deepseek-v4-flash" in output
+        assert "configured" in output
+        assert "archive.sqlite3" in output
+        assert "sk-" not in output
 
     def test_list_templates_script_outputs_json(self, tmp_path, monkeypatch):
         import json

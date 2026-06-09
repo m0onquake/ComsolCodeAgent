@@ -222,6 +222,7 @@ Inside the interactive CLI, use slash commands for quick artifact review:
 /templates show thermal_heat_transfer_seed
 /templates validate thermal_heat_transfer_seed
 /templates run thermal_heat_transfer_seed create template_smoke_model
+/templates run thermal_heat_transfer_seed model loaded_model --allow-modify-loaded
 /templates export thermal_heat_transfer_seed runtime_smoke/templates/thermal_heat_transfer_seed.java
 /templates save custom_thermal thermal runtime_smoke/templates/custom_thermal.java runtime_smoke/templates/custom_thermal.params.json
 /artifacts
@@ -280,7 +281,9 @@ export COMSOL_AGENT_ALLOWED_PATHS=/path/to/extra/workdir
 `/templates run` and `scripts/list_templates.py --run` start or use a real
 COMSOL session through the normal tool layer. Use `create <model_name>` /
 `--create-model-name` for isolated smoke checks, or `model <model_name>` /
-`--model-name` only when you intend to modify an already loaded model.
+`--model-name` only when you intend to modify an already loaded model. In the
+interactive CLI, loaded-model execution requires the explicit
+`--allow-modify-loaded` flag.
 
 Use session archive commands to inspect saved conversation snapshots and memory
 cards without opening the JSON files manually:

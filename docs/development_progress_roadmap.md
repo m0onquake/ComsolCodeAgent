@@ -24,7 +24,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 104 passed, 1 skipped
+# 105 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -147,7 +147,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `104 passed, 1 skipped`.
+- Full unit test suite passed with `105 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -299,14 +299,19 @@ Exit criteria:
 
 Goal: make the CLI easier to use during real engineering work.
 
+Status: core CLI usability pass complete. Future work can still add richer
+interactive confirmations, but risky loaded-model template execution is now
+explicitly flagged.
+
 Tasks:
 
-1. Add detailed help for `/templates` subcommands.
-2. Add confirmation prompts or explicit flags for operations that modify loaded
-   COMSOL models.
-3. Add richer rendering for validation findings and artifact paths.
-4. Add a startup status panel that shows LLM provider, COMSOL configuration, and
-   archive path without printing secrets.
+1. Done: added detailed `/help templates` and `/templates help` subcommand help.
+2. Done: `/templates run ... model <model_name>` now requires
+   `--allow-modify-loaded` before modifying an existing loaded COMSOL model.
+3. Done: template validation findings and artifact paths render as structured
+   CLI tables.
+4. Done: startup status panel shows LLM provider/model, COMSOL configuration,
+   archive path, session path, and secret presence without printing secrets.
 
 Exit criteria:
 

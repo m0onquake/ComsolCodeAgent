@@ -23,6 +23,7 @@ from comsol_agent.cli.renderer import (
     render_goodbye,
     render_info,
     render_status_bar,
+    render_startup_status,
     render_tool_call,
     render_tool_result,
     render_warning,
@@ -107,6 +108,16 @@ class CLIApp:
             f"Provider: {self.config.llm.provider} | Model: {self.config.llm.model}"
         )
         render_welcome(config_summary)
+        render_startup_status(
+            provider=self.config.llm.provider,
+            model=self.config.llm.model,
+            api_key_present=bool(self.config.llm.api_key),
+            base_url=self.config.llm.base_url,
+            comsol_executable=self.config.comsol.executable_path,
+            comsol_version=self.config.comsol.version,
+            archive_path=str(archive_store.db_path),
+            session_dir=str(session_store.session_dir),
+        )
 
         # Start REPL
         await self._repl()

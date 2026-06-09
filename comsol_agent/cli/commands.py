@@ -41,7 +41,7 @@ async def handle_command(
     elif cmd == "/help":
         from comsol_agent.cli.renderer import render_help
 
-        render_help()
+        render_help(args)
 
     elif cmd == "/clear":
         agent.reset()
@@ -620,7 +620,7 @@ async def handle_command(
         from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
-        from comsol_agent.cli.renderer import render_info
+        from comsol_agent.cli.renderer import render_info, render_warning
         from comsol_agent.tools.simulation import (
             simulation_export_template,
             simulation_run_template,
@@ -634,7 +634,11 @@ async def handle_command(
         else:
             template_parts = args.split()
             subcommand = template_parts[0].lower() if template_parts else "list"
-            if subcommand == "show":
+            if subcommand == "help":
+                from comsol_agent.cli.renderer import render_help
+
+                render_help("templates")
+            elif subcommand == "show":
                 if len(template_parts) < 2:
                     render_info("Usage: /templates show <template_name>")
                 else:
@@ -706,29 +710,24 @@ async def handle_command(
                     if not result.get("success") and "validation" not in result:
                         render_info(f"Could not validate template: {result.get('error')}")
                     else:
-                        validation = result["validation"]
-                        table = Table(
+                        _render_template_validation(
+                            result["validation"],
                             title=f"Template Validation: {template_parts[1]}",
-                            border_style="dim",
                         )
-                        table.add_column("Field", style="cyan")
-                        table.add_column("Value")
-                        table.add_row("status", validation["status"])
-                        table.add_row("errors", str(len(validation["errors"])))
-                        table.add_row("warnings", str(len(validation["warnings"])))
-                        table.add_row("lines", str(validation["line_count"]))
-                        Console().print(table)
-                        messages = (
-                            validation["errors"]
-                            + validation["warnings"]
-                            + validation["notes"]
-                        )
-                        if messages:
-                            Console().print(Panel("\n".join(messages), title="Findings", border_style="dim"))
             elif subcommand == "run":
                 if len(template_parts) < 4 or template_parts[2] not in {"create", "model"}:
-                    render_info("Usage: /templates run <template_name> create <model_name> | model <model_name>")
+                    render_info(
+                        "Usage: /templates run <template_name> create <model_name> | "
+                        "model <model_name> --allow-modify-loaded"
+                    )
                 else:
+                    allow_modify_loaded = "--allow-modify-loaded" in template_parts[4:]
+                    if template_parts[2] == "model" and not allow_modify_loaded:
+                        render_warning(
+                            "Running a template against an existing loaded model may modify it. "
+                            "Add --allow-modify-loaded to proceed."
+                        )
+                        return CommandResult.CONTINUE
                     target_key = "create_model_name" if template_parts[2] == "create" else "model_name"
                     result = simulation_run_template(
                         name=template_parts[1],
@@ -739,8 +738,14 @@ async def handle_command(
                         artifact = result.get("artifacts") or {}
                         suffix = f" Artifact: {artifact.get('run_id')}" if artifact else ""
                         render_info(f"Template executed: {result.get('model_name')}.{suffix}")
+                        _render_artifact_paths(artifact)
                     else:
                         render_info(f"Could not run template: {result.get('error') or result.get('stage')}")
+                        if result.get("validation"):
+                            _render_template_validation(
+                                result["validation"],
+                                title=f"Template Validation: {template_parts[1]}",
+                            )
             elif subcommand == "search":
                 if len(template_parts) < 2:
                     render_info("Usage: /templates search <query> [domain]")
@@ -932,6 +937,40 @@ def _render_templates_table(templates, title: str = "Simulation Templates") -> N
     Console().print(table)
 
 
+def _render_template_validation(validation: dict, title: str = "Template Validation") -> None:
+    """Render template validation status and findings."""
+    from rich.console import Console
+    from rich.table import Table
+    from comsol_agent.cli.renderer import render_info
+
+    console = Console()
+    summary = Table(title=title, border_style="dim")
+    summary.add_column("Field", style="cyan")
+    summary.add_column("Value")
+    summary.add_row("status", str(validation.get("status", "")))
+    summary.add_row("errors", str(len(validation.get("errors") or [])))
+    summary.add_row("warnings", str(len(validation.get("warnings") or [])))
+    summary.add_row("notes", str(len(validation.get("notes") or [])))
+    summary.add_row("lines", str(validation.get("line_count", "")))
+    console.print(summary)
+
+    rows = []
+    for severity in ("errors", "warnings", "notes"):
+        for message in validation.get(severity) or []:
+            rows.append((severity[:-1], str(message)))
+    if not rows:
+        render_info("No validation findings.")
+        return
+
+    findings = Table(title="Validation Findings", border_style="dim")
+    findings.add_column("Severity", style="cyan")
+    findings.add_column("Message")
+    for severity, message in rows:
+        style = {"error": "red", "warning": "yellow", "note": "dim"}.get(severity, "")
+        findings.add_row(f"[{style}]{severity}[/{style}]" if style else severity, message)
+    console.print(findings)
+
+
 def _render_artifact_preview(artifact_preview: dict) -> None:
     """Render a compact preview for one archived artifact."""
     from rich.console import Console
@@ -967,6 +1006,30 @@ def _render_artifact_preview(artifact_preview: dict) -> None:
             console.print(row_table)
     elif "summary" in preview:
         console.print(Panel(str(preview["summary"]), title="Artifact Summary", border_style="dim"))
+
+
+def _render_artifact_paths(artifact: dict) -> None:
+    """Render artifact paths produced by a command."""
+    from rich.console import Console
+    from rich.table import Table
+
+    if not artifact:
+        return
+    fields = [
+        ("run_id", artifact.get("run_id")),
+        ("json_path", artifact.get("json_path")),
+        ("csv_path", artifact.get("csv_path")),
+        ("manifest_path", artifact.get("manifest_path")),
+    ]
+    if not any(value for _, value in fields):
+        return
+    table = Table(title="Artifact Paths", border_style="dim")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    for key, value in fields:
+        if value:
+            table.add_row(key, str(value))
+    Console().print(table)
 
 
 def _format_parameters(parameters: dict) -> str:
