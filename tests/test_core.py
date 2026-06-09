@@ -316,6 +316,7 @@ class TestToolRegistry:
         assert "comsol_set_parameter" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
+        assert "simulation_retrieve_api_docs" in names
         assert "simulation_list_example_models" in names
         assert "simulation_list_templates" in names
         assert "simulation_search_templates" in names
@@ -2839,6 +2840,50 @@ class TestLocalDocsSearch:
             for item in result["results"]
         )
         assert "Offline keyword search" in result["note"]
+
+    def test_local_docs_index_extracts_api_metadata(self, tmp_path, monkeypatch):
+        from comsol_agent.simulation.local_docs import build_index_from_directory
+
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "comsol_api.md").write_text(
+            "# COMSOL 6.2 Thermal API\n\n"
+            "Use model.param().set('power', '10[W]') before Heat Transfer solve.\n"
+            "The comsol_execute_java tool can run model.geom().create() snippets.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        index = build_index_from_directory("docs")
+        snippets = index.retrieve_api_docs("model.param().set thermal", limit=1)
+
+        assert snippets
+        snippet = snippets[0]
+        assert snippet["citation"].endswith("comsol_api:1")
+        assert snippet["domain"] == "thermal"
+        assert "6.2" in snippet["comsol_versions"]
+        assert "model.param().set()" in snippet["api_symbols"]
+        assert "model.geom().create()" in snippet["api_symbols"]
+        assert "model.param().set()" in snippet["metadata"]["api_functions"]
+        assert "model.param().set" in snippet["snippet"]
+
+    def test_simulation_retrieve_api_docs_tool_returns_cited_snippets(self):
+        from comsol_agent.tools.simulation import simulation_retrieve_api_docs
+
+        result = simulation_retrieve_api_docs(
+            query="model.param().set Java API",
+            directory="docs",
+            max_results=3,
+        )
+
+        assert result["success"] is True
+        assert result["count"] >= 1
+        first = result["snippets"][0]
+        assert first["citation"]
+        assert first["source"].endswith(".md")
+        assert first["snippet"]
+        assert "metadata" in first
+        assert "Offline local retrieval" in result["note"]
 
     def test_local_docs_search_rejects_outside_workspace_directory(self):
         from comsol_agent.tools.simulation import simulation_search_local_docs

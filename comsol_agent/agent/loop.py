@@ -479,22 +479,20 @@ class AgentLoop:
 
         try:
             index = build_index_from_directory(docs_dir)
-            results = index.search(query, limit=3)
+            snippets = index.retrieve_api_docs(query, limit=3, snippet_chars=1200)
         except Exception as exc:
             log.debug("Failed to retrieve local repair docs: %s", exc)
             return []
 
         docs: list[str] = []
-        for result in results:
-            chunk = result.chunk
-            content = chunk.content.strip()
-            if len(content) > 1200:
-                content = content[:1197] + "..."
+        for snippet in snippets:
             docs.append(
-                f"Source: {chunk.source}#{chunk.id}\n"
-                f"Title: {chunk.title}\n"
-                f"Matched terms: {', '.join(result.matched_terms)}\n"
-                f"{content}"
+                f"Source: {snippet['citation']}\n"
+                f"Title: {snippet['title']}\n"
+                f"Domain: {snippet.get('domain') or 'general'}\n"
+                f"API symbols: {', '.join(snippet.get('api_symbols') or []) or '(none detected)'}\n"
+                f"Matched terms: {', '.join(snippet.get('matched_terms') or [])}\n"
+                f"{snippet['snippet']}"
             )
         return docs
 

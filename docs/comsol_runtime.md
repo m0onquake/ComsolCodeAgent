@@ -207,6 +207,7 @@ Agent-facing tools are:
 - `simulation_read_artifact`: read a compact preview of a specific archived run or report
 - `simulation_compare_artifacts`: compare archived sweep CSV metrics and rank cases
 - `simulation_export_artifact_report`: export a Markdown report from archived sweep comparisons
+- `simulation_retrieve_api_docs`: retrieve compact, cited local documentation snippets for API repair/code generation
 
 For isolated tests or project-specific archives, pass `archive_path` to
 `simulation_run_parameter_sweep` and to the list/search tools.
@@ -228,6 +229,17 @@ Inside the interactive CLI, use slash commands for quick artifact review:
 /artifacts compare agent_sweep_smoke mean T max
 /artifacts report agent_sweep_smoke mean T max
 /artifacts report agent_sweep_smoke mean T max html
+```
+
+Local documentation retrieval for repair/code generation is available through
+the Agent-facing tool `simulation_retrieve_api_docs`. It works offline by
+chunking workspace Markdown files, extracting lightweight metadata such as
+domain, COMSOL version mentions, and API symbols, and returning cited compact
+snippets. This is the deterministic precursor to a future embedding/vector RAG
+layer.
+
+```text
+simulation_retrieve_api_docs(query="model.param().set Java API", directory="docs")
 ```
 
 Template records can also be inspected non-interactively:

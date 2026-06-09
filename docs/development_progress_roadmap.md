@@ -23,7 +23,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 99 passed, 1 skipped
+# 101 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -143,7 +143,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `99 passed, 1 skipped`.
+- Full unit test suite passed with `101 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -247,14 +247,17 @@ Exit criteria:
 Goal: upgrade the current local keyword search into a practical COMSOL API
 retrieval layer for repair and code generation.
 
+Status: deterministic offline retrieval foundation complete. A future pass can
+replace or augment keyword scoring with embeddings/vector storage.
+
 Tasks:
 
-1. Index local COMSOL documentation, examples, and exported snippets.
-2. Store chunk metadata with source file, API class/function, version, and
+1. Done: index local Markdown documentation and exported snippets inside the workspace.
+2. Done: store chunk metadata with source file, API symbols, version mentions, and
    domain.
-3. Add a retrieval tool that returns compact, cited API snippets.
-4. Feed retrieved docs into repair prompts for API errors.
-5. Add offline tests for indexing and deterministic retrieval.
+3. Done: add `simulation_retrieve_api_docs`, which returns compact, cited API snippets.
+4. Done: repair prompts now use compact cited snippets from the local retrieval layer.
+5. Done: add offline tests for metadata extraction and deterministic retrieval.
 
 Exit criteria:
 

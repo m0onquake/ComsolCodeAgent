@@ -73,6 +73,35 @@ def simulation_search_local_docs(
         return {"success": False, "error": str(exc)}
 
 
+def simulation_retrieve_api_docs(
+    query: str,
+    directory: str = "docs",
+    pattern: str = "*.md",
+    max_results: int = 5,
+    domain: str | None = None,
+    snippet_chars: int = 700,
+) -> dict:
+    """Retrieve compact, cited local API/documentation snippets for offline RAG."""
+    try:
+        index = build_index_from_directory(directory, pattern=pattern)
+        snippets = index.retrieve_api_docs(
+            query,
+            limit=max_results,
+            domain=domain,
+            snippet_chars=snippet_chars,
+        )
+        return {
+            "success": True,
+            "query": query,
+            "domain": domain,
+            "count": len(snippets),
+            "snippets": snippets,
+            "note": "Offline local retrieval with source citations; no network or embeddings required.",
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 def simulation_list_example_models(domain: str | None = None) -> dict:
     """List built-in COMSOL example models known to this project."""
     try:

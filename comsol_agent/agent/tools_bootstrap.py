@@ -44,6 +44,7 @@ from comsol_agent.tools.simulation import (
     simulation_search_artifacts,
     simulation_search_local_docs,
     simulation_search_templates,
+    simulation_retrieve_api_docs,
     simulation_validate_template,
 )
 
@@ -467,6 +468,45 @@ def register_all_tools() -> None:
             "required": ["query"],
         },
         handler=simulation_search_local_docs,
+    )
+
+    register_sync(
+        name="simulation_retrieve_api_docs",
+        description=(
+            "Retrieve compact, cited snippets from local COMSOL/project documentation for "
+            "API repair, code generation, and simulation setup guidance without network access."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Retrieval query such as 'model.param().set Java API' or 'Heat Transfer physics setup'.",
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "Workspace-relative directory to search. Defaults to docs.",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern for documents. Defaults to *.md.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum snippets to return.",
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain filter such as thermal, structural, fluid, electromagnetic, or general.",
+                },
+                "snippet_chars": {
+                    "type": "integer",
+                    "description": "Approximate maximum characters per returned snippet.",
+                },
+            },
+            "required": ["query"],
+        },
+        handler=simulation_retrieve_api_docs,
     )
 
     register_sync(
