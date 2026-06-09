@@ -419,6 +419,29 @@ This verifies that the LLM can see and select `simulation_run_parameter_sweep`,
 that the Agent loop dispatches it through the registry, and that the real COMSOL
 runtime completes the requested sweep case.
 
+Run the P5 end-to-end demo sequence:
+
+```bash
+.venv/bin/python scripts/run_agent_fullflow_demo.py --cores 1 \
+  --archive-path runtime_smoke/fullflow_demo.sqlite3 \
+  --artifact-root runtime_smoke/fullflow_demo \
+  --report-dir runtime_smoke/fullflow_demo/reports \
+  --max-cases 1
+```
+
+This asks the agent to:
+
+1. search, validate, and run the thermal template on a newly created model;
+2. run a small parameter sweep and export an HTML report;
+3. inspect the archived sweep artifact and recommend next steps.
+
+For offline review without calling DeepSeek or COMSOL, print the reproducible
+prompt fixture:
+
+```bash
+.venv/bin/python scripts/run_agent_fullflow_demo.py --print-prompts
+```
+
 ## Current verified local environment
 
 - COMSOL version: 6.2

@@ -24,7 +24,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 105 passed, 1 skipped
+# 107 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -147,7 +147,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `105 passed, 1 skipped`.
+- Full unit test suite passed with `107 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -322,13 +322,19 @@ Exit criteria:
 
 Goal: demonstrate that DeepSeek can orchestrate the implemented workflow.
 
+Status: reproducible P5 demo script and offline prompt fixture are implemented.
+The real COMSOL/DeepSeek run remains an environment-dependent smoke check.
+
 Tasks:
 
-1. Ask the agent to find a thermal template, validate it, run it on a new model,
-   and report the artifact path.
-2. Ask the agent to run a small parameter sweep and export an HTML report.
-3. Ask the agent to inspect a previous artifact and recommend next steps.
-4. Save each demo as a smoke script or reproducible prompt fixture.
+1. Done: `scripts/run_agent_fullflow_demo.py` asks the agent to find a thermal
+   template, validate it, run it on a new model, and report the artifact path.
+2. Done: the same script asks the agent to run a small parameter sweep and
+   export an HTML report.
+3. Done: the script extracts the sweep artifact run id and asks the agent to
+   inspect it with `simulation_read_artifact` before recommending next steps.
+4. Done: `--print-prompts` emits the reproducible prompt fixture without
+   starting DeepSeek or COMSOL.
 
 Exit criteria:
 

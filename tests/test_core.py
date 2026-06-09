@@ -2683,6 +2683,63 @@ class TestParameterSweeps:
         assert html_path.exists()
         assert "<!doctype html>" in html_path.read_text(encoding="utf-8")
 
+    def test_agent_fullflow_demo_prints_reproducible_prompts(self):
+        import json
+        import subprocess
+        import sys
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_agent_fullflow_demo.py",
+                "--print-prompts",
+                "--archive-path",
+                "runtime_smoke/fullflow_demo.sqlite3",
+                "--artifact-root",
+                "runtime_smoke/fullflow_demo",
+                "--report-dir",
+                "runtime_smoke/fullflow_demo/reports",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        prompts = json.loads(completed.stdout)
+        assert [prompt["name"] for prompt in prompts] == [
+            "template_run",
+            "sweep_report",
+            "artifact_inspection",
+        ]
+        required = {tool for prompt in prompts for tool in prompt["required_tools"]}
+        assert {
+            "simulation_search_templates",
+            "simulation_validate_template",
+            "simulation_run_template",
+            "simulation_run_parameter_sweep",
+            "simulation_export_artifact_report",
+            "simulation_read_artifact",
+        }.issubset(required)
+        assert "output_format='html'" in prompts[1]["prompt"]
+        assert "<sweep_run_id>" in prompts[2]["prompt"]
+
+    def test_agent_fullflow_demo_extracts_latest_artifact_run_id(self):
+        from scripts.run_agent_fullflow_demo import _latest_artifact_run_id
+
+        assert _latest_artifact_run_id(
+            [
+                {
+                    "name": "simulation_export_artifact_report",
+                    "payload": {"report": {"report_id": "report_1"}},
+                },
+                {
+                    "name": "simulation_run_parameter_sweep",
+                    "payload": {"artifacts": {"run_id": "sweep_1"}},
+                },
+            ],
+            preferred_tool="simulation_run_parameter_sweep",
+        ) == "sweep_1"
+
     def test_simulation_rerun_artifact_replays_with_overrides(
         self,
         monkeypatch,
