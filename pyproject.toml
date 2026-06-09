@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comsol-agent"
+version = "0.1.0"
+description = "AI-powered code agent for automated COMSOL Multiphysics simulation workflows"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Comsol Agent Team"}
+]
+keywords = ["comsol", "simulation", "ai-agent", "fea", "multiphysics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # COMSOL bridge
+    "MPh>=1.2.0",
+    # LLM
+    "openai>=1.60.0",
+    "anthropic>=0.40.0",
+    # CLI
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+    "click>=8.0.0",
+    # Memory / Vector
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    # Utilities
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.0",
+    "httpx>=0.27.0",
+    "tiktoken>=0.7.0",
+    # Visualization
+    "matplotlib>=3.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.5.0",
+    "mypy>=1.11.0",
+]
+web = [
+    "gradio>=4.0.0",
+]
+
+[project.scripts]
+comsol-agent = "comsol_agent.main:main"
+
+[tool.setuptools.packages.find]
+include = ["comsol_agent*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
