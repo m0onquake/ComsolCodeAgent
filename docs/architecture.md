@@ -1365,9 +1365,13 @@ create(name) → ModelHandle
 get_model(name) → ModelHandle  # raises KeyError
 save(name, filepath?) → str (saved path)
 close(name, save?) → None
-execute_java(java_code, model_name?) → str
+execute_java(java_code, model_name?) → str  # low-level client output
 get_model_summary(name) → str
 ```
+
+Agent-facing `comsol_execute_java` wraps the low-level output into a structured
+tool result with `success`, `output`, `stdout`, `error`, `exception_type`,
+`error_type`, `modified`, and `model_name` fields.
 
 ### Tool Handler
 

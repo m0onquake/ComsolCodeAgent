@@ -235,6 +235,10 @@ def register_all_tools() -> None:
                     "type": "string",
                     "description": "Target model name. Uses the first loaded model if omitted.",
                 },
+                "validate_first": {
+                    "type": "boolean",
+                    "description": "Run offline Java/API template validation before execution. Defaults to false.",
+                },
             },
             "required": ["java_code"],
         },

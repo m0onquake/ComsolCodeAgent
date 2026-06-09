@@ -293,7 +293,7 @@ try:
     # Execute the Java code using JPype/JNI
 {indented_code}
 except Exception as _e:
-    output.write(f"Error: {{_e}}")
+    output.write(f"Error: {{type(_e).__name__}}: {{_e}}")
 """,
                 {"model": java_model},
                 local_vars,
@@ -304,7 +304,7 @@ except Exception as _e:
             return result
         except Exception as e:
             log.error(f"Java execution error: {e}")
-            return f"Execution Error: {e}"
+            return f"Execution Error: {type(e).__name__}: {e}"
 
     def java_to_python(self, java_code: str) -> str:
         """Convert Java API code to MPh Python equivalent.

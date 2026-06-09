@@ -23,7 +23,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 96 passed, 1 skipped
+# 99 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -143,7 +143,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `96 passed, 1 skipped`.
+- Full unit test suite passed with `99 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -223,21 +223,24 @@ Exit criteria:
 Goal: make `comsol_execute_java` safer, easier to debug, and better aligned
 with the repair system.
 
+Status: core tool hardening complete. Future repair-specific prompt tuning can
+build on the new structured fields.
+
 Tasks:
 
-1. Add a focused unit test for multi-line Java/API execution wrapping.
-2. Return structured fields from `comsol_execute_java`, such as `stdout`,
+1. Done: added focused unit tests for multi-line Java/API execution wrapping.
+2. Done: return structured fields from `comsol_execute_java`, such as `stdout`,
    `error`, and `exception_type`, instead of only a single output string.
-3. Record whether execution modified the model.
-4. Add optional dry-run validation that reuses `simulation_validate_template`.
-5. Improve error classification so repair reports can identify syntax, API, and
+3. Done: record whether execution marked the model as modified.
+4. Done: added optional dry-run validation that reuses `simulation_validate_template`.
+5. Done: improved error classification so repair reports can identify syntax, API, and
    runtime failures separately.
 
 Exit criteria:
 
 - Multi-line snippets are covered by tests.
 - Failure payloads are structured enough for the repair analyzer.
-- Existing COMSOL smoke scripts still pass.
+- Existing COMSOL template smoke still passes with the structured execution payload.
 
 ### P2: Build Local COMSOL Docs RAG
 

@@ -3123,6 +3123,72 @@ class TestCOMSOLRuntimeConfig:
         }
         COMSOLClient.reset_instance()
 
+    def test_comsol_execute_java_tool_returns_structured_success(self):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+        from comsol_agent.tools.comsol.solve import comsol_execute_java
+
+        class FakeJavaModel:
+            def __init__(self):
+                self.values = {}
+
+            def param(self):
+                return self
+
+            def set(self, name, value):
+                self.values[name] = value
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        fake_model = FakeJavaModel()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake"] = ModelHandle(name="fake", java_model=fake_model)
+
+        result = comsol_execute_java(
+            "model.param().set('power', '10[W]');",
+            model_name="fake",
+        )
+
+        assert result["success"] is True
+        assert result["stdout"] == "Code executed successfully (no output)."
+        assert result["error"] is None
+        assert result["exception_type"] is None
+        assert result["error_type"] is None
+        assert result["modified"] is True
+        assert client.get_model("fake").is_modified is True
+        COMSOLClient.reset_instance()
+
+    def test_comsol_execute_java_tool_classifies_api_errors(self):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+        from comsol_agent.tools.comsol.solve import comsol_execute_java
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake"] = ModelHandle(name="fake", java_model=object())
+
+        result = comsol_execute_java("model.no_such_method();", model_name="fake")
+
+        assert result["success"] is False
+        assert result["stdout"] == ""
+        assert result["exception_type"] == "AttributeError"
+        assert result["error_type"] == "API_ERROR"
+        assert "no_such_method" in result["error"]
+        assert result["modified"] is True
+        COMSOLClient.reset_instance()
+
+    def test_comsol_execute_java_tool_can_validate_before_execution(self):
+        from comsol_agent.tools.comsol.solve import comsol_execute_java
+
+        result = comsol_execute_java("System.exit(0);", validate_first=True)
+
+        assert result["success"] is False
+        assert result["exception_type"] == "ValidationError"
+        assert result["error_type"] == "VALIDATION_ERROR"
+        assert result["modified"] is False
+        assert any("System.exit" in error for error in result["validation"]["errors"])
+
     def test_comsol_evaluate_array_sample_is_flat_and_compact(self):
         np = pytest.importorskip("numpy")
         from comsol_agent.tools.comsol.solve import _sample_array

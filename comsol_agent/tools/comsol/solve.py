@@ -126,7 +126,9 @@ def comsol_evaluate(model_name: str, expression: str) -> dict:
 
 
 def comsol_execute_java(
-    java_code: str, model_name: str | None = None
+    java_code: str,
+    model_name: str | None = None,
+    validate_first: bool = False,
 ) -> dict:
     """Execute Java code against a COMSOL model.
 
@@ -141,26 +143,59 @@ def comsol_execute_java(
         dict with execution output.
     """
     try:
+        if validate_first:
+            validation = _validate_java_code_before_execution(java_code, model_name)
+            if validation.get("validation", {}).get("errors"):
+                return {
+                    "success": False,
+                    "output": "",
+                    "stdout": "",
+                    "error": "Java/API validation failed.",
+                    "exception_type": "ValidationError",
+                    "error_type": "VALIDATION_ERROR",
+                    "modified": False,
+                    "validation": validation.get("validation"),
+                    **({"model_name": model_name} if model_name else {}),
+                }
+
         client = get_client()
+        target_model_name = _resolve_execution_model_name(client, model_name)
         output = client.execute_java(java_code, model_name)
-        is_error = output.startswith("Error:") or output.startswith("Execution Error:")
+        parsed = _parse_java_execution_output(output)
 
         result = {
-            "success": not is_error,
+            "success": parsed["success"],
             "output": output,
+            "stdout": parsed["stdout"],
+            "error": parsed["error"],
+            "exception_type": parsed["exception_type"],
+            "error_type": parsed["error_type"],
+            "modified": False,
         }
-        if model_name:
-            result["model_name"] = model_name
-            # Mark model as modified (Java code may have changed it)
+        if validate_first:
+            result["validation"] = validation.get("validation")
+        if target_model_name:
+            result["model_name"] = target_model_name
+            # Mark model as modified because Java code may have partially changed it.
             try:
-                handle = client.get_model(model_name)
+                handle = client.get_model(target_model_name)
                 handle.is_modified = True
+                result["modified"] = True
             except Exception:
                 pass
 
         return result
     except Exception as e:
-        return {"success": False, "error": f"Java execution failed: {e}"}
+        return {
+            "success": False,
+            "output": "",
+            "stdout": "",
+            "error": f"Java execution failed: {e}",
+            "exception_type": type(e).__name__,
+            "error_type": "RUNTIME_ERROR",
+            "modified": False,
+            **({"model_name": model_name} if model_name else {}),
+        }
 
 
 def comsol_get_model_summary(model_name: str) -> dict:
@@ -189,3 +224,79 @@ def _sample_array(result, max_values: int = 10) -> list:
         return flattened
     half = max(1, max_values // 2)
     return flattened[:half] + ["..."] + flattened[-half:]
+
+
+def _resolve_execution_model_name(client: COMSOLClient, model_name: str | None) -> str | None:
+    if model_name:
+        return model_name
+    models = client.models
+    if not models:
+        return None
+    return next(iter(models))
+
+
+def _validate_java_code_before_execution(java_code: str, model_name: str | None) -> dict:
+    from comsol_agent.tools.simulation import simulation_validate_template
+
+    return simulation_validate_template(
+        name=model_name or "java_execution",
+        java_code=java_code,
+    )
+
+
+def _parse_java_execution_output(output: str) -> dict:
+    if output.startswith("Execution Error:"):
+        error = output.removeprefix("Execution Error:").strip()
+        exception_type, message = _split_exception_message(error)
+        return {
+            "success": False,
+            "stdout": "",
+            "error": message,
+            "exception_type": exception_type,
+            "error_type": _classify_java_execution_error(exception_type, message, wrapper_error=True),
+        }
+    if output.startswith("Error:"):
+        error = output.removeprefix("Error:").strip()
+        exception_type, message = _split_exception_message(error)
+        return {
+            "success": False,
+            "stdout": "",
+            "error": message,
+            "exception_type": exception_type,
+            "error_type": _classify_java_execution_error(exception_type, message, wrapper_error=False),
+        }
+    return {
+        "success": True,
+        "stdout": output,
+        "error": None,
+        "exception_type": None,
+        "error_type": None,
+    }
+
+
+def _split_exception_message(error: str) -> tuple[str | None, str]:
+    if ":" not in error:
+        return None, error
+    maybe_type, message = error.split(":", 1)
+    maybe_type = maybe_type.strip()
+    if maybe_type and maybe_type.replace("_", "").replace(".", "").isalnum():
+        return maybe_type, message.strip()
+    return None, error
+
+
+def _classify_java_execution_error(
+    exception_type: str | None,
+    message: str,
+    *,
+    wrapper_error: bool,
+) -> str:
+    lowered = message.lower()
+    if exception_type == "SyntaxError" or "invalid syntax" in lowered:
+        return "SYNTAX_ERROR"
+    if exception_type in {"AttributeError", "TypeError"}:
+        return "API_ERROR"
+    if any(pattern in lowered for pattern in ("no method", "has no attribute", "not found")):
+        return "API_ERROR"
+    if wrapper_error:
+        return "WRAPPER_ERROR"
+    return "RUNTIME_ERROR"
