@@ -1,5 +1,7 @@
 # COMSOL Agent
 
+新架构的 COMSOL 生成式仿真智能体。
+
 AI-powered code agent for automated COMSOL Multiphysics simulation workflows.
 
 ## Overview
