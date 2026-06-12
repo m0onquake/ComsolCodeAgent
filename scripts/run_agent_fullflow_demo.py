@@ -112,7 +112,9 @@ def build_inspect_prompt(*, archive_path: str, run_id: str) -> DemoPrompt:
             f"Inspect the archived simulation artifact {run_id!r} using "
             "simulation_read_artifact. If needed, first use simulation_search_artifacts "
             "to confirm it exists. Then recommend concrete next simulation steps based "
-            "on the artifact preview. Use archive_path="
+            "only on the artifact preview and its physics domain; do not introduce "
+            "unrelated fluid, structural, or electromagnetic workflows unless the "
+            "artifact itself mentions them. Use archive_path="
             f"{archive_path!r} and keep the recommendation concise."
         ),
         required_tools=("simulation_read_artifact",),
@@ -278,18 +280,42 @@ def _compact_summaries(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "missing_calls": summary["missing_calls"],
             "missing_successes": summary["missing_successes"],
             "artifacts": [
-                {
-                    "tool": result["name"],
-                    "run_id": (result["payload"].get("artifacts") or {}).get("run_id"),
-                    "report_id": (result["payload"].get("report") or {}).get("report_id"),
-                    "path": (result["payload"].get("report") or {}).get("path"),
-                    "html_path": (result["payload"].get("report") or {}).get("html_path"),
-                }
+                _compact_tool_artifact(result)
                 for result in summary["new_tool_results"]
-                if result["payload"].get("artifacts") or result["payload"].get("report")
+                if _has_compact_artifact(result)
             ],
         })
     return compact
+
+
+def _has_compact_artifact(result: dict[str, Any]) -> bool:
+    payload = result["payload"]
+    return bool(payload.get("artifacts") or payload.get("artifact") or payload.get("report"))
+
+
+def _compact_tool_artifact(result: dict[str, Any]) -> dict[str, Any]:
+    payload = result["payload"]
+    report = payload.get("report") or {}
+    artifact = payload.get("artifact") or {}
+    artifacts = payload.get("artifacts")
+    item: dict[str, Any] = {
+        "tool": result["name"],
+        "report_id": report.get("report_id"),
+        "path": report.get("path"),
+        "html_path": report.get("html_path"),
+    }
+    if isinstance(artifacts, dict):
+        item["run_id"] = artifacts.get("run_id")
+    elif isinstance(artifacts, list):
+        item["run_ids"] = [
+            entry.get("run_id")
+            for entry in artifacts
+            if isinstance(entry, dict) and entry.get("run_id")
+        ]
+        item["artifact_count"] = len(artifacts)
+    if isinstance(artifact, dict) and artifact.get("run_id"):
+        item["run_id"] = artifact.get("run_id")
+    return {key: value for key, value in item.items() if value not in (None, [], {})}
 
 
 def _parse_sweep_parameters(assignments: list[str]) -> dict[str, list[str]]:

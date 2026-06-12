@@ -18,7 +18,7 @@ def estimate_tokens(text: str, model: str = "gpt-4o") -> int:
         except KeyError:
             enc = tiktoken.get_encoding("cl100k_base")
         return len(enc.encode(text))
-    except ImportError:
+    except Exception:
         # Rough fallback: ~4 characters per token for English text
         return max(1, len(text) // 4)
 

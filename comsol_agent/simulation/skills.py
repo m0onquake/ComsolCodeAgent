@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,7 @@ class SimulationSkill:
 
     def matches(self, text: str) -> bool:
         lowered = text.lower()
-        return any(keyword.lower() in lowered for keyword in self.keywords)
+        return any(_keyword_matches(lowered, keyword.lower()) for keyword in self.keywords)
 
     def context_text(self) -> str:
         return (
@@ -126,6 +127,11 @@ BUILTIN_SKILLS: tuple[SimulationSkill, ...] = (
 def list_skills() -> list[SimulationSkill]:
     """Return built-in simulation skills."""
     return list(BUILTIN_SKILLS)
+
+
+def _keyword_matches(text: str, keyword: str) -> bool:
+    escaped = re.escape(keyword)
+    return re.search(rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])", text) is not None
 
 
 def get_skill(name: str) -> SimulationSkill:

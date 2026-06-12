@@ -344,6 +344,23 @@ class TestTokenCounter:
         tokens = estimate_tokens("Hello world")
         assert tokens > 0
 
+    def test_estimate_tokens_falls_back_when_tiktoken_encoding_fails(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        from comsol_agent.utils.token_counter import estimate_tokens
+
+        def fail(*args, **kwargs):
+            raise RuntimeError("offline")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "tiktoken",
+            SimpleNamespace(encoding_for_model=fail, get_encoding=fail),
+        )
+
+        assert estimate_tokens("offline fallback works") > 0
+
     def test_estimate_messages(self):
         from comsol_agent.utils.token_counter import estimate_messages_tokens
 
@@ -1837,6 +1854,12 @@ class TestSimulationSkills:
         assert "[Simulation skill: thermal]" in message["content"]
         assert "Heat Transfer" in message["content"]
 
+    def test_skill_matching_uses_keyword_boundaries(self):
+        from comsol_agent.simulation.skills import match_skills
+
+        assert [skill.name for skill in match_skills("runtime_smoke/fullflow_demo")] == []
+        assert [skill.name for skill in match_skills("laminar flow in a channel")] == ["fluid"]
+
     def test_seed_builtin_templates(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.simulation.skills import seed_builtin_templates
@@ -2739,6 +2762,43 @@ class TestParameterSweeps:
             ],
             preferred_tool="simulation_run_parameter_sweep",
         ) == "sweep_1"
+
+    def test_agent_fullflow_demo_compacts_artifact_lists(self):
+        from scripts.run_agent_fullflow_demo import _compact_summaries
+
+        compact = _compact_summaries([
+            {
+                "name": "artifact_inspection",
+                "success": True,
+                "observed_tools": ["simulation_search_artifacts"],
+                "missing_calls": [],
+                "missing_successes": [],
+                "new_tool_results": [
+                    {
+                        "name": "simulation_search_artifacts",
+                        "payload": {
+                            "success": True,
+                            "artifacts": [
+                                {"run_id": "run_a"},
+                                {"run_id": "run_b"},
+                            ],
+                        },
+                    },
+                    {
+                        "name": "simulation_read_artifact",
+                        "payload": {
+                            "success": True,
+                            "artifact": {"run_id": "run_a"},
+                        },
+                    },
+                ],
+            }
+        ])
+
+        artifacts = compact[0]["artifacts"]
+        assert artifacts[0]["artifact_count"] == 2
+        assert artifacts[0]["run_ids"] == ["run_a", "run_b"]
+        assert artifacts[1]["run_id"] == "run_a"
 
     def test_simulation_rerun_artifact_replays_with_overrides(
         self,

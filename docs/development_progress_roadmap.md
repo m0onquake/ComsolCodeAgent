@@ -24,7 +24,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 107 passed, 1 skipped
+# 110 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -147,7 +147,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `107 passed, 1 skipped`.
+- Full unit test suite passed with `110 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -158,6 +158,8 @@ Confirmed in the latest development pass:
 - The generated artifact was read back through `scripts/read_artifact.py`, and
   `simulation_search_artifacts("template_smoke_model")` found the
   `template_execution` archive record with `execution_success: true`.
+- The P5 real fullflow demo passed with DeepSeek, local COMSOL, workspace
+  archive records, HTML report export, and artifact inspection.
 - During this pass, two Java/API execution wrapping issues were fixed:
   multi-line snippets are now indented before `exec`, and Java-style `//` line
   comments are stripped before execution.
@@ -173,6 +175,22 @@ Verified real template execution command:
   --artifact-dir runtime_smoke/template_runs \
   --cores 1
 ```
+
+Verified real P5 fullflow command:
+
+```bash
+.venv/bin/python scripts/run_agent_fullflow_demo.py --cores 1 \
+  --archive-path runtime_smoke/fullflow_demo.sqlite3 \
+  --artifact-root runtime_smoke/fullflow_demo \
+  --report-dir runtime_smoke/fullflow_demo/reports \
+  --max-cases 1
+```
+
+Latest successful fullflow records:
+
+- Template run: `agent_fullflow_template_20260612_194538_230532`
+- Sweep run: `agent_fullflow_sweep_20260612_194550_032970`
+- HTML report: `agent_fullflow_sweep_report_20260612_194559_722856`
 
 If this is run from the Codex sandbox, COMSOL may require elevated execution
 because it writes logs under `~/Library/Preferences/COMSOL/...` and probes local
@@ -322,8 +340,8 @@ Exit criteria:
 
 Goal: demonstrate that DeepSeek can orchestrate the implemented workflow.
 
-Status: reproducible P5 demo script and offline prompt fixture are implemented.
-The real COMSOL/DeepSeek run remains an environment-dependent smoke check.
+Status: complete. The real COMSOL/DeepSeek fullflow demo passed and produced
+workspace archive/report artifacts.
 
 Tasks:
 
@@ -353,13 +371,17 @@ python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
 ```
 
-3. Rerun the real template execution smoke with COMSOL.
-4. If the smoke passes, proceed with P1.
-5. If it fails, inspect the generated `runtime_smoke/template_runs/*.json`
-   artifact and repair the lowest-level failure first.
+3. Rerun the real template execution smoke with COMSOL when changing template
+   execution or Java/API wrapping.
+4. Rerun `scripts/run_agent_fullflow_demo.py` when changing AgentLoop,
+   high-level simulation tools, archive records, or reporting.
+5. If either smoke fails, inspect the generated runtime artifact JSON first and
+   repair the lowest-level failure.
 
 ## Pause Decision
 
-Development can pause here. The project has a tested offline state and a clear
-next real-runtime verification step. The most important unfinished verification
-is the post-patch real COMSOL template execution smoke.
+Development can pause here. The project has a tested offline state and a
+verified real COMSOL/DeepSeek fullflow smoke. The next substantial development
+pass should define a new roadmap item, such as first-class artifacts for
+example-model runs and raw Java/API calls, richer report analytics, or a
+frontend/GUI layer.
