@@ -270,6 +270,21 @@ Template records can also be inspected non-interactively:
   --params-json '{"power": "25[W]"}'
 ```
 
+The built-in structural bearing-contact seed can be inspected and smoke-tested
+in the same template system:
+
+```bash
+.venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_hertz_seed
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1
+```
+
+The full bearing smoke creates a default 2D ball/raceway model, runs the default
+stationary study, evaluates `solid.mises` and `contact_pressure_guess`, and
+exports a von Mises PNG under `runtime_smoke/bearing_contact_template_smoke/`.
+This is a workflow smoke case, not yet a production-grade 3D multi-ball contact
+model.
+
 Template export uses the same local path safety model as file tools. Output
 paths are allowed under the project workspace and `~/.comsol_agent` by default.
 For an additional trusted directory, set:
@@ -440,6 +455,16 @@ prompt fixture:
 
 ```bash
 .venv/bin/python scripts/run_agent_fullflow_demo.py --print-prompts
+```
+
+Run the bearing-contact agent demo fixture:
+
+```bash
+.venv/bin/python scripts/run_agent_bearing_contact_demo.py --print-prompts
+.venv/bin/python scripts/run_agent_bearing_contact_demo.py --cores 1 \
+  --archive-path runtime_smoke/bearing_contact_demo.sqlite3 \
+  --artifact-root runtime_smoke/bearing_contact_demo \
+  --report-dir runtime_smoke/bearing_contact_demo/reports
 ```
 
 ## Current verified local environment

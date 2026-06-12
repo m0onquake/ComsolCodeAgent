@@ -80,7 +80,7 @@ model.component('comp1').material('mat_steel').propertyGroup('def').set('poisson
 model.component('comp1').material('mat_steel').propertyGroup('def').set('density', 'rho_steel');
 model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
 model.component('comp1').physics('solid').create('fix_race', 'Fixed', 1);
-model.component('comp1').physics('solid').feature('fix_race').selection().all();
+model.component('comp1').physics('solid').feature('fix_race').selection().set([2]);
 model.component('comp1').physics('solid').create('ball_load', 'BoundaryLoad', 1);
 model.component('comp1').physics('solid').feature('ball_load').selection().all();
 model.component('comp1').physics('solid').feature('ball_load').set('FperArea', ['0', '-contact_pressure_guess', '0']);

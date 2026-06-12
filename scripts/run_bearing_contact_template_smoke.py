@@ -103,6 +103,7 @@ def _compact_result(result: dict) -> dict:
         "value",
         "plot_type",
         "filepath",
+        "export_method",
         "error",
         "message",
     )

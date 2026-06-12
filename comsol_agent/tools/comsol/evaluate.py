@@ -6,6 +6,7 @@ Re-exports core functions from solve.py and adds export/plot capabilities.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .client import COMSOLClient
 
@@ -103,7 +104,17 @@ def comsol_plot(
         export_path = Path(filename).expanduser().resolve()
         export_path.parent.mkdir(parents=True, exist_ok=True)
 
-        mph_model.export("image", str(export_path))
+        try:
+            mph_model.export("image", str(export_path))
+            export_method = "mph"
+        except Exception as primary_exc:
+            export_method = _export_plot_image_via_java(
+                handle.java_model,
+                export_path,
+                expression=expression,
+                plot_type=plot_type,
+                primary_error=primary_exc,
+            )
 
         return {
             "success": True,
@@ -111,9 +122,86 @@ def comsol_plot(
             "plot_type": plot_type,
             "expression": expression or "default",
             "filepath": str(export_path),
+            "export_method": export_method,
             "message": f"Plot saved to {export_path}.",
         }
     except KeyError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": f"Plot failed: {e}"}
+
+
+def _export_plot_image_via_java(
+    java_model: Any,
+    export_path: Path,
+    *,
+    expression: str | None,
+    plot_type: str,
+    primary_error: Exception,
+) -> str:
+    """Fallback image export for generated models without MPh's default export node."""
+    result = java_model.result()
+    plot_group = _select_or_create_plot_group(result, expression=expression, plot_type=plot_type)
+    export = result.export()
+    export_tag = _unique_tag(_tags(export), "img_codex")
+    last_error: Exception | None = None
+    for export_type in ("Image2D", "Image"):
+        try:
+            export.create(export_tag, export_type)
+            image_export = result.export(export_tag)
+            image_export.set("plotgroup", plot_group)
+            _set_first_supported(image_export, ("pngfilename", "filename"), str(export_path))
+            image_export.run()
+            return f"java:{export_type}"
+        except Exception as exc:
+            last_error = exc
+            try:
+                export.remove(export_tag)
+            except Exception:
+                pass
+    raise RuntimeError(f"{primary_error}; Java image export fallback failed: {last_error}")
+
+
+def _select_or_create_plot_group(result: Any, *, expression: str | None, plot_type: str) -> str:
+    tags = _tags(result)
+    if tags:
+        return tags[0]
+
+    plot_group = "pg_codex"
+    result.create(plot_group, "PlotGroup2D")
+    if expression:
+        feature_type = {
+            "surface": "Surface",
+            "contour": "Contour",
+            "arrow": "ArrowSurface",
+        }.get(plot_type.lower(), "Surface")
+        result(plot_group).create("plot_codex", feature_type)
+        result(plot_group).feature("plot_codex").set("expr", expression)
+    return plot_group
+
+
+def _set_first_supported(node: Any, keys: tuple[str, ...], value: str) -> None:
+    last_error: Exception | None = None
+    for key in keys:
+        try:
+            node.set(key, value)
+            return
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"Could not set any of {keys}: {last_error}")
+
+
+def _tags(node: Any) -> list[str]:
+    try:
+        return [str(tag) for tag in node.tags()]
+    except Exception:
+        return []
+
+
+def _unique_tag(existing: list[str], prefix: str) -> str:
+    if prefix not in existing:
+        return prefix
+    index = 1
+    while f"{prefix}_{index}" in existing:
+        index += 1
+    return f"{prefix}_{index}"

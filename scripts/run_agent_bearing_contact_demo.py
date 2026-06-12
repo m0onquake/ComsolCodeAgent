@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from comsol_agent.agent.loop import AgentLoop
 from comsol_agent.agent.tools_bootstrap import register_all_tools
 from comsol_agent.agent.tool_registry import clear as clear_tools
-from comsol_agent.cli.config import load_config
+from comsol_agent.cli.config import get_config_dir, load_config
 from comsol_agent.llm.router import create_provider
 from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.simulation.skills import seed_builtin_templates
@@ -61,17 +61,21 @@ def build_bearing_contact_prompts(
                 "A user asks: build a realistic ball-bearing contact simulation, but "
                 "only says 'make a bearing model and show stress results'. Treat this "
                 "as a quick default demo: use the built-in defaults instead of asking "
-                "follow-up questions, but clearly list the assumptions. Search for "
-                f"the bearing contact template {template_name!r}, read it, validate it, "
-                f"then run it on a newly created COMSOL model named {model_name!r}. "
-                "Use simulation_search_templates, simulation_read_template, "
-                "simulation_validate_template, and simulation_run_template. Pass "
-                "close_model=false so follow-up result tools can use the model. Persist "
-                "results with artifact_name='agent_bearing_contact_default', "
-                f"artifact_dir={artifact_dir!r}, archive_path={archive_path!r}. "
-                "After the template run succeeds, solve the default study, evaluate "
-                "'solid.mises' and 'contact_pressure_guess', export a stress image with "
-                f"comsol_plot to {stress_plot!r}, then close the model without saving. "
+                "follow-up questions, but clearly list the assumptions. Use only this "
+                "deterministic tool chain, in this order: simulation_search_templates, "
+                "simulation_read_template, simulation_validate_template, "
+                "simulation_run_template, comsol_solve, comsol_evaluate, comsol_evaluate, "
+                "comsol_plot, comsol_close_model. Do not call file tools, local-doc tools, "
+                "simulation_save_template, comsol_execute_java, or comsol_get_model_summary. "
+                f"Search for, read, and validate the exact template {template_name!r}; every "
+                f"simulation_* template call must include archive_path={archive_path!r}. "
+                f"Run it on a newly created COMSOL model named {model_name!r}. For "
+                "simulation_run_template use close_model=false, "
+                "artifact_name='agent_bearing_contact_default', "
+                f"artifact_dir={artifact_dir!r}, and archive_path={archive_path!r}. "
+                "After the template run succeeds, call comsol_solve without study_name, "
+                "evaluate 'solid.mises' and 'contact_pressure_guess', export a stress image "
+                f"with comsol_plot to {stress_plot!r}, then close the model without saving. "
                 "Report the template_execution artifact run_id, JSON path, plot path, "
                 "default bearing dimensions, radial load, contact assumptions, and "
                 "stress/contact result summary."
@@ -86,7 +90,13 @@ def build_bearing_contact_prompts(
                 "comsol_plot",
                 "comsol_close_model",
             ),
-            successful_tools=("simulation_run_template", "comsol_solve", "comsol_evaluate"),
+            successful_tools=(
+                "simulation_run_template",
+                "comsol_solve",
+                "comsol_evaluate",
+                "comsol_plot",
+                "comsol_close_model",
+            ),
         ),
         DemoPrompt(
             name="bearing_contact_artifact_report",
@@ -116,11 +126,12 @@ async def run_bearing_contact_demo(args: argparse.Namespace) -> int:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
 
     config = load_config()
-    config.agent.max_tool_iterations = max(config.agent.max_tool_iterations, args.max_tool_iterations)
+    config.agent.max_tool_iterations = args.max_tool_iterations
     clear_tools()
     register_all_tools()
     archive_store = ArchiveStore(archive_path)
     seed_builtin_templates(archive_store)
+    seed_builtin_templates(ArchiveStore(get_config_dir() / "archive" / "archive.sqlite3"))
 
     provider = create_provider(
         config.llm.provider,

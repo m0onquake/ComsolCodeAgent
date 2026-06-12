@@ -1921,8 +1921,11 @@ class TestSimulationSkills:
         assert "quick default demo" in prompts[0].prompt
         assert "simulation_read_template" in prompts[0].required_tools
         assert "comsol_solve" in prompts[0].required_tools
+        assert "comsol_plot" in prompts[0].successful_tools
         assert "close_model=false" in prompts[0].prompt
         assert "solid.mises" in prompts[0].prompt
+        assert "Do not call file tools" in prompts[0].prompt
+        assert "comsol_execute_java" in prompts[0].prompt
         assert "bearing_contact_hertz_seed" in prompts[0].prompt
         assert prompts[1].name == "bearing_contact_artifact_report"
 
@@ -3656,6 +3659,74 @@ class TestCOMSOLRuntimeConfig:
         sample = _sample_array(np.arange(24).reshape(3, 8), max_values=6)
 
         assert sample == [0, 1, 2, "...", 21, 22, 23]
+
+    def test_comsol_plot_falls_back_to_java_image_export(self, tmp_path):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+        from comsol_agent.tools.comsol.evaluate import comsol_plot
+
+        class FakeMPhModel:
+            def export(self, export_type, filepath):
+                raise RuntimeError('Node "exports/image" does not exist in model tree.')
+
+        class FakeExportFeature:
+            def __init__(self):
+                self.values = {}
+
+            def set(self, key, value):
+                self.values[key] = value
+
+            def run(self):
+                Path(self.values["pngfilename"]).write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        class FakeExportList:
+            def __init__(self):
+                self.features = {}
+
+            def tags(self):
+                return list(self.features)
+
+            def create(self, tag, export_type):
+                self.features[tag] = FakeExportFeature()
+
+            def remove(self, tag):
+                self.features.pop(tag, None)
+
+        class FakeResult:
+            def __init__(self):
+                self.exports = FakeExportList()
+
+            def tags(self):
+                return ["pg_stress"]
+
+            def export(self, tag=None):
+                if tag is None:
+                    return self.exports
+                return self.exports.features[tag]
+
+        class FakeJavaModel:
+            def __init__(self):
+                self.fake_result = FakeResult()
+
+            def result(self):
+                return self.fake_result
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake"] = ModelHandle(
+            name="fake",
+            java_model=FakeJavaModel(),
+            mph_model=FakeMPhModel(),
+        )
+
+        target = tmp_path / "plot.png"
+        result = comsol_plot("fake", expression="solid.mises", filename=str(target))
+
+        assert result["success"] is True
+        assert result["export_method"] == "java:Image2D"
+        assert target.read_bytes().startswith(b"\x89PNG")
+        COMSOLClient.reset_instance()
 
 
 class TestFileOps:
