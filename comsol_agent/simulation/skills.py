@@ -25,8 +25,11 @@ class SimulationSkill:
     template_params: dict[str, Any]
 
     def matches(self, text: str) -> bool:
+        return self.match_score(text) > 0
+
+    def match_score(self, text: str) -> int:
         lowered = text.lower()
-        return any(_keyword_matches(lowered, keyword.lower()) for keyword in self.keywords)
+        return sum(1 for keyword in self.keywords if _keyword_matches(lowered, keyword.lower()))
 
     def context_text(self) -> str:
         return (
@@ -37,6 +40,89 @@ class SimulationSkill:
             "Common checks:\n"
             + "\n".join(f"- {check}" for check in self.common_checks)
         )
+
+
+BEARING_CONTACT_TEMPLATE_CODE = """model.param().set('inner_diameter', '25[mm]');
+model.param().set('outer_diameter', '52[mm]');
+model.param().set('bearing_width', '15[mm]');
+model.param().set('ball_count', '8');
+model.param().set('ball_diameter', '7.94[mm]');
+model.param().set('groove_radius_factor', '0.52');
+model.param().set('radial_load', '1000[N]');
+model.param().set('load_share_factor', '0.22');
+model.param().set('friction_coefficient', '0.05');
+model.param().set('contact_interference', '2[um]');
+model.param().set('E_steel', '210[GPa]');
+model.param().set('nu_steel', '0.30');
+model.param().set('rho_steel', '7850[kg/m^3]');
+model.param().set('contact_span', '12[mm]');
+model.param().set('raceway_depth', '3[mm]');
+model.param().set('raceway_height', '6[mm]');
+model.param().set('mesh_contact_size', '0.08[mm]');
+model.param().set('mesh_bulk_size', '0.8[mm]');
+model.param().set('per_ball_load', 'radial_load*load_share_factor');
+model.param().set('contact_pressure_guess', 'per_ball_load/(bearing_width*ball_diameter)');
+model.component().create('comp1', True);
+model.component('comp1').geom().create('geom1', 2);
+model.component('comp1').geom('geom1').lengthUnit('mm');
+model.component('comp1').geom('geom1').create('raceway', 'Rectangle');
+model.component('comp1').geom('geom1').feature('raceway').set('size', ['contact_span', 'raceway_height']);
+model.component('comp1').geom('geom1').feature('raceway').set('base', 'center');
+model.component('comp1').geom('geom1').feature('raceway').set('pos', ['0', '-raceway_height/2']);
+model.component('comp1').geom('geom1').create('ball', 'Circle');
+model.component('comp1').geom('geom1').feature('ball').set('r', 'ball_diameter/2');
+model.component('comp1').geom('geom1').feature('ball').set('pos', ['0', 'ball_diameter/2-contact_interference']);
+model.component('comp1').geom('geom1').run();
+model.component('comp1').material().create('mat_steel', 'Common');
+model.component('comp1').material('mat_steel').label('Bearing steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('youngsmodulus', 'E_steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('poissonsratio', 'nu_steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('density', 'rho_steel');
+model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+model.component('comp1').physics('solid').create('fix_race', 'Fixed', 1);
+model.component('comp1').physics('solid').feature('fix_race').selection().all();
+model.component('comp1').physics('solid').create('ball_load', 'BoundaryLoad', 1);
+model.component('comp1').physics('solid').feature('ball_load').selection().all();
+model.component('comp1').physics('solid').feature('ball_load').set('FperArea', ['0', '-contact_pressure_guess', '0']);
+model.component('comp1').mesh().create('mesh1');
+model.component('comp1').mesh('mesh1').autoMeshSize(3);
+model.study().create('std1');
+model.study('std1').create('stat', 'Stationary');
+model.study('std1').feature('stat').set('activate', ['solid', 'on']);
+model.result().numerical().create('max_von_mises', 'MaxVolume');
+model.result().numerical('max_von_mises').set('expr', 'solid.mises');
+model.result().numerical().create('max_contact_pressure_estimate', 'EvalGlobal');
+model.result().numerical('max_contact_pressure_estimate').set('expr', 'contact_pressure_guess');
+model.result().create('pg_stress', 'PlotGroup2D');
+model.result('pg_stress').label('von Mises stress');
+model.result('pg_stress').create('surf_stress', 'Surface');
+model.result('pg_stress').feature('surf_stress').set('expr', 'solid.mises');
+output.write('Bearing contact seed built: 2D plane-strain Hertz-style ball/raceway contact cell with default deep-groove bearing parameters. Review generated boundary selections before production solves.');
+"""
+
+
+BEARING_CONTACT_DEFAULTS: dict[str, str] = {
+    "inner_diameter": "25[mm]",
+    "outer_diameter": "52[mm]",
+    "bearing_width": "15[mm]",
+    "ball_count": "8",
+    "ball_diameter": "7.94[mm]",
+    "groove_radius_factor": "0.52",
+    "radial_load": "1000[N]",
+    "load_share_factor": "0.22",
+    "friction_coefficient": "0.05",
+    "contact_interference": "2[um]",
+    "E_steel": "210[GPa]",
+    "nu_steel": "0.30",
+    "rho_steel": "7850[kg/m^3]",
+    "contact_span": "12[mm]",
+    "raceway_depth": "3[mm]",
+    "raceway_height": "6[mm]",
+    "mesh_contact_size": "0.08[mm]",
+    "mesh_bulk_size": "0.8[mm]",
+    "per_ball_load": "radial_load*load_share_factor",
+    "contact_pressure_guess": "per_ball_load/(bearing_width*ball_diameter)",
+}
 
 
 BUILTIN_SKILLS: tuple[SimulationSkill, ...] = (
@@ -79,6 +165,50 @@ BUILTIN_SKILLS: tuple[SimulationSkill, ...] = (
             "// Add geometry, material, Solid Mechanics physics, mesh, and study before solve."
         ),
         template_params={"E": "210[GPa]", "nu": "0.3"},
+    ),
+    SimulationSkill(
+        name="bearing_contact",
+        domain="structural",
+        description=(
+            "Deep-groove ball bearing contact simulations using Solid Mechanics, "
+            "Hertz/contact assumptions, and stress/contact-pressure postprocessing."
+        ),
+        keywords=(
+            "bearing",
+            "ball bearing",
+            "deep groove",
+            "raceway",
+            "rolling element",
+            "hertz",
+            "hertzian",
+            "contact",
+            "轴承",
+            "滚珠",
+            "接触",
+            "赫兹",
+        ),
+        physics_interfaces=("Solid Mechanics (solid)", "Contact pair/contact feature", "Stationary study"),
+        key_parameters=(
+            "inner_diameter",
+            "outer_diameter",
+            "bearing_width",
+            "ball_count",
+            "ball_diameter",
+            "radial_load",
+            "friction_coefficient",
+            "contact_interference",
+            "mesh_contact_size",
+        ),
+        common_checks=(
+            "If the user omits bearing parameters, ask for bearing type, dimensions, load, and material; if they want a quick demo, use the template defaults and state the assumptions.",
+            "Start from the built-in bearing_contact_hertz_seed template before drafting new contact code.",
+            "For tractable first runs, use a 2D plane-strain single-ball/raceway contact cell; full 3D multi-ball contact is a heavier follow-up model.",
+            "Refine mesh near contact boundaries and check convergence/contact pressure before trusting peak stress values.",
+            "Report von Mises stress, displacement, estimated/contact pressure, and exported stress plot paths when available.",
+        ),
+        template_name="bearing_contact_hertz_seed",
+        template_java_code=BEARING_CONTACT_TEMPLATE_CODE,
+        template_params=BEARING_CONTACT_DEFAULTS,
     ),
     SimulationSkill(
         name="electromagnetic",
@@ -145,7 +275,15 @@ def get_skill(name: str) -> SimulationSkill:
 
 def match_skills(text: str, limit: int = 2) -> list[SimulationSkill]:
     """Match skills by domain keywords."""
-    matches = [skill for skill in BUILTIN_SKILLS if skill.matches(text)]
+    matches = [
+        skill
+        for _, skill in sorted(
+            ((skill.match_score(text), skill) for skill in BUILTIN_SKILLS),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        if skill.matches(text)
+    ]
     return matches[:limit]
 
 

@@ -1,6 +1,6 @@
 # Development Progress and Roadmap
 
-Last updated: 2026-06-09
+Last updated: 2026-06-13
 
 This document records the current pause point for COMSOL Agent development and
 the recommended plan for the next development pass.
@@ -83,6 +83,11 @@ the syntax failure seen when executing multi-line templates.
   `simulation_rerun_artifact`.
 - Sweep comparison plus Markdown/HTML report export are implemented.
 - Template execution Markdown/HTML report export is implemented.
+- A first bearing-contact agent demo path is now implemented around the
+  `bearing_contact_hertz_seed` template. It gives the agent a default
+  deep-groove ball-bearing contact case, a missing-parameter/default policy,
+  and a reproducible prompt fixture for template execution, solving, evaluation,
+  plot export attempts, and reporting.
 
 ### Archive and Memory
 
@@ -108,6 +113,13 @@ Implemented template capabilities:
 - `simulation_export_template`
 - `simulation_validate_template`
 - `simulation_run_template`
+
+Built-in template domains now include a structural bearing-contact seed:
+
+- `bearing_contact_hertz_seed`: default deep-groove ball-bearing contact setup
+  using a tractable 2D plane-strain single-ball/raceway Hertz-style contact cell.
+  It is intended to run the agent/tool/archive workflow before escalating to a
+  heavier full 3D multi-ball contact model.
 
 Interactive commands:
 
@@ -135,6 +147,8 @@ Script entry points:
   --create-model-name template_smoke_model \
   --artifact-dir runtime_smoke/template_runs \
   --cores 1
+.venv/bin/python scripts/run_agent_bearing_contact_demo.py --print-prompts
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve
 ```
 
 Template export path safety follows the same model as file tools:
@@ -212,6 +226,10 @@ ports.
   tests. Continue using workspace archive paths for smoke tests.
 - Template execution is verified for the current built-in thermal seed template.
   More complex geometry/physics templates still need real COMSOL validation.
+- The bearing-contact default path is implemented and covered by offline tests.
+  Real COMSOL smoke testing has reached model setup, template execution,
+  stationary solve, and result evaluation. True contact-pair setup, nonzero
+  stress validation, and robust PNG export remain the next COMSOL API targets.
 
 ## Next Development Plan
 
@@ -358,6 +376,87 @@ Exit criteria:
 
 - DeepSeek tool calling, COMSOL runtime, archive records, and reporting all work
   together in repeatable demos.
+
+### P6: Bearing Contact Simulation Agent Path
+
+Goal: make the agent capable of handling a realistic bearing-contact request by
+asking for missing parameters or using a default demo case, then producing
+COMSOL setup code, execution artifacts, and stress/contact-result guidance.
+
+Status: first implementation complete for the default-case workflow; real
+COMSOL contact-solve validation remains the next runtime checkpoint.
+
+Implemented:
+
+1. Added `bearing_contact` as a structural simulation skill with keywords for
+   ball bearings, raceways, Hertz/Hertzian contact, and Chinese user queries
+   such as "轴承" and "接触".
+2. Added `bearing_contact_hertz_seed`, with default parameters for a deep-groove
+   ball bearing: 25 mm inner diameter, 52 mm outer diameter, 15 mm width,
+   8 balls, 7.94 mm ball diameter, 1000 N radial load, bearing steel, small
+   interference, friction coefficient, and contact mesh-size assumptions.
+3. Updated the system prompt so the agent distinguishes between parameters that
+   require follow-up questions and quick-demo requests where defaults are
+   acceptable.
+4. Added `scripts/run_agent_bearing_contact_demo.py`, including `--print-prompts`
+   for offline fixture review and a real mode that seeds templates, starts
+   COMSOL, runs the agent, keeps the model open for solving/evaluation, archives
+   template execution, and exports an HTML template execution report.
+5. Added `scripts/run_bearing_contact_template_smoke.py` for direct local COMSOL
+   validation without LLM variability.
+
+Default modeling scope:
+
+- The first default case is a 2D plane-strain single-ball/raceway contact cell,
+  not a full 3D multi-ball bearing assembly.
+- The expected outputs are von Mises stress, displacement, estimated/contact
+  pressure, JSON/template-execution artifacts, and report paths. Stress image
+  export is attempted by the demo path, but robust export-node creation still
+  needs tool-layer hardening.
+
+Runtime validation on local COMSOL 6.2:
+
+- `scripts/list_templates.py --run bearing_contact_hertz_seed ...` now succeeds
+  for template setup and archives a `template_execution` artifact.
+- `scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve`
+  succeeds for direct model setup and archival.
+- `scripts/run_bearing_contact_template_smoke.py --cores 1` succeeds through
+  default stationary solve and evaluates:
+  - `solid.mises`: array result currently all zeros because the first smoke
+    template uses intentionally broad boundary selections.
+  - `contact_pressure_guess`: approximately `1.847e6` in SI units for the
+    default load-sharing estimate.
+- `comsol_plot` currently fails on this generated model with
+  `Node "exports/image" does not exist in model tree`; the next pass should
+  create/run COMSOL image export nodes when a plot group exists.
+
+Next runtime checkpoint:
+
+```bash
+.venv/bin/python scripts/run_agent_bearing_contact_demo.py --print-prompts
+.venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_hertz_seed
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve
+```
+
+Then, with COMSOL permissions available:
+
+```bash
+.venv/bin/python scripts/run_agent_bearing_contact_demo.py --cores 1 \
+  --archive-path runtime_smoke/bearing_contact_demo.sqlite3 \
+  --artifact-root runtime_smoke/bearing_contact_demo \
+  --report-dir runtime_smoke/bearing_contact_demo/reports
+```
+
+Next implementation details:
+
+1. Replace broad smoke-test boundary selections with named geometry/contact
+   selections so fixed raceway and loaded ball/groove boundaries do not overlap.
+2. Add a real COMSOL contact pair/contact feature once the version-specific API
+   calls are verified locally.
+3. Harden `comsol_plot` by creating an image export node from an existing plot
+   group when MPh's default `export("image", ...)` path is missing.
+4. Add a heavier optional 3D multi-ball model path after the 2D contact cell
+   produces nonzero stress and stable plots.
 
 ## Resume Checklist
 

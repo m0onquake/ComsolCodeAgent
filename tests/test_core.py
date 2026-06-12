@@ -381,6 +381,8 @@ class TestSystemPrompt:
         prompt = build_system_prompt()
         assert "COMSOL" in prompt
         assert "tool" in prompt.lower()
+        assert "Missing Parameters and Defaults" in prompt
+        assert "bearing_contact_hertz_seed" in prompt
 
     def test_domain_prompt(self):
         from comsol_agent.agent.prompt import build_system_prompt
@@ -1860,6 +1862,18 @@ class TestSimulationSkills:
         assert [skill.name for skill in match_skills("runtime_smoke/fullflow_demo")] == []
         assert [skill.name for skill in match_skills("laminar flow in a channel")] == ["fluid"]
 
+    def test_bearing_contact_skill_matching_ranks_specific_skill_first(self):
+        from comsol_agent.simulation.skills import build_skill_context_message, match_skills
+
+        skills = match_skills("Build a ball bearing Hertz contact stress model")
+        message = build_skill_context_message(skills)
+
+        assert skills
+        assert skills[0].name == "bearing_contact"
+        assert message is not None
+        assert "bearing_contact_hertz_seed" in message["content"]
+        assert "2D plane-strain single-ball/raceway contact cell" in message["content"]
+
     def test_seed_builtin_templates(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.simulation.skills import seed_builtin_templates
@@ -1867,9 +1881,50 @@ class TestSimulationSkills:
         archive = ArchiveStore(tmp_path / "archive.sqlite3")
         templates = seed_builtin_templates(archive)
 
-        assert len(templates) >= 4
+        assert len(templates) >= 5
         assert archive.get_template("thermal_heat_transfer_seed").domain == "thermal"
         assert archive.list_templates(domain="fluid")[0].name == "fluid_flow_seed"
+        bearing_template = archive.get_template("bearing_contact_hertz_seed")
+        assert bearing_template.domain == "structural"
+        assert bearing_template.params["radial_load"] == "1000[N]"
+        assert "SolidMechanics" in bearing_template.java_code
+
+    def test_bearing_contact_template_validates_offline(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.simulation.skills import seed_builtin_templates
+        from comsol_agent.tools.simulation import simulation_validate_template
+
+        archive_path = tmp_path / "archive.sqlite3"
+        seed_builtin_templates(ArchiveStore(archive_path))
+
+        result = simulation_validate_template(
+            name="bearing_contact_hertz_seed",
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["validation"]["errors"] == []
+        assert "radial_load" in result["validation"]["params_checked"]
+
+    def test_bearing_contact_demo_prompt_fixture(self):
+        from scripts.run_agent_bearing_contact_demo import build_bearing_contact_prompts
+
+        prompts = build_bearing_contact_prompts(
+            archive_path="runtime_smoke/bearing_contact_demo.sqlite3",
+            artifact_root="runtime_smoke/bearing_contact_demo",
+            report_dir="runtime_smoke/bearing_contact_demo/reports",
+            template_name="bearing_contact_hertz_seed",
+            model_name="agent_bearing_contact_model",
+        )
+
+        assert prompts[0].name == "bearing_contact_default_run"
+        assert "quick default demo" in prompts[0].prompt
+        assert "simulation_read_template" in prompts[0].required_tools
+        assert "comsol_solve" in prompts[0].required_tools
+        assert "close_model=false" in prompts[0].prompt
+        assert "solid.mises" in prompts[0].prompt
+        assert "bearing_contact_hertz_seed" in prompts[0].prompt
+        assert prompts[1].name == "bearing_contact_artifact_report"
 
     def test_template_tools_list_and_read_seeded_templates(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
