@@ -31,7 +31,7 @@ local agent prototype:
 ```bash
 python3 -m compileall -q comsol_agent tests scripts
 python3 -m pytest -q
-# 110 passed, 1 skipped
+# 120 passed, 1 skipped
 ```
 
 The current working directory is now a Git repository on branch `main`, tracking
@@ -96,6 +96,11 @@ the syntax failure seen when executing multi-line templates.
   it should enter a controlled generated-code path that drafts new COMSOL
   Java/API setup code, validates it offline, optionally saves it as a reusable
   template, executes it against an explicit model, and archives the result.
+- The first P7 generated-code fallback tool and smoke script are implemented:
+  `simulation_plan_generated_code` builds the controlled prompt scaffold and
+  `scripts/run_generated_code_fallback_smoke.py` verifies raw Java/API code can
+  flow through validation, execution, solve/evaluate/plot, archive, and template
+  promotion without relying on a pre-existing template.
 - The bearing-contact agent demo path now supports two built-in bearing
   templates: `bearing_contact_hertz_seed` for the lighter Hertz-style pressure
   workflow, and `bearing_contact_pair_seed` for a more realistic 2D COMSOL
@@ -128,6 +133,7 @@ Implemented template capabilities:
 - `simulation_export_template`
 - `simulation_validate_template`
 - `simulation_run_template`
+- `simulation_plan_generated_code`
 
 Templates are part of the agent's memory and quality-control system, not a
 hard limit on what it can model. Future development should add a generated-code
@@ -196,7 +202,7 @@ Template export path safety follows the same model as file tools:
 Confirmed in the latest development pass:
 
 - Python compilation passed for `comsol_agent`, `tests`, and `scripts`.
-- Full unit test suite passed with `110 passed, 1 skipped`.
+- Full unit test suite passed with `120 passed, 1 skipped`.
 - `scripts/list_templates.py --validate thermal_heat_transfer_seed` passed
   earlier against a workspace archive.
 - `scripts/list_templates.py --validate-file ...` passed earlier against the
@@ -563,21 +569,25 @@ the main product direction is a generative COMSOL assistant that can draft,
 validate, execute, repair, archive, and optionally promote new Java/API setup
 code.
 
-Status: planned. The lower-level pieces already exist: local docs retrieval,
+Status: initial implementation complete for the controlled planning layer and a
+real raw-code smoke. The lower-level pieces already exist: local docs retrieval,
 template validation, `comsol_execute_java`, `simulation_run_template`, repair
-reports, archive records, and template saving. The next pass should connect
-them into an explicit agent workflow and prompt policy.
+reports, archive records, and template saving. The first pass connected them
+through `simulation_plan_generated_code`, updated the system prompt, and added
+`scripts/run_generated_code_fallback_smoke.py` as a non-template raw-code
+workflow smoke.
 
 Required behavior:
 
-1. Start every new simulation request by classifying the domain, physics,
+1. Done for the planning tool: start every new simulation request by
+   classifying the domain, physics,
    geometry, materials, boundary conditions, mesh needs, study type, outputs,
    and missing parameters.
-2. Search/read existing templates first. If a template fits, use it. If no
+2. Done for the planning tool: search/read existing templates first. If a template fits, use it. If no
    template fits, switch to generated-code mode instead of forcing an unrelated
    template.
-3. Inject a controlled code-generation prompt block into the LLM context. The
-   block should include:
+3. Done for the planning tool: inject a controlled code-generation prompt block into the LLM context. The
+   block includes:
    - the user's modeling intent and resolved/defaulted parameters;
    - relevant local COMSOL API snippets from `simulation_retrieve_api_docs`;
    - allowed operations and an explicit target model policy;
@@ -585,14 +595,58 @@ Required behavior:
      plus a structured parameter manifest when needed;
    - validation rules, including unit-aware parameters, explicit geometry,
      material, physics, mesh, study, and result nodes.
-4. Validate generated code offline with `simulation_validate_template`.
-5. Execute only against a newly created model or a user-confirmed loaded model.
+4. Done in smoke script: validate generated code offline with
+   `simulation_validate_template`.
+5. Done in smoke script for newly created models: execute only against a newly
+   created model or a user-confirmed loaded model.
 6. On failure, feed structured execution errors plus retrieved docs back into
    the repair loop and retry within bounded iterations.
-7. Persist generated code, validation output, execution payload, model paths,
+7. Done for template-execution artifacts: persist generated code, validation output, execution payload, model paths,
    plots, and reports as archive artifacts.
-8. Offer to save successful generated code as a reusable template with a domain,
+8. Done in smoke script: offer to save successful generated code as a reusable template with a domain,
    parameter manifest, assumptions, and verification notes.
+
+Runtime validation on local COMSOL 6.2:
+
+- Offline generated-code smoke:
+
+```bash
+python3 scripts/run_generated_code_fallback_smoke.py --skip-comsol \
+  --archive-path runtime_smoke/generated_code_fallback_skip.sqlite3
+```
+
+- Real generated-code COMSOL smoke:
+
+```bash
+.venv/bin/python scripts/run_generated_code_fallback_smoke.py --cores 1 \
+  --archive-path runtime_smoke/generated_code_fallback.sqlite3 \
+  --artifact-dir runtime_smoke/generated_code_fallback/template_runs \
+  --plot-path runtime_smoke/generated_code_fallback/von_mises.png
+```
+
+Latest observed real-smoke result:
+
+- Plan mode: `generated_code_fallback`, `ready_to_generate=true`, domain
+  `structural`.
+- Raw generated-code template execution run id:
+  `generated_code_structural_smoke_20260612_220134_447451`.
+- Solve succeeded in about `1.6` seconds.
+- `solid.mises` evaluated with maximum about `2.206e6` Pa.
+- Stress PNG exported to `runtime_smoke/generated_code_fallback/von_mises.png`.
+- Successful raw code was saved as reusable template
+  `generated_structural_plate_seed` in the workspace smoke archive.
+
+Remaining P7 work:
+
+1. Add a full DeepSeek agent demo that makes the LLM itself produce the raw
+   Java/API code using `simulation_plan_generated_code`, then validates and runs
+   it.
+2. Add first-class artifact kind/reporting for generated-code runs instead of
+   reusing only `template_execution` artifacts.
+3. Wire structured failure output from `simulation_run_template` into a bounded
+   generated-code repair retry loop.
+4. Add richer prompt-time extraction of code parameters versus modeling
+   decisions so validation payloads are automatically clean.
 
 Non-goals and guardrails:
 

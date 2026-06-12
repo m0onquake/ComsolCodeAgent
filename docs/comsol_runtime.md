@@ -202,6 +202,9 @@ Agent-facing tools are:
 - `simulation_run_template`: validate and execute a template against an explicit loaded or newly created model
 - `simulation_export_template`: export a template to an editable `.java` seed file
 - `simulation_save_template`: save or update a reusable COMSOL Java/API template
+- `simulation_plan_generated_code`: plan the controlled generated-code fallback
+  path, including template candidates, local API snippets, a strict code-output
+  prompt block, validation params, and next tool chain
 - `simulation_list_artifacts`: list recent archived simulation artifacts
 - `simulation_search_artifacts`: search by run id, model name, source, paths, or metadata
 - `simulation_read_artifact`: read a compact preview of a specific archived run or report
@@ -242,6 +245,24 @@ policy is template-first, generated-code fallback:
 This generated-code path is the main way the assistant grows beyond the bundled
 examples. Bearing contact remains a representative validation case, not the
 overall product boundary.
+
+Run the current generated-code fallback smoke without starting COMSOL:
+
+```bash
+python3 scripts/run_generated_code_fallback_smoke.py --skip-comsol \
+  --archive-path runtime_smoke/generated_code_fallback_skip.sqlite3
+```
+
+Run the real local COMSOL smoke. This uses raw Java/API code embedded in the
+script as a stand-in for LLM code output, then exercises the same validation,
+execution, solve/evaluate/plot, archive, and template-promotion path:
+
+```bash
+.venv/bin/python scripts/run_generated_code_fallback_smoke.py --cores 1 \
+  --archive-path runtime_smoke/generated_code_fallback.sqlite3 \
+  --artifact-dir runtime_smoke/generated_code_fallback/template_runs \
+  --plot-path runtime_smoke/generated_code_fallback/von_mises.png
+```
 
 Inside the interactive CLI, use slash commands for quick artifact review:
 

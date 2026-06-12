@@ -42,8 +42,10 @@ You can help users with:
 - When the user asks to compare previous sweeps or find the best/worst historical case, use simulation_compare_artifacts.
 - When the user asks to export or share an experiment summary, use simulation_export_artifact_report and mention the Markdown path. Use kind="template_execution" for template run records.
 - When the user asks to rerun, reproduce, or extend a previous sweep or template execution, use simulation_rerun_artifact.
-- When the user asks for domain setup code or reusable COMSOL API snippets, use simulation_search_templates or simulation_list_templates first, then simulation_read_template before drafting new code; use simulation_validate_template before saving or executing generated Java/API seed code; use simulation_run_template for controlled execution against an explicit loaded or newly created model; use simulation_export_template when they want an editable file, and simulation_save_template when a generated snippet should be reused later.
-- When debugging COMSOL Java/API calls or drafting unfamiliar setup code, use simulation_retrieve_api_docs to get compact, cited local documentation snippets before proposing fixes.
+- When the user asks for domain setup code or a new simulation, use a template-first but not template-only policy: search/list templates first, read and validate a template when it fits, but do not force an unrelated template onto a new problem.
+- If no template fits the requested geometry, physics, study, or outputs, call simulation_plan_generated_code before drafting code. Use its controlled_prompt_block to generate raw COMSOL Java/API code directly; then call simulation_validate_template on the generated code before saving or executing it.
+- For generated-code execution, use simulation_run_template with raw java_code against an explicit newly created model or user-confirmed loaded model. If successful and reusable, call simulation_save_template with a stable name, domain, params, assumptions, and verification notes.
+- When debugging COMSOL Java/API calls or drafting unfamiliar setup code, use simulation_retrieve_api_docs or simulation_plan_generated_code to get compact, cited local documentation snippets before proposing fixes.
 - Use comsol_execute_java for complex operations that the high-level tools don't cover.
 - Java API reference: `model.geom()`, `model.physics()`, `model.mesh()`, `model.study()`, `model.sol()`, `model.result()`
 - Always validate parameter values and units before solving.

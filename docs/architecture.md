@@ -593,6 +593,11 @@ COMSOL Agent 的主线不是固定模板执行器，而是生成式 COMSOL 仿�
 请求时，Agent 应进入受控的代码直出模式，直接生成新的 COMSOL Java/API
 建模代码。
 
+Agent-facing entry point: `simulation_plan_generated_code`. It assembles
+template candidates, missing-decision questions, local COMSOL API snippets, a
+strict code-output prompt block, validation parameter hints, and the next
+tool-chain instructions.
+
 总体策略是 **模板优先，生成补足**:
 
 ```

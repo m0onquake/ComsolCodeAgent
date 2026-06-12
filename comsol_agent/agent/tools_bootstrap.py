@@ -34,6 +34,7 @@ from comsol_agent.tools.simulation import (
     simulation_list_artifacts,
     simulation_list_example_models,
     simulation_list_templates,
+    simulation_plan_generated_code,
     simulation_plan_bearing_contact,
     simulation_plan_parameter_sweep,
     simulation_read_artifact,
@@ -540,6 +541,62 @@ def register_all_tools() -> None:
             "required": ["query"],
         },
         handler=simulation_retrieve_api_docs,
+    )
+
+    register_sync(
+        name="simulation_plan_generated_code",
+        description=(
+            "Plan the controlled generated-code fallback path when no existing COMSOL template fits. "
+            "Returns template candidates, cited local API snippets, missing modeling decisions, a "
+            "strict prompt block for LLM Java/API code generation, safety rules, and the next tool chain."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's simulation request in natural language.",
+                },
+                "known_params": {
+                    "type": "object",
+                    "description": "Known or defaulted modeling parameters, dimensions, materials, boundary conditions, and outputs.",
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain such as thermal, structural, fluid, electromagnetic, acoustic, or general.",
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "Whether low-risk missing values may be filled with explicit defaults.",
+                },
+                "preferred_model_name": {
+                    "type": "string",
+                    "description": "Optional explicit target model name. Prefer creating a new model when omitted.",
+                },
+                "docs_directory": {
+                    "type": "string",
+                    "description": "Workspace-relative docs directory for local COMSOL/API retrieval. Defaults to docs.",
+                },
+                "docs_pattern": {
+                    "type": "string",
+                    "description": "Glob pattern for docs retrieval. Defaults to *.md.",
+                },
+                "max_template_results": {
+                    "type": "integer",
+                    "description": "Maximum template candidates to return.",
+                },
+                "max_doc_results": {
+                    "type": "integer",
+                    "description": "Maximum local API snippets to return.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path. Defaults to ~/.comsol_agent/archive/archive.sqlite3.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_generated_code,
     )
 
     register_sync(

@@ -268,6 +268,103 @@ def simulation_retrieve_api_docs(
         return {"success": False, "error": str(exc)}
 
 
+def simulation_plan_generated_code(
+    user_request: str,
+    known_params: dict | None = None,
+    domain: str | None = None,
+    allow_defaults: bool = False,
+    preferred_model_name: str | None = None,
+    docs_directory: str = "docs",
+    docs_pattern: str = "*.md",
+    max_template_results: int = 5,
+    max_doc_results: int = 5,
+    archive_path: str | None = None,
+) -> dict:
+    """Plan a controlled LLM-generated COMSOL Java/API code workflow."""
+    try:
+        normalized_params = _normalize_generated_code_params(known_params or {})
+        validation_params = _generated_code_validation_params(normalized_params)
+        inferred_domain = _infer_simulation_domain(user_request, domain)
+        missing_decisions = _missing_generated_code_decisions(
+            user_request=user_request,
+            known_params=normalized_params,
+        )
+        ready_to_generate = allow_defaults or not missing_decisions
+
+        template_candidates = _generated_code_template_candidates(
+            query=user_request,
+            domain=inferred_domain,
+            limit=max_template_results,
+            archive_path=archive_path,
+        )
+        docs = simulation_retrieve_api_docs(
+            query=_generated_code_docs_query(user_request, inferred_domain),
+            directory=docs_directory,
+            pattern=docs_pattern,
+            max_results=max_doc_results,
+            domain=inferred_domain,
+        )
+        snippets = docs.get("snippets", []) if docs.get("success") else []
+        prompt_block = _generated_code_prompt_block(
+            user_request=user_request,
+            domain=inferred_domain,
+            known_params=normalized_params,
+            missing_decisions=missing_decisions,
+            allow_defaults=allow_defaults,
+            preferred_model_name=preferred_model_name,
+            snippets=snippets,
+        )
+
+        return {
+            "success": True,
+            "mode": "generated_code_fallback",
+            "ready_to_generate": ready_to_generate,
+            "domain": inferred_domain,
+            "known_params": normalized_params,
+            "validation_params": validation_params,
+            "missing_decisions": [] if ready_to_generate else missing_decisions,
+            "follow_up_questions": [] if ready_to_generate else _generated_code_followups(missing_decisions),
+            "template_policy": {
+                "strategy": "template_first_generated_code_fallback",
+                "use_template_if_fit": bool(template_candidates),
+                "candidate_count": len(template_candidates),
+                "candidates": template_candidates,
+                "note": (
+                    "Use a candidate only if it matches the requested geometry, physics, study, and outputs; "
+                    "otherwise generate new COMSOL Java/API code with the controlled prompt block."
+                ),
+            },
+            "retrieval": {
+                "success": docs.get("success", False),
+                "query": docs.get("query"),
+                "count": docs.get("count", 0),
+                "snippets": snippets,
+                "error": docs.get("error"),
+            },
+            "controlled_prompt_block": prompt_block,
+            "next_tool_chain": [
+                "simulation_search_templates",
+                "simulation_read_template if a candidate fits",
+                "simulation_retrieve_api_docs",
+                "LLM returns raw COMSOL Java/API code using controlled_prompt_block",
+                "simulation_validate_template(java_code=generated_code, params=validation_params)",
+                "simulation_run_template(java_code=generated_code, params=validation_params, create_model_name=... or model_name=..., validate_first=true)",
+                "comsol_solve",
+                "comsol_evaluate / comsol_plot",
+                "simulation_export_artifact_report or domain package exporter",
+                "simulation_save_template if the generated code is reusable",
+            ],
+            "safety": {
+                "generated_code_is_untrusted_until_validated": True,
+                "execute_only_against_explicit_model": True,
+                "prefer_new_model": preferred_model_name is None,
+                "archive_every_execution": True,
+            },
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "mode": "generated_code_fallback"}
+
+
 def simulation_list_example_models(domain: str | None = None) -> dict:
     """List built-in COMSOL example models known to this project."""
     try:
@@ -1372,6 +1469,162 @@ def _preview(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max(0, max_chars - 3)] + "..."
+
+
+def _normalize_generated_code_params(params: dict) -> dict[str, str]:
+    normalized = {}
+    for key, value in params.items():
+        if value in (None, ""):
+            continue
+        normalized[str(key).strip()] = str(value).strip()
+    return normalized
+
+
+def _generated_code_validation_params(params: dict[str, str]) -> dict[str, str]:
+    decision_keys = {
+        "geometry",
+        "physics",
+        "material",
+        "boundary_conditions",
+        "study_type",
+        "outputs",
+        "assumptions",
+    }
+    return {key: value for key, value in params.items() if key not in decision_keys}
+
+
+def _infer_simulation_domain(user_request: str, domain: str | None) -> str:
+    if domain and domain.strip():
+        return domain.strip().lower()
+    lowered = user_request.lower()
+    markers = (
+        ("thermal", ("thermal", "heat", "temperature", "温度", "传热", "热")),
+        ("structural", ("structural", "stress", "strain", "solid mechanics", "力学", "应力", "变形", "结构")),
+        ("fluid", ("fluid", "flow", "pressure drop", "velocity", "流体", "流速", "压降")),
+        ("electromagnetic", ("electromagnetic", "electric", "magnetic", "voltage", "current", "电磁", "电场", "磁场", "电流")),
+        ("acoustic", ("acoustic", "pressure acoustics", "sound", "声学", "声压")),
+    )
+    for candidate, keywords in markers:
+        if any(keyword in lowered for keyword in keywords):
+            return candidate
+    return "general"
+
+
+def _missing_generated_code_decisions(*, user_request: str, known_params: dict[str, str]) -> list[str]:
+    lowered = user_request.lower()
+    decision_markers = {
+        "geometry": ("geometry", "2d", "3d", "rectangle", "circle", "cylinder", "几何", "二维", "三维", "圆", "矩形"),
+        "physics": ("physics", "heat transfer", "solid mechanics", "laminar", "electrostatics", "物理", "传热", "固体力学", "流体", "电磁"),
+        "material": ("material", "steel", "copper", "aluminum", "water", "材料", "钢", "铜", "铝", "水"),
+        "boundary_conditions": ("boundary", "load", "fixed", "temperature", "inlet", "outlet", "边界", "载荷", "固定", "入口", "出口"),
+        "study_type": ("stationary", "time", "frequency", "eigen", "study", "稳态", "瞬态", "频域", "研究"),
+        "outputs": ("output", "plot", "evaluate", "stress", "temperature", "pressure", "结果", "云图", "输出", "评估"),
+    }
+    missing = []
+    for decision, markers in decision_markers.items():
+        if decision in known_params:
+            continue
+        if not any(marker in lowered for marker in markers):
+            missing.append(decision)
+    return missing
+
+
+def _generated_code_template_candidates(
+    *,
+    query: str,
+    domain: str,
+    limit: int,
+    archive_path: str | None,
+) -> list[dict]:
+    try:
+        store = _archive_store(archive_path)
+        templates = store.search_templates(
+            query=query,
+            domain=None if domain == "general" else domain,
+            limit=max(0, limit),
+        )
+        if not templates and domain != "general":
+            templates = store.list_templates(domain=domain, limit=max(0, limit))
+    except Exception:
+        return []
+    return [
+        {
+            "name": template.name,
+            "domain": template.domain,
+            "params": template.params,
+            "code_preview": _preview(template.java_code, 220),
+        }
+        for template in templates
+    ]
+
+
+def _generated_code_docs_query(user_request: str, domain: str) -> str:
+    return (
+        f"{domain} COMSOL Java API model.param().set model.component geom physics mesh study result "
+        f"{user_request}"
+    )
+
+
+def _generated_code_followups(missing_decisions: list[str]) -> list[str]:
+    questions = {
+        "geometry": "需要生成什么几何？请说明 2D/3D、主要尺寸和形状。",
+        "physics": "需要使用哪个物理场接口？例如 Heat Transfer、Solid Mechanics、Laminar Flow 等。",
+        "material": "材料和关键物性是什么？如果不确定，我可以使用常见默认值并说明假设。",
+        "boundary_conditions": "边界条件和载荷/激励是什么？请说明固定、温度、入口出口、载荷等。",
+        "study_type": "研究类型是什么？例如稳态、瞬态、频域、特征频率或参数扫描。",
+        "outputs": "希望输出哪些结果？例如最大温度、von Mises 应力、压力场、速度图或导出 PNG。",
+    }
+    return [questions[item] for item in missing_decisions if item in questions]
+
+
+def _generated_code_prompt_block(
+    *,
+    user_request: str,
+    domain: str,
+    known_params: dict[str, str],
+    missing_decisions: list[str],
+    allow_defaults: bool,
+    preferred_model_name: str | None,
+    snippets: list[dict],
+) -> str:
+    params_json = json.dumps(known_params, ensure_ascii=False, sort_keys=True)
+    snippet_lines = []
+    for index, snippet in enumerate(snippets[:5], start=1):
+        citation = snippet.get("citation") or snippet.get("source") or f"snippet-{index}"
+        text = _preview(snippet.get("snippet", ""), 420)
+        snippet_lines.append(f"[{index}] {citation}: {text}")
+    snippets_text = "\n".join(snippet_lines) if snippet_lines else "No local API snippets were retrieved; use conservative COMSOL Java/API patterns only."
+    default_policy = (
+        "You may fill missing low-risk values with explicit defaults and state assumptions in comments."
+        if allow_defaults
+        else "Do not invent missing problem-defining values; ask follow-up questions before code generation if required decisions are missing."
+    )
+    target_policy = (
+        f"Target model name requested by user/tool: {preferred_model_name}."
+        if preferred_model_name
+        else "Prefer execution on a newly created model via simulation_run_template(create_model_name=...)."
+    )
+    missing_text = ", ".join(missing_decisions) if missing_decisions else "none"
+    return (
+        "CONTROLLED COMSOL JAVA/API CODE GENERATION PROMPT\n"
+        "Role: Generate a runnable COMSOL Java/API setup snippet for the current `model` object.\n"
+        f"User request: {user_request}\n"
+        f"Detected domain: {domain}\n"
+        f"Known parameters JSON: {params_json}\n"
+        f"Missing modeling decisions: {missing_text}\n"
+        f"Default policy: {default_policy}\n"
+        f"Target policy: {target_policy}\n"
+        "Local COMSOL/API context:\n"
+        f"{snippets_text}\n\n"
+        "Output rules:\n"
+        "1. Return ONLY executable COMSOL Java/API code for the Python-JPype `model` object; do not include Markdown fences or explanatory prose.\n"
+        "2. Start by setting all explicit parameters with `model.param().set(name, value)` and unit-aware values where applicable.\n"
+        "3. Create or reuse one component, geometry, material, physics interface, mesh, study, and result plot/numerical nodes as needed.\n"
+        "4. Use stable tags and labels; make boundary/entity selections explicit and comment assumptions only when necessary.\n"
+        "5. Include output expressions through result/numerical or plot groups so downstream tools can evaluate and plot them.\n"
+        "6. Avoid disallowed operations such as file deletion, process execution, `System.exit`, or arbitrary Java IO.\n"
+        "7. The next tool MUST be `simulation_validate_template(java_code=<generated code>, params=<unit parameter subset>)`; do not execute before validation passes.\n"
+    )
 
 
 def _template_export_path(name: str, output_path: str | None) -> Path:

@@ -315,6 +315,7 @@ class TestToolRegistry:
         assert "comsol_evaluate" in names
         assert "comsol_set_parameter" in names
         assert "simulation_plan_bearing_contact" in names
+        assert "simulation_plan_generated_code" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
         assert "simulation_retrieve_api_docs" in names
@@ -385,6 +386,8 @@ class TestSystemPrompt:
         assert "tool" in prompt.lower()
         assert "Missing Parameters and Defaults" in prompt
         assert "bearing_contact_hertz_seed" in prompt
+        assert "simulation_plan_generated_code" in prompt
+        assert "template-first but not template-only" in prompt
 
     def test_domain_prompt(self):
         from comsol_agent.agent.prompt import build_system_prompt
@@ -3428,6 +3431,85 @@ class TestLocalDocsSearch:
         assert first["snippet"]
         assert "metadata" in first
         assert "Offline local retrieval" in result["note"]
+
+    def test_simulation_plan_generated_code_returns_controlled_prompt(self, tmp_path, monkeypatch):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.tools.simulation import simulation_plan_generated_code
+
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "thermal_api.md").write_text(
+            "# COMSOL thermal setup\n\n"
+            "Use model.param().set('power', '10[W]') and create Heat Transfer physics with model.component('comp1').physics().create('ht', 'HeatTransfer', 'geom1').\n"
+            "Create geometry with model.component('comp1').geom('geom1').create('r1', 'Rectangle').\n",
+            encoding="utf-8",
+        )
+        archive_path = tmp_path / "archive.sqlite3"
+        ArchiveStore(archive_path).add_template(
+            name="thermal_plate_seed",
+            domain="thermal",
+            java_code="model.param().set('power', '10[W]');",
+            params={"power": "10[W]"},
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = simulation_plan_generated_code(
+            user_request="Build a custom thermal model for a plate with a heat source and plot temperature",
+            known_params={
+                "geometry": "2D plate 10[mm] by 5[mm]",
+                "physics": "Heat Transfer",
+                "material": "copper",
+                "boundary_conditions": "left edge fixed temperature, heat source in center",
+                "study_type": "stationary",
+                "outputs": "max temperature and temperature plot",
+                "power": "10[W]",
+            },
+            domain="thermal",
+            allow_defaults=False,
+            archive_path=str(archive_path),
+            docs_directory="docs",
+        )
+
+        assert result["success"] is True
+        assert result["mode"] == "generated_code_fallback"
+        assert result["ready_to_generate"] is True
+        assert result["validation_params"] == {"power": "10[W]"}
+        assert result["template_policy"]["candidate_count"] == 1
+        assert result["retrieval"]["count"] >= 1
+        prompt = result["controlled_prompt_block"]
+        assert "Return ONLY executable COMSOL Java/API code" in prompt
+        assert "simulation_validate_template" in prompt
+        assert "model.param().set" in prompt
+        assert "unit parameter subset" in prompt
+        assert result["safety"]["generated_code_is_untrusted_until_validated"] is True
+
+    def test_simulation_plan_generated_code_asks_for_missing_decisions(self):
+        from comsol_agent.tools.simulation import simulation_plan_generated_code
+
+        result = simulation_plan_generated_code(
+            user_request="帮我做一个新的仿真模型",
+            known_params={},
+            allow_defaults=False,
+            max_doc_results=1,
+        )
+
+        assert result["success"] is True
+        assert result["ready_to_generate"] is False
+        assert "geometry" in result["missing_decisions"]
+        assert result["follow_up_questions"]
+        assert "Do not invent missing problem-defining values" in result["controlled_prompt_block"]
+
+        defaulted = simulation_plan_generated_code(
+            user_request="先用默认值做一个新的仿真模型",
+            known_params={},
+            allow_defaults=True,
+            max_doc_results=1,
+        )
+
+        assert defaulted["success"] is True
+        assert defaulted["ready_to_generate"] is True
+        assert defaulted["missing_decisions"] == []
+        assert "You may fill missing low-risk values" in defaulted["controlled_prompt_block"]
 
     def test_local_docs_search_rejects_outside_workspace_directory(self):
         from comsol_agent.tools.simulation import simulation_search_local_docs
