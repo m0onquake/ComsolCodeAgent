@@ -390,7 +390,9 @@ Status: first implementation complete for the default-case workflow. Real COMSOL
 smoke validation now reaches template setup, stationary solve, nonzero von Mises
 stress evaluation, contact-pressure estimate evaluation, and PNG plot export.
 The real DeepSeek agent demo now follows the intended high-level tool sequence
-and exports a template execution report.
+and exports a template execution report. A deterministic bearing-contact
+planning tool now decides whether the agent should ask follow-up questions or
+run the default demo with stated assumptions.
 
 Implemented:
 
@@ -413,6 +415,10 @@ Implemented:
 6. Hardened `comsol_plot` so generated models without MPh's default
    `exports/image` node can still create PNG output through a COMSOL Java
    `Image2D` export node.
+7. Added `simulation_plan_bearing_contact`, an offline planning tool that turns
+   a natural-language bearing request plus known parameters into:
+   `ready_to_run`, missing required parameters, follow-up questions, resolved
+   defaults, assumptions, recommended outputs, and next tool steps.
 
 Default modeling scope:
 
@@ -426,6 +432,9 @@ Default modeling scope:
 
 Runtime validation on local COMSOL 6.2:
 
+- `simulation_plan_bearing_contact` returns `ready_to_run=false` with concise
+  follow-up questions for underspecified production-like requests, and
+  `ready_to_run=true` with defaults for quick/default demos.
 - `scripts/list_templates.py --run bearing_contact_hertz_seed ...` now succeeds
   for template setup and archives a `template_execution` artifact.
 - `scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve`
@@ -442,13 +451,13 @@ Runtime validation on local COMSOL 6.2:
 - `scripts/run_agent_bearing_contact_demo.py --cores 1 ...` succeeded with
   DeepSeek and local COMSOL. Latest observed records:
   - Template execution run id:
-    `agent_bearing_contact_default_20260612_203234_619693`
+    `agent_bearing_contact_default_20260612_204032_217801`
   - Stress PNG:
     `runtime_smoke/bearing_contact_demo/bearing_contact_von_mises.png`
   - HTML report:
-    `runtime_smoke/bearing_contact_demo/reports/agent_bearing_contact_report_20260612_203256_923180.html`
+    `runtime_smoke/bearing_contact_demo/reports/agent_bearing_contact_report_20260612_204055_625024.html`
   - Agent-observed tool sequence:
-    `simulation_search_templates -> simulation_read_template -> simulation_validate_template -> simulation_run_template -> comsol_solve -> comsol_evaluate -> comsol_evaluate -> comsol_plot -> comsol_close_model`
+    `simulation_plan_bearing_contact -> simulation_search_templates -> simulation_read_template -> simulation_validate_template -> simulation_run_template -> comsol_solve -> comsol_evaluate -> comsol_evaluate -> comsol_plot -> comsol_close_model`
 
 Next runtime checkpoint:
 

@@ -314,6 +314,7 @@ class TestToolRegistry:
         assert "comsol_solve" in names
         assert "comsol_evaluate" in names
         assert "comsol_set_parameter" in names
+        assert "simulation_plan_bearing_contact" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
         assert "simulation_retrieve_api_docs" in names
@@ -1906,6 +1907,40 @@ class TestSimulationSkills:
         assert result["validation"]["errors"] == []
         assert "radial_load" in result["validation"]["params_checked"]
 
+    def test_bearing_contact_planner_asks_for_required_missing_params(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_contact
+
+        result = simulation_plan_bearing_contact(
+            user_request="建立一个轴承接触仿真，要求尽量真实",
+            provided_params={"radial_load": "1500[N]"},
+        )
+        plan = result["plan"]
+
+        assert result["success"] is True
+        assert plan["ready_to_run"] is False
+        assert plan["mode"] == "clarify_before_run"
+        assert "inner_diameter" in plan["missing_required"]
+        assert "radial_load" not in plan["missing_required"]
+        assert any("内径" in question for question in plan["follow_up_questions"])
+
+    def test_bearing_contact_planner_allows_quick_default_demo(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_contact
+
+        result = simulation_plan_bearing_contact(
+            user_request="先用默认案例跑通一个轴承接触 stress demo",
+            provided_params={"load": "1200[N]", "width": "16[mm]"},
+            allow_defaults=True,
+        )
+        plan = result["plan"]
+
+        assert result["success"] is True
+        assert plan["ready_to_run"] is True
+        assert plan["mode"] == "quick_default_demo"
+        assert plan["template_name"] == "bearing_contact_hertz_seed"
+        assert plan["resolved_params"]["radial_load"] == "1200[N]"
+        assert plan["resolved_params"]["bearing_width"] == "16[mm]"
+        assert "solid.mises" in plan["recommended_outputs"]
+
     def test_bearing_contact_demo_prompt_fixture(self):
         from scripts.run_agent_bearing_contact_demo import build_bearing_contact_prompts
 
@@ -1919,6 +1954,8 @@ class TestSimulationSkills:
 
         assert prompts[0].name == "bearing_contact_default_run"
         assert "quick default demo" in prompts[0].prompt
+        assert "simulation_plan_bearing_contact" in prompts[0].required_tools
+        assert "allow_defaults=true" in prompts[0].prompt
         assert "simulation_read_template" in prompts[0].required_tools
         assert "comsol_solve" in prompts[0].required_tools
         assert "comsol_plot" in prompts[0].successful_tools

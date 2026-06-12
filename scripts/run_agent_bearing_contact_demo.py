@@ -62,10 +62,12 @@ def build_bearing_contact_prompts(
                 "only says 'make a bearing model and show stress results'. Treat this "
                 "as a quick default demo: use the built-in defaults instead of asking "
                 "follow-up questions, but clearly list the assumptions. Use only this "
-                "deterministic tool chain, in this order: simulation_search_templates, "
-                "simulation_read_template, simulation_validate_template, "
-                "simulation_run_template, comsol_solve, comsol_evaluate, comsol_evaluate, "
-                "comsol_plot, comsol_close_model. Do not call file tools, local-doc tools, "
+                "deterministic tool chain, in this order: simulation_plan_bearing_contact, "
+                "simulation_search_templates, simulation_read_template, "
+                "simulation_validate_template, simulation_run_template, comsol_solve, "
+                "comsol_evaluate, comsol_evaluate, comsol_plot, comsol_close_model. "
+                "Call simulation_plan_bearing_contact with allow_defaults=true first, and use "
+                "its assumptions/resolved_params in the final answer. Do not call file tools, local-doc tools, "
                 "simulation_save_template, comsol_execute_java, or comsol_get_model_summary. "
                 f"Search for, read, and validate the exact template {template_name!r}; every "
                 f"simulation_* template call must include archive_path={archive_path!r}. "
@@ -81,6 +83,7 @@ def build_bearing_contact_prompts(
                 "stress/contact result summary."
             ),
             required_tools=(
+                "simulation_plan_bearing_contact",
                 "simulation_search_templates",
                 "simulation_read_template",
                 "simulation_validate_template",
@@ -91,6 +94,7 @@ def build_bearing_contact_prompts(
                 "comsol_close_model",
             ),
             successful_tools=(
+                "simulation_plan_bearing_contact",
                 "simulation_run_template",
                 "comsol_solve",
                 "comsol_evaluate",

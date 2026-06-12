@@ -209,6 +209,8 @@ Agent-facing tools are:
 - `simulation_export_artifact_report`: export a Markdown/HTML report from archived sweep comparisons or template execution runs
 - `simulation_rerun_artifact`: replay archived sweep or template execution artifacts with bounded overrides
 - `simulation_retrieve_api_docs`: retrieve compact, cited local documentation snippets for API repair/code generation
+- `simulation_plan_bearing_contact`: decide whether a bearing-contact request
+  needs follow-up questions or can use the default demo parameters
 
 For isolated tests or project-specific archives, pass `archive_path` to
 `simulation_run_parameter_sweep` and to the list/search tools.
@@ -284,6 +286,22 @@ stationary study, evaluates `solid.mises` and `contact_pressure_guess`, and
 exports a von Mises PNG under `runtime_smoke/bearing_contact_template_smoke/`.
 This is a workflow smoke case, not yet a production-grade 3D multi-ball contact
 model.
+
+Before running a bearing-contact model, the agent can plan missing parameters
+offline:
+
+```text
+simulation_plan_bearing_contact(
+  user_request="建立一个轴承接触仿真，尽量真实",
+  provided_params={"radial_load": "1000[N]"},
+  allow_defaults=false
+)
+```
+
+For underspecified production-like requests, the tool returns follow-up
+questions for dimensions, ball size, load, and contact model assumptions. For a
+quick/default demo, use `allow_defaults=true`; the tool resolves the default
+deep-groove bearing parameters and recommends `bearing_contact_hertz_seed`.
 
 Template export uses the same local path safety model as file tools. Output
 paths are allowed under the project workspace and `~/.comsol_agent` by default.

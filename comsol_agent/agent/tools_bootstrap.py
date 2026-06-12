@@ -33,6 +33,7 @@ from comsol_agent.tools.simulation import (
     simulation_list_artifacts,
     simulation_list_example_models,
     simulation_list_templates,
+    simulation_plan_bearing_contact,
     simulation_plan_parameter_sweep,
     simulation_read_artifact,
     simulation_read_template,
@@ -407,6 +408,37 @@ def register_all_tools() -> None:
     )
 
     # --- Simulation Planning ---
+
+    register_sync(
+        name="simulation_plan_bearing_contact",
+        description=(
+            "Plan a bearing-contact simulation from a natural-language request and known parameters. "
+            "Returns whether to ask follow-up questions or use defaults, plus the recommended "
+            "bearing_contact_hertz_seed template, resolved defaults, assumptions, and outputs."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's bearing/contact simulation request in natural language.",
+                },
+                "provided_params": {
+                    "type": "object",
+                    "description": (
+                        "Known user parameters, e.g. {'inner_diameter': '25[mm]', "
+                        "'outer_diameter': '52[mm]', 'radial_load': '1000[N]'}."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "If true, prepare a quick default demo instead of asking for missing required parameters.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_bearing_contact,
+    )
 
     register_sync(
         name="simulation_plan_parameter_sweep",

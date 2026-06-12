@@ -13,6 +13,7 @@ from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.simulation.artifact_reader import read_archived_artifact
 from comsol_agent.simulation.artifacts import persist_sweep_result
 from comsol_agent.simulation.artifacts import persist_template_execution_result
+from comsol_agent.simulation.bearing_contact import plan_bearing_contact_setup
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
@@ -51,6 +52,30 @@ def simulation_plan_parameter_sweep(
             max_cases=max_cases,
         )
         return {"success": True, "plan": plan.to_dict()}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def simulation_plan_bearing_contact(
+    user_request: str,
+    provided_params: dict | None = None,
+    allow_defaults: bool = False,
+) -> dict:
+    """Plan bearing-contact parameters, defaults, and follow-up questions."""
+    try:
+        plan = plan_bearing_contact_setup(
+            user_request=user_request,
+            provided_params=provided_params or {},
+            allow_defaults=allow_defaults,
+        )
+        return {
+            "success": True,
+            "plan": plan.to_dict(),
+            "note": (
+                "Use this plan before running bearing_contact_hertz_seed. "
+                "If ready_to_run is false, ask follow-up questions instead of starting COMSOL."
+            ),
+        }
     except Exception as exc:
         return {"success": False, "error": str(exc)}
 
