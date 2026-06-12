@@ -83,11 +83,13 @@ the syntax failure seen when executing multi-line templates.
   `simulation_rerun_artifact`.
 - Sweep comparison plus Markdown/HTML report export are implemented.
 - Template execution Markdown/HTML report export is implemented.
-- A first bearing-contact agent demo path is now implemented around the
-  `bearing_contact_hertz_seed` template. It gives the agent a default
-  deep-groove ball-bearing contact case, a missing-parameter/default policy,
-  and a reproducible prompt fixture for template execution, solving, evaluation,
-  plot export attempts, and reporting.
+- The bearing-contact agent demo path now supports two built-in bearing
+  templates: `bearing_contact_hertz_seed` for the lighter Hertz-style pressure
+  workflow, and `bearing_contact_pair_seed` for a more realistic 2D COMSOL
+  Contact-pair workflow. It gives the agent a default deep-groove ball-bearing
+  contact case, a missing-parameter/default policy, and a reproducible prompt
+  fixture for template execution, solving, evaluation, plot export, packaging,
+  and reporting.
 
 ### Archive and Memory
 
@@ -114,12 +116,17 @@ Implemented template capabilities:
 - `simulation_validate_template`
 - `simulation_run_template`
 
-Built-in template domains now include a structural bearing-contact seed:
+Built-in template domains now include two structural bearing-contact seeds:
 
 - `bearing_contact_hertz_seed`: default deep-groove ball-bearing contact setup
   using a tractable 2D plane-strain single-ball/raceway Hertz-style contact cell.
   It is intended to run the agent/tool/archive workflow before escalating to a
   heavier full 3D multi-ball contact model.
+- `bearing_contact_pair_seed`: default deep-groove ball-bearing contact setup
+  using an explicit COMSOL `Contact` pair between the generated ball and
+  raceway boundaries. It is still a tractable 2D single-ball/raceway cell, but
+  it exercises COMSOL's real contact-pair API and is the preferred template when
+  the user asks for a more realistic contact simulation.
 
 Interactive commands:
 
@@ -386,15 +393,15 @@ Goal: make the agent capable of handling a realistic bearing-contact request by
 asking for missing parameters or using a default demo case, then producing
 COMSOL setup code, execution artifacts, and stress/contact-result guidance.
 
-Status: first implementation complete for the default-case workflow. Real COMSOL
-smoke validation now reaches template setup, stationary solve, nonzero von Mises
-stress evaluation, contact-pressure estimate evaluation, and PNG plot export.
-The real DeepSeek agent demo now follows the intended high-level tool sequence
-and exports a template execution report. A deterministic bearing-contact
-planning tool now decides whether the agent should ask follow-up questions or
-run the default demo with stated assumptions. Bearing runs can now export a
-result package with `.mph`, stress PNG, metrics, summary JSON, Markdown report,
-and archive index metadata.
+Status: first realistic contact-pair workflow complete for the default 2D
+single-ball/raceway case. Real COMSOL smoke validation now reaches template
+setup, explicit `Contact` pair creation, stationary solve, nonzero von Mises
+stress evaluation, contact-pressure estimate evaluation, PNG plot export, and
+result packaging. The real DeepSeek agent demo now follows the intended
+high-level tool sequence with `bearing_contact_pair_seed` and exports a
+template execution report. A deterministic bearing-contact planning tool now
+decides whether the agent should ask follow-up questions or run the default demo
+with stated assumptions.
 
 Implemented:
 
@@ -405,45 +412,59 @@ Implemented:
    ball bearing: 25 mm inner diameter, 52 mm outer diameter, 15 mm width,
    8 balls, 7.94 mm ball diameter, 1000 N radial load, bearing steel, small
    interference, friction coefficient, and contact mesh-size assumptions.
-3. Updated the system prompt so the agent distinguishes between parameters that
+3. Added `bearing_contact_pair_seed`, a 2D single-ball/raceway template with an
+   explicit COMSOL Contact pair `cp_ball_race`, manual source/destination
+   boundary selections, Solid Mechanics Contact feature binding through
+   `pairs`, stationary solve setup, stress plot group, and result numerical
+   features.
+4. Updated the system prompt so the agent distinguishes between parameters that
    require follow-up questions and quick-demo requests where defaults are
-   acceptable.
-4. Added `scripts/run_agent_bearing_contact_demo.py`, including `--print-prompts`
+   acceptable, and uses the planner-selected template (`bearing_contact_pair_seed`
+   for more realistic/contact-pair requests; `bearing_contact_hertz_seed` for
+   the lighter quick demo).
+5. Added `scripts/run_agent_bearing_contact_demo.py`, including `--print-prompts`
    for offline fixture review and a real mode that seeds templates, starts
    COMSOL, runs the agent, keeps the model open for solving/evaluation, archives
    template execution, and exports an HTML template execution report.
-5. Added `scripts/run_bearing_contact_template_smoke.py` for direct local COMSOL
+6. Added `scripts/run_bearing_contact_template_smoke.py` for direct local COMSOL
    validation without LLM variability.
-6. Hardened `comsol_plot` so generated models without MPh's default
+7. Hardened `comsol_plot` so generated models without MPh's default
    `exports/image` node can still create PNG output through a COMSOL Java
    `Image2D` export node.
-7. Added `simulation_plan_bearing_contact`, an offline planning tool that turns
+8. Added `simulation_plan_bearing_contact`, an offline planning tool that turns
    a natural-language bearing request plus known parameters into:
    `ready_to_run`, missing required parameters, follow-up questions, resolved
    defaults, assumptions, recommended outputs, and next tool steps.
-8. Added `simulation_export_bearing_contact_package` to save a solved bearing
+9. Added `simulation_export_bearing_contact_package` to save a solved bearing
    model, re-evaluate `solid.mises` and `contact_pressure_guess`, capture the
    stress PNG path, write summary JSON/Markdown, and index a
    `bearing_contact_package` artifact.
-9. Added compact artifact-reader previews for `bearing_contact_package` records.
+10. Added compact artifact-reader previews for `bearing_contact_package` records.
 
 Default modeling scope:
 
-- The first default case is a 2D plane-strain single-ball/raceway contact cell,
-  not a full 3D multi-ball bearing assembly.
+- The default realistic case is a 2D single-ball/raceway contact cell with an
+  explicit COMSOL Contact pair, not a full 3D multi-ball bearing assembly.
 - The expected outputs are von Mises stress, displacement, estimated/contact
   pressure, JSON/template-execution artifacts, report paths, and a PNG stress
-  image. The smoke model now produces nonzero stress, but it still uses a
-  simplified boundary-load approximation rather than a verified COMSOL contact
-  pair.
+  image. The contact-pair smoke model now produces nonzero stress and solves
+  locally; boundary IDs and mesh/contact convergence still need review before
+  production use.
 
 Runtime validation on local COMSOL 6.2:
 
 - `simulation_plan_bearing_contact` returns `ready_to_run=false` with concise
   follow-up questions for underspecified production-like requests, and
-  `ready_to_run=true` with defaults for quick/default demos.
+  `ready_to_run=true` with defaults for quick/default demos. It recommends
+  `bearing_contact_pair_seed` for realistic/contact-pair requests.
 - `scripts/list_templates.py --run bearing_contact_hertz_seed ...` now succeeds
   for template setup and archives a `template_execution` artifact.
+- `scripts/run_bearing_contact_template_smoke.py --template-name
+  bearing_contact_pair_seed --cores 1 ...` succeeds through explicit Contact
+  pair setup, stationary solve, evaluation, plot export, and package export.
+  Latest observed values:
+  - `solid.mises`: maximum about `2.748e8` Pa.
+  - `contact_pressure_guess`: about `1.847e6` in SI units.
 - `scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve`
   succeeds for direct model setup and archival.
 - `scripts/run_bearing_contact_template_smoke.py --cores 1` succeeds through
@@ -456,19 +477,20 @@ Runtime validation on local COMSOL 6.2:
   default `export("image", ...)` path is missing. The direct smoke test writes
   `runtime_smoke/bearing_contact_template_smoke/von_mises.png`.
 - `scripts/run_agent_bearing_contact_demo.py --cores 1 ...` succeeded with
-  DeepSeek and local COMSOL. Latest observed records:
+  DeepSeek and local COMSOL using `bearing_contact_pair_seed`. Latest observed
+  records:
   - Template execution run id:
-    `agent_bearing_contact_default_20260612_205159_078176`
+    `agent_bearing_contact_default_20260612_211357_487968`
   - Result package run id:
-    `agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461`
+    `agent_bearing_contact_package_agent_bearing_contact_model_20260612_211414_810946`
   - Stress PNG:
-    `runtime_smoke/bearing_contact_demo/bearing_contact_von_mises.png`
+    `runtime_smoke/bearing_contact_demo_pair_plotfix/bearing_contact_von_mises.png`
   - Saved `.mph` model:
-    `runtime_smoke/bearing_contact_demo/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461/agent_bearing_contact_model.mph`
+    `runtime_smoke/bearing_contact_demo_pair_plotfix/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_211414_810946/agent_bearing_contact_model.mph`
   - Package Markdown:
-    `runtime_smoke/bearing_contact_demo/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461/report.md`
+    `runtime_smoke/bearing_contact_demo_pair_plotfix/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_211414_810946/report.md`
   - HTML report:
-    `runtime_smoke/bearing_contact_demo/reports/agent_bearing_contact_report_20260612_205226_472855.html`
+    `runtime_smoke/bearing_contact_demo_pair_plotfix/reports/agent_bearing_contact_report_20260612_211429_965355.html`
   - Agent-observed tool sequence:
     `simulation_plan_bearing_contact -> simulation_search_templates -> simulation_read_template -> simulation_validate_template -> simulation_run_template -> comsol_solve -> comsol_evaluate -> comsol_evaluate -> comsol_plot -> simulation_export_bearing_contact_package -> comsol_close_model`
 
@@ -476,9 +498,9 @@ Next runtime checkpoint:
 
 ```bash
 .venv/bin/python scripts/run_agent_bearing_contact_demo.py --print-prompts
+.venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_pair_seed
 .venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_hertz_seed
-.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve
-.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --template-name bearing_contact_pair_seed
 ```
 
 Then, with COMSOL permissions available:
@@ -492,14 +514,12 @@ Then, with COMSOL permissions available:
 
 Next implementation details:
 
-1. Replace the current smoke-test boundary IDs with named geometry/contact
+1. Replace the current contact-pair smoke boundary IDs with named geometry/contact
    selections so fixed raceway and loaded ball/groove boundaries are robust
    across geometry changes.
-2. Add a real COMSOL contact pair/contact feature once the version-specific API
-   calls are verified locally.
-3. Add a production-result report that includes contact-pair convergence checks
-   once true contact physics is available.
-4. Add a heavier optional 3D multi-ball model path after the 2D contact cell's
+2. Add a production-result report that includes contact-pair convergence checks,
+   contact pressure extraction, and mesh-sensitivity status.
+3. Add a heavier optional 3D multi-ball model path after the 2D contact cell's
    real contact pair produces stable results.
 
 ## Resume Checklist

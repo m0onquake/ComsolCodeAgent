@@ -141,7 +141,12 @@ def _export_plot_image_via_java(
 ) -> str:
     """Fallback image export for generated models without MPh's default export node."""
     result = java_model.result()
-    plot_group = _select_or_create_plot_group(result, expression=expression, plot_type=plot_type)
+    plot_group = _select_or_create_plot_group(
+        java_model,
+        result,
+        expression=expression,
+        plot_type=plot_type,
+    )
     export = result.export()
     export_tag = _unique_tag(_tags(export), "img_codex")
     last_error: Exception | None = None
@@ -162,12 +167,42 @@ def _export_plot_image_via_java(
     raise RuntimeError(f"{primary_error}; Java image export fallback failed: {last_error}")
 
 
-def _select_or_create_plot_group(result: Any, *, expression: str | None, plot_type: str) -> str:
-    tags = _tags(result)
-    if tags:
-        return tags[0]
+def _select_or_create_plot_group(
+    java_model: Any,
+    result: Any,
+    *,
+    expression: str | None,
+    plot_type: str,
+) -> str:
+    if expression:
+        return _create_expression_plot_group(
+            java_model,
+            result,
+            expression=expression,
+            plot_type=plot_type,
+        )
 
+    tags = _tags(result)
+    for tag in tags:
+        if _looks_like_plot_group(java_model, tag):
+            return tag
+    return _create_expression_plot_group(
+        java_model,
+        result,
+        expression=expression,
+        plot_type=plot_type,
+    )
+
+
+def _create_expression_plot_group(
+    java_model: Any,
+    result: Any,
+    *,
+    expression: str | None,
+    plot_type: str,
+) -> str:
     plot_group = "pg_codex"
+    plot_group = _unique_tag(_tags(result), plot_group)
     result.create(plot_group, "PlotGroup2D")
     if expression:
         feature_type = {
@@ -175,9 +210,21 @@ def _select_or_create_plot_group(result: Any, *, expression: str | None, plot_ty
             "contour": "Contour",
             "arrow": "ArrowSurface",
         }.get(plot_type.lower(), "Surface")
-        result(plot_group).create("plot_codex", feature_type)
-        result(plot_group).feature("plot_codex").set("expr", expression)
+        java_model.result(plot_group).create("plot_codex", feature_type)
+        java_model.result(plot_group).feature("plot_codex").set("expr", expression)
+    try:
+        java_model.result(plot_group).run()
+    except Exception:
+        pass
     return plot_group
+
+
+def _looks_like_plot_group(java_model: Any, tag: str) -> bool:
+    try:
+        node = java_model.result(tag)
+        return "PlotGroup" in str(node.getType())
+    except Exception:
+        return tag.startswith("pg")
 
 
 def _set_first_supported(node: Any, keys: tuple[str, ...], value: str) -> None:

@@ -274,20 +274,28 @@ Template records can also be inspected non-interactively:
   --params-json '{"power": "25[W]"}'
 ```
 
-The built-in structural bearing-contact seed can be inspected and smoke-tested
-in the same template system:
+The built-in structural bearing-contact seeds can be inspected and smoke-tested
+in the same template system. Use `bearing_contact_pair_seed` for the more
+realistic 2D COMSOL Contact-pair workflow, or `bearing_contact_hertz_seed` for
+the lighter Hertz-style pressure workflow:
 
 ```bash
+.venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_pair_seed
 .venv/bin/python scripts/list_templates.py --seed-builtins --validate bearing_contact_hertz_seed
-.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 --skip-solve
-.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1
+.venv/bin/python scripts/run_bearing_contact_template_smoke.py --cores 1 \
+  --template-name bearing_contact_pair_seed \
+  --model-name bearing_contact_pair_template_smoke \
+  --archive-path runtime_smoke/bearing_contact_pair_template_smoke.sqlite3 \
+  --artifact-dir runtime_smoke/bearing_contact_pair_template_smoke \
+  --plot-path runtime_smoke/bearing_contact_pair_template_smoke/von_mises.png \
+  --package-dir runtime_smoke/bearing_contact_pair_template_smoke/packages
 ```
 
-The full bearing smoke creates a default 2D ball/raceway model, runs the default
+The full bearing smoke creates a default 2D ball/raceway model, creates an
+explicit COMSOL Contact pair for `bearing_contact_pair_seed`, runs the default
 stationary study, evaluates `solid.mises` and `contact_pressure_guess`, and
-exports a von Mises PNG plus a bearing-contact result package under
-`runtime_smoke/bearing_contact_template_smoke/`. This is a workflow smoke case,
-not yet a production-grade 3D multi-ball contact model.
+exports a von Mises PNG plus a bearing-contact result package. This is a
+workflow smoke case, not yet a production-grade 3D multi-ball contact model.
 
 Before running a bearing-contact model, the agent can plan missing parameters
 offline:
@@ -303,7 +311,9 @@ simulation_plan_bearing_contact(
 For underspecified production-like requests, the tool returns follow-up
 questions for dimensions, ball size, load, and contact model assumptions. For a
 quick/default demo, use `allow_defaults=true`; the tool resolves the default
-deep-groove bearing parameters and recommends `bearing_contact_hertz_seed`.
+deep-groove bearing parameters. It recommends `bearing_contact_pair_seed` when
+the request mentions a realistic/contact-pair model, and
+`bearing_contact_hertz_seed` for the lighter quick demo.
 
 After solving and plotting, package the result:
 

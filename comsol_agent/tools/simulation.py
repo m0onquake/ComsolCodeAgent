@@ -151,9 +151,9 @@ def simulation_export_bearing_contact_package(
             "metrics": _bearing_contact_metrics(evaluations),
             "template_artifact": template_artifact,
             "assumptions": [
-                "2D plane-strain single-ball/raceway Hertz-style smoke model.",
-                "Boundary-load approximation; not yet a verified COMSOL contact-pair solve.",
-                "Use the package for workflow review, not production bearing design.",
+                "2D single-ball/raceway workflow unless the template states otherwise.",
+                "Inspect the template execution record to distinguish Hertz-style pressure and explicit COMSOL contact-pair models.",
+                "Use the package for workflow review; inspect boundary selections, mesh, and contact convergence before production bearing design.",
             ],
         }
 
@@ -1305,7 +1305,7 @@ def _bearing_contact_package_markdown(summary: dict) -> str:
         "",
         "- Open the saved `.mph` model to inspect geometry, physics, mesh, study, and result plot groups.",
         "- Use the template execution JSON for exact setup parameters and Java/API seed code.",
-        "- Treat this package as a verified workflow smoke record until a true COMSOL contact-pair model is added.",
+        "- Treat this package as a workflow smoke record until mesh/contact convergence and boundary selections are reviewed for the target bearing.",
         "",
     ])
     return "\n".join(lines)

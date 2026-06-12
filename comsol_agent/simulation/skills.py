@@ -125,6 +125,79 @@ BEARING_CONTACT_DEFAULTS: dict[str, str] = {
 }
 
 
+BEARING_CONTACT_PAIR_TEMPLATE_CODE = """model.param().set('inner_diameter', '25[mm]');
+model.param().set('outer_diameter', '52[mm]');
+model.param().set('bearing_width', '15[mm]');
+model.param().set('ball_count', '8');
+model.param().set('ball_diameter', '7.94[mm]');
+model.param().set('radial_load', '1000[N]');
+model.param().set('load_share_factor', '0.22');
+model.param().set('friction_coefficient', '0.05');
+model.param().set('contact_interference', '2[um]');
+model.param().set('E_steel', '210[GPa]');
+model.param().set('nu_steel', '0.30');
+model.param().set('rho_steel', '7850[kg/m^3]');
+model.param().set('contact_span', '12[mm]');
+model.param().set('raceway_height', '6[mm]');
+model.param().set('mesh_contact_size', '0.08[mm]');
+model.param().set('mesh_bulk_size', '0.8[mm]');
+model.param().set('per_ball_load', 'radial_load*load_share_factor');
+model.param().set('contact_pressure_guess', 'per_ball_load/(bearing_width*ball_diameter)');
+model.component().create('comp1', True);
+model.component('comp1').geom().create('geom1', 2);
+model.component('comp1').geom('geom1').lengthUnit('mm');
+model.component('comp1').geom('geom1').create('raceway', 'Rectangle');
+model.component('comp1').geom('geom1').feature('raceway').set('size', ['contact_span', 'raceway_height']);
+model.component('comp1').geom('geom1').feature('raceway').set('base', 'center');
+model.component('comp1').geom('geom1').feature('raceway').set('pos', ['0', '-raceway_height/2']);
+model.component('comp1').geom('geom1').create('ball', 'Circle');
+model.component('comp1').geom('geom1').feature('ball').set('r', 'ball_diameter/2');
+model.component('comp1').geom('geom1').feature('ball').set('pos', ['0', 'ball_diameter/2-contact_interference']);
+model.component('comp1').geom('geom1').run();
+model.component('comp1').material().create('mat_steel', 'Common');
+model.component('comp1').material('mat_steel').label('Bearing steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('youngsmodulus', 'E_steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('poissonsratio', 'nu_steel');
+model.component('comp1').material('mat_steel').propertyGroup('def').set('density', 'rho_steel');
+model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+model.component('comp1').physics('solid').create('fix_race', 'Fixed', 1);
+model.component('comp1').physics('solid').feature('fix_race').selection().set([2]);
+pair = model.component('comp1').pair().create('cp_ball_race', 'Contact');
+pair.manualSelection(True);
+pair.source().geom('geom1', 1);
+pair.destination().geom('geom1', 1);
+pair.source().set([5]);
+pair.destination().set([3]);
+model.component('comp1').physics('solid').create('contact_ball_race', 'Contact', 1);
+model.component('comp1').physics('solid').feature('contact_ball_race').set('pairs', ['cp_ball_race']);
+model.component('comp1').physics('solid').feature('contact_ball_race').set('pfm', 'penalty');
+model.component('comp1').physics('solid').create('ball_load', 'BoundaryLoad', 1);
+model.component('comp1').physics('solid').feature('ball_load').selection().all();
+model.component('comp1').physics('solid').feature('ball_load').set('FperArea', ['0', '-contact_pressure_guess', '0']);
+model.component('comp1').mesh().create('mesh1');
+model.component('comp1').mesh('mesh1').autoMeshSize(3);
+model.study().create('std1');
+model.study('std1').create('stat', 'Stationary');
+model.study('std1').feature('stat').set('activate', ['solid', 'on']);
+model.result().numerical().create('max_von_mises', 'MaxVolume');
+model.result().numerical('max_von_mises').set('expr', 'solid.mises');
+model.result().numerical().create('max_contact_pressure_estimate', 'EvalGlobal');
+model.result().numerical('max_contact_pressure_estimate').set('expr', 'contact_pressure_guess');
+model.result().create('pg_stress', 'PlotGroup2D');
+model.result('pg_stress').label('von Mises stress - contact pair');
+model.result('pg_stress').create('surf_stress', 'Surface');
+model.result('pg_stress').feature('surf_stress').set('expr', 'solid.mises');
+output.write('Bearing contact pair seed built: 2D ball/raceway model with a COMSOL Contact pair cp_ball_race. Boundary IDs are verified for this generated geometry; review selections before production solves.');
+"""
+
+
+BEARING_CONTACT_PAIR_DEFAULTS: dict[str, str] = {
+    key: value
+    for key, value in BEARING_CONTACT_DEFAULTS.items()
+    if key not in {"groove_radius_factor", "raceway_depth"}
+}
+
+
 BUILTIN_SKILLS: tuple[SimulationSkill, ...] = (
     SimulationSkill(
         name="thermal",
@@ -209,6 +282,48 @@ BUILTIN_SKILLS: tuple[SimulationSkill, ...] = (
         template_name="bearing_contact_hertz_seed",
         template_java_code=BEARING_CONTACT_TEMPLATE_CODE,
         template_params=BEARING_CONTACT_DEFAULTS,
+    ),
+    SimulationSkill(
+        name="bearing_contact_pair",
+        domain="structural",
+        description=(
+            "More realistic 2D ball-bearing contact setup using an explicit COMSOL "
+            "Contact pair between the rolling element and raceway."
+        ),
+        keywords=(
+            "bearing",
+            "ball bearing",
+            "raceway",
+            "contact pair",
+            "realistic",
+            "production",
+            "接触对",
+            "真实",
+            "更真实",
+            "生产级",
+            "轴承",
+        ),
+        physics_interfaces=("Solid Mechanics (solid)", "Contact pair cp_ball_race", "Stationary study"),
+        key_parameters=(
+            "inner_diameter",
+            "outer_diameter",
+            "bearing_width",
+            "ball_count",
+            "ball_diameter",
+            "radial_load",
+            "friction_coefficient",
+            "contact_interference",
+            "mesh_contact_size",
+        ),
+        common_checks=(
+            "Use bearing_contact_pair_seed when the user asks for a more realistic COMSOL contact-pair bearing model.",
+            "The current contact-pair seed is a 2D single-ball/raceway cell; inspect and refine generated boundary IDs before production use.",
+            "Check nonlinear contact convergence, mesh sensitivity near the ball/raceway interface, and whether frictional contact is needed.",
+            "For full bearing load sharing, extend to a 3D multi-ball sector or complete bearing model after this 2D contact path is stable.",
+        ),
+        template_name="bearing_contact_pair_seed",
+        template_java_code=BEARING_CONTACT_PAIR_TEMPLATE_CODE,
+        template_params=BEARING_CONTACT_PAIR_DEFAULTS,
     ),
     SimulationSkill(
         name="electromagnetic",

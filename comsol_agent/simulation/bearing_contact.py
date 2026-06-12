@@ -154,9 +154,11 @@ def plan_bearing_contact_setup(
     ready = quick_demo or not required_missing
     questions = [] if ready else [field.question for field in BEARING_CONTACT_FIELDS if field.name in required_missing]
     assumptions = [field.assumption for field in defaulted_fields] if ready else []
+    template_name = _select_template_name(user_request, normalized_params)
     notes = [
-        "Use bearing_contact_hertz_seed for the first runnable default workflow.",
-        "The current default is a 2D plane-strain Hertz-style smoke case, not a production 3D contact-pair model.",
+        f"Use {template_name} for this planned workflow.",
+        "bearing_contact_pair_seed is an explicit 2D COMSOL contact-pair cell; bearing_contact_hertz_seed remains the lighter Hertz-style pressure workflow.",
+        "Neither built-in bearing seed is a full production 3D multi-ball bearing model yet.",
     ]
     if not ready:
         notes.append("Ask the follow-up questions before creating/running a COMSOL model.")
@@ -164,7 +166,7 @@ def plan_bearing_contact_setup(
     return BearingContactPlan(
         ready_to_run=ready,
         mode=mode,
-        template_name="bearing_contact_hertz_seed",
+        template_name=template_name,
         provided_params=normalized_params,
         resolved_params=resolved,
         defaulted_params=defaulted,
@@ -219,6 +221,24 @@ def _looks_like_quick_demo(user_request: str) -> bool:
     return any(marker in lowered for marker in quick_markers)
 
 
+def _select_template_name(user_request: str, params: dict[str, str]) -> str:
+    requested_model = params.get("contact_model", "")
+    lowered = f"{user_request} {requested_model}".lower()
+    pair_markers = (
+        "contact pair",
+        "real contact",
+        "realistic",
+        "production",
+        "真实",
+        "更真实",
+        "接触对",
+        "生产级",
+    )
+    if any(marker in lowered for marker in pair_markers):
+        return "bearing_contact_pair_seed"
+    return "bearing_contact_hertz_seed"
+
+
 def _next_steps(ready: bool) -> list[str]:
     if not ready:
         return [
@@ -227,7 +247,7 @@ def _next_steps(ready: bool) -> list[str]:
             "Run bearing_contact_hertz_seed only after ready_to_run is true.",
         ]
     return [
-        "Search/read/validate bearing_contact_hertz_seed.",
+        "Search/read/validate the recommended bearing-contact template.",
         "Run simulation_run_template with close_model=false.",
         "Solve the default study, evaluate solid.mises and contact_pressure_guess, export the stress PNG, and archive/report the run.",
     ]

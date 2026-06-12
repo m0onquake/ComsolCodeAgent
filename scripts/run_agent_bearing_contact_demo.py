@@ -321,7 +321,7 @@ def _compact_tool_artifact(result: dict[str, Any]) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run an agent bearing-contact demo.")
     parser.add_argument("--cores", type=int, default=1, help="COMSOL core limit.")
-    parser.add_argument("--template-name", default="bearing_contact_hertz_seed")
+    parser.add_argument("--template-name", default="bearing_contact_pair_seed")
     parser.add_argument("--model-name", default="agent_bearing_contact_model")
     parser.add_argument("--artifact-root", default="runtime_smoke/bearing_contact_demo")
     parser.add_argument("--report-dir", default="runtime_smoke/bearing_contact_demo/reports")

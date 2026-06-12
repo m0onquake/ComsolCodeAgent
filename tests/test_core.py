@@ -1890,6 +1890,10 @@ class TestSimulationSkills:
         assert bearing_template.domain == "structural"
         assert bearing_template.params["radial_load"] == "1000[N]"
         assert "SolidMechanics" in bearing_template.java_code
+        pair_template = archive.get_template("bearing_contact_pair_seed")
+        assert pair_template.domain == "structural"
+        assert pair_template.params["contact_interference"] == "2[um]"
+        assert "pair().create('cp_ball_race', 'Contact')" in pair_template.java_code
 
     def test_bearing_contact_template_validates_offline(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
@@ -1907,6 +1911,15 @@ class TestSimulationSkills:
         assert result["success"] is True
         assert result["validation"]["errors"] == []
         assert "radial_load" in result["validation"]["params_checked"]
+
+        pair_result = simulation_validate_template(
+            name="bearing_contact_pair_seed",
+            archive_path=str(archive_path),
+        )
+
+        assert pair_result["success"] is True
+        assert pair_result["validation"]["errors"] == []
+        assert "contact_interference" in pair_result["validation"]["params_checked"]
 
     def test_bearing_contact_planner_asks_for_required_missing_params(self):
         from comsol_agent.tools.simulation import simulation_plan_bearing_contact
@@ -1941,6 +1954,21 @@ class TestSimulationSkills:
         assert plan["resolved_params"]["radial_load"] == "1200[N]"
         assert plan["resolved_params"]["bearing_width"] == "16[mm]"
         assert "solid.mises" in plan["recommended_outputs"]
+
+    def test_bearing_contact_planner_selects_pair_template_for_realistic_contact(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_contact
+
+        result = simulation_plan_bearing_contact(
+            user_request="用默认参数先跑通一个更真实的轴承接触对仿真",
+            provided_params={},
+            allow_defaults=True,
+        )
+        plan = result["plan"]
+
+        assert result["success"] is True
+        assert plan["ready_to_run"] is True
+        assert plan["template_name"] == "bearing_contact_pair_seed"
+        assert any("contact-pair" in note for note in plan["notes"])
 
     def test_bearing_contact_package_exports_report_and_archive(self, tmp_path, monkeypatch):
         from comsol_agent.memory.archive_store import ArchiveStore
@@ -3789,12 +3817,46 @@ class TestCOMSOLRuntimeConfig:
             def remove(self, tag):
                 self.features.pop(tag, None)
 
+        class FakePlotGroup:
+            def __init__(self, tag):
+                self.tag = tag
+                self.features = {}
+                self.ran = False
+
+            def getType(self):
+                return "PlotGroup2D"
+
+            def create(self, tag, feature_type):
+                self.features[tag] = FakePlotFeature(feature_type)
+
+            def feature(self, tag):
+                return self.features[tag]
+
+            def run(self):
+                self.ran = True
+
+        class FakePlotFeature:
+            def __init__(self, feature_type):
+                self.feature_type = feature_type
+                self.values = {}
+
+            def set(self, key, value):
+                self.values[key] = value
+
+        class FakeNumericalResult:
+            def getType(self):
+                return "MaxVolume"
+
         class FakeResult:
             def __init__(self):
                 self.exports = FakeExportList()
+                self.nodes = {"max_von_mises": FakeNumericalResult()}
 
             def tags(self):
-                return ["pg_stress"]
+                return list(self.nodes)
+
+            def create(self, tag, result_type):
+                self.nodes[tag] = FakePlotGroup(tag)
 
             def export(self, tag=None):
                 if tag is None:
@@ -3805,7 +3867,9 @@ class TestCOMSOLRuntimeConfig:
             def __init__(self):
                 self.fake_result = FakeResult()
 
-            def result(self):
+            def result(self, tag=None):
+                if tag is not None:
+                    return self.fake_result.nodes[tag]
                 return self.fake_result
 
         COMSOLClient.reset_instance()
@@ -3823,6 +3887,14 @@ class TestCOMSOLRuntimeConfig:
 
         assert result["success"] is True
         assert result["export_method"] == "java:Image2D"
+        assert client._models["fake"].java_model.fake_result.nodes["pg_codex"].ran is True
+        assert (
+            client._models["fake"]
+            .java_model.fake_result.nodes["pg_codex"]
+            .features["plot_codex"]
+            .values["expr"]
+            == "solid.mises"
+        )
         assert target.read_bytes().startswith(b"\x89PNG")
         COMSOLClient.reset_instance()
 
