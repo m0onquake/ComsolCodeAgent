@@ -10,6 +10,13 @@ the recommended plan for the next development pass.
 The project has moved beyond the original architecture skeleton into a working
 local agent prototype:
 
+- Product direction: this is a generative COMSOL simulation assistant. Built-in
+  templates are reusable starting points and regression/smoke fixtures, not the
+  only way the agent should create simulations. When no template fits, the
+  agent should be able to generate COMSOL Java/API code directly from the user
+  request by injecting a controlled code-generation prompt block with modeling
+  intent, constraints, retrieved COMSOL API snippets, output-format rules, and
+  validation requirements.
 - DeepSeek is configured through the OpenAI-compatible provider path. The API
   key is stored in local user configuration and must not be copied into source,
   docs, tests, or scripts.
@@ -83,6 +90,12 @@ the syntax failure seen when executing multi-line templates.
   `simulation_rerun_artifact`.
 - Sweep comparison plus Markdown/HTML report export are implemented.
 - Template execution Markdown/HTML report export is implemented.
+- The intended simulation creation policy is template-first but not
+  template-only. The agent should search templates first for reproducibility and
+  speed; if no template matches the user's geometry/physics/study requirements,
+  it should enter a controlled generated-code path that drafts new COMSOL
+  Java/API setup code, validates it offline, optionally saves it as a reusable
+  template, executes it against an explicit model, and archives the result.
 - The bearing-contact agent demo path now supports two built-in bearing
   templates: `bearing_contact_hertz_seed` for the lighter Hertz-style pressure
   workflow, and `bearing_contact_pair_seed` for a more realistic 2D COMSOL
@@ -115,6 +128,21 @@ Implemented template capabilities:
 - `simulation_export_template`
 - `simulation_validate_template`
 - `simulation_run_template`
+
+Templates are part of the agent's memory and quality-control system, not a
+hard limit on what it can model. Future development should add a generated-code
+workflow beside the template workflow:
+
+1. Clarify the physical problem, required outputs, and missing parameters.
+2. Retrieve local COMSOL API/docs snippets relevant to the requested domain.
+3. Inject a controlled code-generation prompt block asking the LLM to return
+   only COMSOL Java/API setup code plus a compact parameter manifest.
+4. Run `simulation_validate_template` on the generated code before execution.
+5. If validation passes, execute through `simulation_run_template` or
+   `comsol_execute_java` against an explicit model; if it fails, use the repair
+   loop and retrieved API snippets.
+6. Save successful generated code as a reusable template when it is likely to
+   be useful again.
 
 Built-in template domains now include two structural bearing-contact seeds:
 
@@ -222,6 +250,11 @@ ports.
 - The repository is now tracked in Git and pushed to GitHub. Keep committing
   small verified increments and avoid committing runtime archives, `.mph`
   outputs, `.venv`, or local configuration.
+- LLM-generated COMSOL code must be treated as untrusted until it passes the
+  controlled generated-code pipeline: local API retrieval, prompt-scoped output,
+  offline validation, explicit-model execution, artifact capture, and review.
+  Do not bypass validation or run generated snippets against an arbitrary loaded
+  model.
 - Real COMSOL runs may fail in a restricted sandbox unless COMSOL can write to
   user preference/log directories and probe local ports.
 - `simulation_validate_template` is intentionally a conservative offline lint,
@@ -521,6 +554,54 @@ Next implementation details:
    contact pressure extraction, and mesh-sensitivity status.
 3. Add a heavier optional 3D multi-ball model path after the 2D contact cell's
    real contact pair produces stable results.
+
+### P7: Generative COMSOL Code Path
+
+Goal: make the agent capable of creating COMSOL simulations that are not already
+covered by the template library. Templates remain preferred when they fit, but
+the main product direction is a generative COMSOL assistant that can draft,
+validate, execute, repair, archive, and optionally promote new Java/API setup
+code.
+
+Status: planned. The lower-level pieces already exist: local docs retrieval,
+template validation, `comsol_execute_java`, `simulation_run_template`, repair
+reports, archive records, and template saving. The next pass should connect
+them into an explicit agent workflow and prompt policy.
+
+Required behavior:
+
+1. Start every new simulation request by classifying the domain, physics,
+   geometry, materials, boundary conditions, mesh needs, study type, outputs,
+   and missing parameters.
+2. Search/read existing templates first. If a template fits, use it. If no
+   template fits, switch to generated-code mode instead of forcing an unrelated
+   template.
+3. Inject a controlled code-generation prompt block into the LLM context. The
+   block should include:
+   - the user's modeling intent and resolved/defaulted parameters;
+   - relevant local COMSOL API snippets from `simulation_retrieve_api_docs`;
+   - allowed operations and an explicit target model policy;
+   - required output format: COMSOL Java/API code only, no prose inside code,
+     plus a structured parameter manifest when needed;
+   - validation rules, including unit-aware parameters, explicit geometry,
+     material, physics, mesh, study, and result nodes.
+4. Validate generated code offline with `simulation_validate_template`.
+5. Execute only against a newly created model or a user-confirmed loaded model.
+6. On failure, feed structured execution errors plus retrieved docs back into
+   the repair loop and retry within bounded iterations.
+7. Persist generated code, validation output, execution payload, model paths,
+   plots, and reports as archive artifacts.
+8. Offer to save successful generated code as a reusable template with a domain,
+   parameter manifest, assumptions, and verification notes.
+
+Non-goals and guardrails:
+
+- Do not make the template library the only modeling mechanism.
+- Do not execute arbitrary natural-language-generated snippets without
+  validation and explicit model targeting.
+- Do not treat the bearing-contact workflow as the product itself; it is a
+  representative high-complexity validation case for the broader generative
+  COMSOL assistant.
 
 ## Resume Checklist
 

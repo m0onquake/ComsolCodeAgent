@@ -217,6 +217,32 @@ Agent-facing tools are:
 For isolated tests or project-specific archives, pass `archive_path` to
 `simulation_run_parameter_sweep` and to the list/search tools.
 
+## Template-First, Generated-Code Fallback
+
+The agent should not be limited to the current template library. The runtime
+policy is template-first, generated-code fallback:
+
+1. Parse the user's simulation intent: geometry, material, physics, boundary
+   conditions, mesh, study type, outputs, and missing parameters.
+2. Search/read existing templates. Use a template when it fits the problem.
+3. If no template fits, retrieve local COMSOL API snippets with
+   `simulation_retrieve_api_docs` and inject a controlled code-generation prompt
+   block into the LLM context.
+4. Ask the LLM to return COMSOL Java/API setup code directly, with explicit
+   parameters and no surrounding prose inside the code block.
+5. Validate the generated code with `simulation_validate_template`.
+6. Execute only against a newly created model or a loaded model that the user has
+   explicitly chosen.
+7. If execution fails, feed the structured error plus retrieved API snippets into
+   the repair loop.
+8. Archive the generated code, validation result, execution result, plots,
+   saved `.mph`, and report. Offer to save successful generated code as a
+   reusable template.
+
+This generated-code path is the main way the assistant grows beyond the bundled
+examples. Bearing contact remains a representative validation case, not the
+overall product boundary.
+
 Inside the interactive CLI, use slash commands for quick artifact review:
 
 ```text
