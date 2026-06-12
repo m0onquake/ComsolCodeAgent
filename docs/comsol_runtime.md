@@ -211,6 +211,8 @@ Agent-facing tools are:
 - `simulation_retrieve_api_docs`: retrieve compact, cited local documentation snippets for API repair/code generation
 - `simulation_plan_bearing_contact`: decide whether a bearing-contact request
   needs follow-up questions or can use the default demo parameters
+- `simulation_export_bearing_contact_package`: save a solved bearing model,
+  stress PNG, metrics, summary JSON, Markdown report, and archive index record
 
 For isolated tests or project-specific archives, pass `archive_path` to
 `simulation_run_parameter_sweep` and to the list/search tools.
@@ -283,9 +285,9 @@ in the same template system:
 
 The full bearing smoke creates a default 2D ball/raceway model, runs the default
 stationary study, evaluates `solid.mises` and `contact_pressure_guess`, and
-exports a von Mises PNG under `runtime_smoke/bearing_contact_template_smoke/`.
-This is a workflow smoke case, not yet a production-grade 3D multi-ball contact
-model.
+exports a von Mises PNG plus a bearing-contact result package under
+`runtime_smoke/bearing_contact_template_smoke/`. This is a workflow smoke case,
+not yet a production-grade 3D multi-ball contact model.
 
 Before running a bearing-contact model, the agent can plan missing parameters
 offline:
@@ -302,6 +304,21 @@ For underspecified production-like requests, the tool returns follow-up
 questions for dimensions, ball size, load, and contact model assumptions. For a
 quick/default demo, use `allow_defaults=true`; the tool resolves the default
 deep-groove bearing parameters and recommends `bearing_contact_hertz_seed`.
+
+After solving and plotting, package the result:
+
+```text
+simulation_export_bearing_contact_package(
+  model_name="agent_bearing_contact_model",
+  template_run_id="<template_execution_run_id>",
+  plot_path="runtime_smoke/bearing_contact_demo/bearing_contact_von_mises.png",
+  output_dir="runtime_smoke/bearing_contact_demo/result_packages",
+  archive_path="runtime_smoke/bearing_contact_demo.sqlite3"
+)
+```
+
+The package writes `summary.json`, `report.md`, a saved `.mph` model, and an
+archive record of kind `bearing_contact_package`.
 
 Template export uses the same local path safety model as file tools. Output
 paths are allowed under the project workspace and `~/.comsol_agent` by default.

@@ -331,6 +331,7 @@ class TestToolRegistry:
         assert "simulation_read_artifact" in names
         assert "simulation_compare_artifacts" in names
         assert "simulation_export_artifact_report" in names
+        assert "simulation_export_bearing_contact_package" in names
         assert "simulation_rerun_artifact" in names
         assert "simulation_run_example_model" in names
         assert "simulation_run_parameter_sweep" in names
@@ -1941,6 +1942,65 @@ class TestSimulationSkills:
         assert plan["resolved_params"]["bearing_width"] == "16[mm]"
         assert "solid.mises" in plan["recommended_outputs"]
 
+    def test_bearing_contact_package_exports_report_and_archive(self, tmp_path, monkeypatch):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.tools import simulation as simulation_tools
+
+        archive_path = tmp_path / "archive.sqlite3"
+        plot_path = tmp_path / "stress.png"
+        plot_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        monkeypatch.setattr(
+            simulation_tools,
+            "comsol_save_model",
+            lambda model_name, filepath: {
+                "success": True,
+                "model_name": model_name,
+                "saved_to": filepath,
+            },
+        )
+
+        def fake_evaluate(model_name, expression):
+            if expression == "solid.mises":
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "expression": expression,
+                    "statistics": {"min": 1.0, "max": 250.0, "mean": 25.0},
+                }
+            return {
+                "success": True,
+                "model_name": model_name,
+                "expression": expression,
+                "statistics": {"min": 1.8, "max": 1.8, "mean": 1.8},
+            }
+
+        monkeypatch.setattr(simulation_tools, "comsol_evaluate", fake_evaluate)
+
+        result = simulation_tools.simulation_export_bearing_contact_package(
+            model_name="bearing_model",
+            template_run_id="template_run_1",
+            plot_path=str(plot_path),
+            output_dir=str(tmp_path / "packages"),
+            package_name="bearing_contact_package",
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["metrics"]["von_mises_max"] == 250.0
+        assert Path(result["json_path"]).exists()
+        assert Path(result["markdown_path"]).read_text(encoding="utf-8").startswith("# Bearing Contact")
+        assert result["model_path"].endswith("bearing_model.mph")
+        archived = ArchiveStore(archive_path).get_simulation_artifact(result["run_id"])
+        assert archived.kind == "bearing_contact_package"
+        assert archived.metadata["plot_path"] == str(plot_path.resolve())
+        read_back = simulation_tools.simulation_read_artifact(
+            result["run_id"],
+            archive_path=str(archive_path),
+        )
+        assert read_back["success"] is True
+        assert read_back["preview"]["summary"]["metrics"]["von_mises_max"] == 250.0
+
     def test_bearing_contact_demo_prompt_fixture(self):
         from scripts.run_agent_bearing_contact_demo import build_bearing_contact_prompts
 
@@ -1956,6 +2016,7 @@ class TestSimulationSkills:
         assert "quick default demo" in prompts[0].prompt
         assert "simulation_plan_bearing_contact" in prompts[0].required_tools
         assert "allow_defaults=true" in prompts[0].prompt
+        assert "simulation_export_bearing_contact_package" in prompts[0].required_tools
         assert "simulation_read_template" in prompts[0].required_tools
         assert "comsol_solve" in prompts[0].required_tools
         assert "comsol_plot" in prompts[0].successful_tools

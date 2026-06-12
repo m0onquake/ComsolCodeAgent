@@ -28,6 +28,7 @@ from comsol_agent.tools.comsol.evaluate import comsol_export_results, comsol_plo
 from comsol_agent.tools.file_ops import file_list, file_read, file_write, shell_execute
 from comsol_agent.tools.simulation import (
     simulation_compare_artifacts,
+    simulation_export_bearing_contact_package,
     simulation_export_template,
     simulation_export_artifact_report,
     simulation_list_artifacts,
@@ -992,6 +993,54 @@ def register_all_tools() -> None:
             },
         },
         handler=simulation_export_artifact_report,
+    )
+
+    register_sync(
+        name="simulation_export_bearing_contact_package",
+        description=(
+            "Export a bearing-contact result package after a solved model exists. "
+            "Saves the .mph model, evaluates key bearing expressions, records the stress PNG path, "
+            "writes summary JSON/Markdown, and indexes a bearing_contact_package artifact."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "type": "string",
+                    "description": "Name of the currently loaded solved bearing-contact model.",
+                },
+                "template_run_id": {
+                    "type": "string",
+                    "description": "Optional template_execution run id that created the model.",
+                },
+                "plot_path": {
+                    "type": "string",
+                    "description": "Path to the exported von Mises stress PNG.",
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Output root for the package. Defaults to runtime_smoke/bearing_contact_results.",
+                },
+                "package_name": {
+                    "type": "string",
+                    "description": "Optional package run-name prefix.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path. Defaults to ~/.comsol_agent/archive/archive.sqlite3.",
+                },
+                "save_model": {
+                    "type": "boolean",
+                    "description": "Whether to save the model as .mph in the package. Defaults to true.",
+                },
+                "model_output_path": {
+                    "type": "string",
+                    "description": "Optional explicit .mph output path.",
+                },
+            },
+            "required": ["model_name"],
+        },
+        handler=simulation_export_bearing_contact_package,
     )
 
     register_sync(

@@ -18,7 +18,10 @@ from comsol_agent.tools.comsol.client import COMSOLClient
 from comsol_agent.tools.comsol.evaluate import comsol_plot
 from comsol_agent.tools.comsol.model_ops import comsol_close_model
 from comsol_agent.tools.comsol.solve import comsol_evaluate, comsol_solve
-from comsol_agent.tools.simulation import simulation_run_template
+from comsol_agent.tools.simulation import (
+    simulation_export_bearing_contact_package,
+    simulation_run_template,
+)
 
 
 def main() -> None:
@@ -29,6 +32,7 @@ def main() -> None:
     parser.add_argument("--archive-path", default="runtime_smoke/bearing_contact_template_smoke.sqlite3")
     parser.add_argument("--artifact-dir", default="runtime_smoke/bearing_contact_template_smoke")
     parser.add_argument("--plot-path", default="runtime_smoke/bearing_contact_template_smoke/von_mises.png")
+    parser.add_argument("--package-dir", default="runtime_smoke/bearing_contact_template_smoke/packages")
     parser.add_argument("--skip-solve", action="store_true", help="Only build the model/template artifact.")
     args = parser.parse_args()
 
@@ -77,6 +81,17 @@ def main() -> None:
                         filename=args.plot_path,
                     )
                 )
+                if summary["plot"].get("success"):
+                    summary["package"] = _compact_result(
+                        simulation_export_bearing_contact_package(
+                            model_name=model_name,
+                            template_run_id=template_result.get("artifacts", {}).get("run_id"),
+                            plot_path=args.plot_path,
+                            output_dir=args.package_dir,
+                            package_name="bearing_contact_template_package",
+                            archive_path=str(archive_path),
+                        )
+                    )
 
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     finally:
@@ -104,6 +119,12 @@ def _compact_result(result: dict) -> dict:
         "plot_type",
         "filepath",
         "export_method",
+        "directory",
+        "json_path",
+        "markdown_path",
+        "model_path",
+        "plot_path",
+        "metrics",
         "error",
         "message",
     )

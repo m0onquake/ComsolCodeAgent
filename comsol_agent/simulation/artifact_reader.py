@@ -34,6 +34,8 @@ def read_archived_artifact(
             result["preview"]["csv"] = _read_csv_preview(Path(artifact.csv_path), max_rows=max_lines)
     elif artifact.kind == "template_execution":
         result["preview"]["summary"] = _template_execution_summary(Path(artifact.json_path))
+    elif artifact.kind == "bearing_contact_package":
+        result["preview"]["summary"] = _bearing_contact_package_summary(Path(artifact.json_path))
     else:
         result["preview"]["content"] = _read_text_preview(Path(artifact.json_path), max_lines=max_lines)
 
@@ -137,4 +139,25 @@ def _template_execution_summary(path: Path) -> dict[str, Any]:
             "modified": execution.get("modified"),
         },
         "artifacts": payload.get("artifacts"),
+    }
+
+
+def _bearing_contact_package_summary(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    if payload is None:
+        return {"exists": False, "path": str(path)}
+    if "error" in payload:
+        return payload
+
+    return {
+        "exists": True,
+        "path": str(path),
+        "success": payload.get("success"),
+        "run_id": payload.get("run_id"),
+        "model_name": payload.get("model_name"),
+        "template_run_id": payload.get("template_run_id"),
+        "metrics": payload.get("metrics") or {},
+        "model_path": (payload.get("model_save") or {}).get("saved_to"),
+        "plot_path": (payload.get("plot") or {}).get("path"),
+        "assumptions": payload.get("assumptions") or [],
     }

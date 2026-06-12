@@ -6,6 +6,7 @@ import json
 import os
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from comsol_agent.cli.config import get_config_dir
@@ -27,6 +28,7 @@ from comsol_agent.tools.comsol.model_ops import (
     comsol_close_model,
     comsol_create_model,
     comsol_load_model,
+    comsol_save_model,
     comsol_set_parameter,
 )
 from comsol_agent.tools.comsol.solve import (
@@ -78,6 +80,142 @@ def simulation_plan_bearing_contact(
         }
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+
+def simulation_export_bearing_contact_package(
+    model_name: str,
+    template_run_id: str | None = None,
+    plot_path: str | None = None,
+    output_dir: str | None = None,
+    package_name: str = "bearing_contact_result",
+    archive_path: str | None = None,
+    save_model: bool = True,
+    model_output_path: str | None = None,
+) -> dict:
+    """Export a bearing-contact result package with model, plot, metrics, and report."""
+    try:
+        target_dir = Path(output_dir or "runtime_smoke/bearing_contact_results").expanduser().resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        run_id = _bearing_contact_package_run_id(package_name, model_name)
+        package_dir = target_dir / run_id
+        package_dir.mkdir(parents=True, exist_ok=True)
+
+        model_save = None
+        if save_model:
+            mph_path = Path(model_output_path).expanduser().resolve() if model_output_path else package_dir / f"{model_name}.mph"
+            model_save = comsol_save_model(model_name, str(mph_path))
+            if not model_save.get("success"):
+                return {
+                    "success": False,
+                    "stage": "save_model",
+                    "model_name": model_name,
+                    "error": model_save.get("error"),
+                    "model_save": model_save,
+                }
+
+        evaluations = [
+            comsol_evaluate(model_name, "solid.mises"),
+            comsol_evaluate(model_name, "contact_pressure_guess"),
+        ]
+        failed_eval = [item for item in evaluations if not item.get("success")]
+        if failed_eval:
+            return {
+                "success": False,
+                "stage": "evaluate",
+                "model_name": model_name,
+                "evaluations": evaluations,
+                "error": failed_eval[0].get("error"),
+            }
+
+        template_artifact = None
+        if template_run_id:
+            try:
+                template_artifact = read_archived_artifact(
+                    _archive_store(archive_path),
+                    run_id=template_run_id,
+                    max_lines=40,
+                )
+            except Exception as exc:
+                template_artifact = {"error": str(exc), "run_id": template_run_id}
+
+        plot = _package_plot_info(plot_path)
+        summary = {
+            "success": True,
+            "kind": "bearing_contact_package",
+            "run_id": run_id,
+            "model_name": model_name,
+            "template_run_id": template_run_id,
+            "model_save": model_save,
+            "plot": plot,
+            "evaluations": evaluations,
+            "metrics": _bearing_contact_metrics(evaluations),
+            "template_artifact": template_artifact,
+            "assumptions": [
+                "2D plane-strain single-ball/raceway Hertz-style smoke model.",
+                "Boundary-load approximation; not yet a verified COMSOL contact-pair solve.",
+                "Use the package for workflow review, not production bearing design.",
+            ],
+        }
+
+        json_path = package_dir / "summary.json"
+        markdown_path = package_dir / "report.md"
+        manifest_path = package_dir / "manifest.json"
+        json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        markdown_path.write_text(_bearing_contact_package_markdown(summary), encoding="utf-8")
+        manifest = {
+            "run_id": run_id,
+            "created_at": _utc_now_for_package(),
+            "kind": "bearing_contact_package",
+            "model_name": model_name,
+            "source": {"type": "bearing_contact_package", "template_run_id": template_run_id},
+            "executed_cases": 1,
+            "truncated": False,
+            "json_path": str(json_path),
+            "csv_path": None,
+            "manifest_path": str(manifest_path),
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+        archive_record = None
+        archive_error = None
+        try:
+            archive_record = _archive_store(archive_path).index_simulation_artifact(
+                manifest,
+                metadata={
+                    "template_run_id": template_run_id,
+                    "model_path": (model_save or {}).get("saved_to"),
+                    "plot_path": plot.get("path"),
+                    "markdown_path": str(markdown_path),
+                    "metrics": summary["metrics"],
+                },
+            )
+        except Exception as exc:
+            archive_error = str(exc)
+
+        result = {
+            "success": True,
+            "run_id": run_id,
+            "model_name": model_name,
+            "directory": str(package_dir),
+            "json_path": str(json_path),
+            "markdown_path": str(markdown_path),
+            "manifest_path": str(manifest_path),
+            "model_path": (model_save or {}).get("saved_to"),
+            "plot_path": plot.get("path"),
+            "metrics": summary["metrics"],
+        }
+        if archive_record is not None:
+            result["archive"] = {
+                "db_path": str(_archive_store(archive_path).db_path),
+                "id": archive_record.id,
+                "run_id": archive_record.run_id,
+                "kind": archive_record.kind,
+            }
+        if archive_error:
+            result["archive_error"] = archive_error
+        return result
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "model_name": model_name}
 
 
 def simulation_search_local_docs(
@@ -1111,6 +1249,77 @@ def _close_after_template_run(
     if not should_close:
         return None
     return comsol_close_model(model_name, save=False)
+
+
+def _package_plot_info(plot_path: str | None) -> dict:
+    if not plot_path:
+        return {"path": None, "exists": False}
+    path = Path(plot_path).expanduser().resolve()
+    info = {"path": str(path), "exists": path.exists()}
+    if path.exists():
+        info["size_bytes"] = path.stat().st_size
+    return info
+
+
+def _bearing_contact_metrics(evaluations: list[dict]) -> dict:
+    metrics = {}
+    for evaluation in evaluations:
+        expression = evaluation.get("expression")
+        stats = evaluation.get("statistics") or {}
+        if expression == "solid.mises":
+            metrics["von_mises_min"] = stats.get("min")
+            metrics["von_mises_max"] = stats.get("max")
+            metrics["von_mises_mean"] = stats.get("mean")
+        elif expression == "contact_pressure_guess":
+            metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
+    return metrics
+
+
+def _bearing_contact_package_markdown(summary: dict) -> str:
+    metrics = summary.get("metrics") or {}
+    model_save = summary.get("model_save") or {}
+    plot = summary.get("plot") or {}
+    lines = [
+        "# Bearing Contact Result Package",
+        "",
+        f"- Package run id: `{summary.get('run_id')}`",
+        f"- Model: `{summary.get('model_name')}`",
+        f"- Template execution run id: `{summary.get('template_run_id') or ''}`",
+        f"- Saved model: `{model_save.get('saved_to') or ''}`",
+        f"- Stress plot: `{plot.get('path') or ''}`",
+        "",
+        "## Metrics",
+        "",
+        f"- von Mises min: `{metrics.get('von_mises_min')}`",
+        f"- von Mises max: `{metrics.get('von_mises_max')}`",
+        f"- von Mises mean: `{metrics.get('von_mises_mean')}`",
+        f"- Contact pressure estimate: `{metrics.get('contact_pressure_guess')}`",
+        "",
+        "## Assumptions",
+        "",
+    ]
+    lines.extend(f"- {item}" for item in summary.get("assumptions") or [])
+    lines.extend([
+        "",
+        "## Reuse Notes",
+        "",
+        "- Open the saved `.mph` model to inspect geometry, physics, mesh, study, and result plot groups.",
+        "- Use the template execution JSON for exact setup parameters and Java/API seed code.",
+        "- Treat this package as a verified workflow smoke record until a true COMSOL contact-pair model is added.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _utc_now_for_package() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _bearing_contact_package_run_id(package_name: str | None, model_name: str | None) -> str:
+    raw = "_".join(part for part in (package_name or "bearing_contact_package", model_name or "model") if part)
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip()).strip("._-") or "bearing_contact_package"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    return f"{slug}_{timestamp}"
 
 
 def _sweep_source(

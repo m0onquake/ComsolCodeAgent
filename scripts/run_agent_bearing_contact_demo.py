@@ -54,6 +54,7 @@ def build_bearing_contact_prompts(
     """Build prompt fixtures for a bearing-contact agent workflow."""
     artifact_dir = str(Path(artifact_root) / "template_runs")
     stress_plot = str(Path(artifact_root) / "bearing_contact_von_mises.png")
+    package_dir = str(Path(artifact_root) / "result_packages")
     return [
         DemoPrompt(
             name="bearing_contact_default_run",
@@ -65,7 +66,8 @@ def build_bearing_contact_prompts(
                 "deterministic tool chain, in this order: simulation_plan_bearing_contact, "
                 "simulation_search_templates, simulation_read_template, "
                 "simulation_validate_template, simulation_run_template, comsol_solve, "
-                "comsol_evaluate, comsol_evaluate, comsol_plot, comsol_close_model. "
+                "comsol_evaluate, comsol_evaluate, comsol_plot, "
+                "simulation_export_bearing_contact_package, comsol_close_model. "
                 "Call simulation_plan_bearing_contact with allow_defaults=true first, and use "
                 "its assumptions/resolved_params in the final answer. Do not call file tools, local-doc tools, "
                 "simulation_save_template, comsol_execute_java, or comsol_get_model_summary. "
@@ -77,10 +79,13 @@ def build_bearing_contact_prompts(
                 f"artifact_dir={artifact_dir!r}, and archive_path={archive_path!r}. "
                 "After the template run succeeds, call comsol_solve without study_name, "
                 "evaluate 'solid.mises' and 'contact_pressure_guess', export a stress image "
-                f"with comsol_plot to {stress_plot!r}, then close the model without saving. "
-                "Report the template_execution artifact run_id, JSON path, plot path, "
-                "default bearing dimensions, radial load, contact assumptions, and "
-                "stress/contact result summary."
+                f"with comsol_plot to {stress_plot!r}, export a bearing-contact package "
+                "with simulation_export_bearing_contact_package using "
+                f"output_dir={package_dir!r}, package_name='agent_bearing_contact_package', "
+                f"archive_path={archive_path!r}, and template_run_id from simulation_run_template, "
+                "then close the model without saving. Report the template_execution artifact "
+                "run_id, template JSON path, package JSON/Markdown/model paths, plot path, "
+                "default bearing dimensions, radial load, contact assumptions, and stress/contact summary."
             ),
             required_tools=(
                 "simulation_plan_bearing_contact",
@@ -91,6 +96,7 @@ def build_bearing_contact_prompts(
                 "comsol_solve",
                 "comsol_evaluate",
                 "comsol_plot",
+                "simulation_export_bearing_contact_package",
                 "comsol_close_model",
             ),
             successful_tools=(
@@ -99,6 +105,7 @@ def build_bearing_contact_prompts(
                 "comsol_solve",
                 "comsol_evaluate",
                 "comsol_plot",
+                "simulation_export_bearing_contact_package",
                 "comsol_close_model",
             ),
         ),
@@ -285,7 +292,7 @@ def _compact_summaries(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _has_compact_artifact(result: dict[str, Any]) -> bool:
     payload = result["payload"]
-    return bool(payload.get("artifacts") or payload.get("artifact") or payload.get("report"))
+    return bool(payload.get("artifacts") or payload.get("artifact") or payload.get("report") or payload.get("run_id"))
 
 
 def _compact_tool_artifact(result: dict[str, Any]) -> dict[str, Any]:
@@ -303,6 +310,11 @@ def _compact_tool_artifact(result: dict[str, Any]) -> dict[str, Any]:
         item["run_id"] = artifacts.get("run_id")
     if isinstance(artifact, dict) and artifact.get("run_id"):
         item["run_id"] = artifact.get("run_id")
+    if payload.get("run_id"):
+        item["run_id"] = payload.get("run_id")
+        item["path"] = payload.get("markdown_path") or payload.get("json_path") or item.get("path")
+        item["model_path"] = payload.get("model_path")
+        item["plot_path"] = payload.get("plot_path")
     return {key: value for key, value in item.items() if value not in (None, [], {})}
 
 

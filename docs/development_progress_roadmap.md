@@ -392,7 +392,9 @@ stress evaluation, contact-pressure estimate evaluation, and PNG plot export.
 The real DeepSeek agent demo now follows the intended high-level tool sequence
 and exports a template execution report. A deterministic bearing-contact
 planning tool now decides whether the agent should ask follow-up questions or
-run the default demo with stated assumptions.
+run the default demo with stated assumptions. Bearing runs can now export a
+result package with `.mph`, stress PNG, metrics, summary JSON, Markdown report,
+and archive index metadata.
 
 Implemented:
 
@@ -419,6 +421,11 @@ Implemented:
    a natural-language bearing request plus known parameters into:
    `ready_to_run`, missing required parameters, follow-up questions, resolved
    defaults, assumptions, recommended outputs, and next tool steps.
+8. Added `simulation_export_bearing_contact_package` to save a solved bearing
+   model, re-evaluate `solid.mises` and `contact_pressure_guess`, capture the
+   stress PNG path, write summary JSON/Markdown, and index a
+   `bearing_contact_package` artifact.
+9. Added compact artifact-reader previews for `bearing_contact_package` records.
 
 Default modeling scope:
 
@@ -451,13 +458,19 @@ Runtime validation on local COMSOL 6.2:
 - `scripts/run_agent_bearing_contact_demo.py --cores 1 ...` succeeded with
   DeepSeek and local COMSOL. Latest observed records:
   - Template execution run id:
-    `agent_bearing_contact_default_20260612_204032_217801`
+    `agent_bearing_contact_default_20260612_205159_078176`
+  - Result package run id:
+    `agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461`
   - Stress PNG:
     `runtime_smoke/bearing_contact_demo/bearing_contact_von_mises.png`
+  - Saved `.mph` model:
+    `runtime_smoke/bearing_contact_demo/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461/agent_bearing_contact_model.mph`
+  - Package Markdown:
+    `runtime_smoke/bearing_contact_demo/result_packages/agent_bearing_contact_package_agent_bearing_contact_model_20260612_205210_628461/report.md`
   - HTML report:
-    `runtime_smoke/bearing_contact_demo/reports/agent_bearing_contact_report_20260612_204055_625024.html`
+    `runtime_smoke/bearing_contact_demo/reports/agent_bearing_contact_report_20260612_205226_472855.html`
   - Agent-observed tool sequence:
-    `simulation_plan_bearing_contact -> simulation_search_templates -> simulation_read_template -> simulation_validate_template -> simulation_run_template -> comsol_solve -> comsol_evaluate -> comsol_evaluate -> comsol_plot -> comsol_close_model`
+    `simulation_plan_bearing_contact -> simulation_search_templates -> simulation_read_template -> simulation_validate_template -> simulation_run_template -> comsol_solve -> comsol_evaluate -> comsol_evaluate -> comsol_plot -> simulation_export_bearing_contact_package -> comsol_close_model`
 
 Next runtime checkpoint:
 
@@ -484,9 +497,8 @@ Next implementation details:
    across geometry changes.
 2. Add a real COMSOL contact pair/contact feature once the version-specific API
    calls are verified locally.
-3. Add a result report step that saves the `.mph` model and includes the stress
-   PNG path, stress extrema, contact-pressure estimate, and template artifact
-   run id in one archived record.
+3. Add a production-result report that includes contact-pair convergence checks
+   once true contact physics is available.
 4. Add a heavier optional 3D multi-ball model path after the 2D contact cell's
    real contact pair produces stable results.
 
