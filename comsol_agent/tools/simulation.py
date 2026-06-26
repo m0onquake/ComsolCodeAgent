@@ -1620,10 +1620,12 @@ def _generated_code_prompt_block(
         "1. Return ONLY executable COMSOL Java/API code for the Python-JPype `model` object; do not include Markdown fences or explanatory prose.\n"
         "2. Start by setting all explicit parameters with `model.param().set(name, value)` and unit-aware values where applicable.\n"
         "3. Create or reuse one component, geometry, material, physics interface, mesh, study, and result plot/numerical nodes as needed.\n"
-        "4. Use stable tags and labels; make boundary/entity selections explicit and comment assumptions only when necessary.\n"
-        "5. Include output expressions through result/numerical or plot groups so downstream tools can evaluate and plot them.\n"
-        "6. Avoid disallowed operations such as file deletion, process execution, `System.exit`, or arbitrary Java IO.\n"
-        "7. The next tool MUST be `simulation_validate_template(java_code=<generated code>, params=<unit parameter subset>)`; do not execute before validation passes.\n"
+        "4. Use setup-only code: create `std1`/study features, but do not create solver nodes, run solvers, call `model.sol(...)`, or call plot `.run()`; downstream tools perform solve/evaluate/plot.\n"
+        "5. Prefer locally verified API anchors when applicable: `material(tag).propertyGroup('def').set('youngsmodulus', value)`, `poissonsratio`, `density`; `physics('solid').feature(load).set('FperArea', [Fx, Fy, Fz])`; `study('std1').feature('stat').set('activate', ['solid', 'on'])`.\n"
+        "6. Use stable tags and labels; make boundary/entity selections explicit and comment assumptions only when necessary.\n"
+        "7. Include output expressions through result/numerical or plot groups so downstream tools can evaluate and plot them.\n"
+        "8. Avoid disallowed operations such as file deletion, process execution, `System.exit`, or arbitrary Java IO.\n"
+        "9. The next tool MUST be `simulation_validate_template(java_code=<generated code>, params=<unit parameter subset>)`; do not execute before validation passes.\n"
     )
 
 

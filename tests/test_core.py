@@ -2058,6 +2058,43 @@ class TestSimulationSkills:
         assert "bearing_contact_hertz_seed" in prompts[0].prompt
         assert prompts[1].name == "bearing_contact_artifact_report"
 
+    def test_generated_code_agent_demo_prompt_fixture_and_extraction(self):
+        from scripts.run_agent_generated_code_demo import (
+            build_code_generation_prompt,
+            build_generated_code_execution_prompt,
+            extract_generated_code,
+        )
+
+        draft = build_code_generation_prompt(
+            archive_path="runtime_smoke/agent_generated_code_demo.sqlite3",
+        )
+        execute = build_generated_code_execution_prompt(
+            java_code="model.param().set('L', '50[mm]');",
+            archive_path="runtime_smoke/agent_generated_code_demo.sqlite3",
+            artifact_dir="runtime_smoke/agent_generated_code_demo/template_runs",
+            plot_path="runtime_smoke/agent_generated_code_demo/generated_code_von_mises.png",
+            model_name="agent_generated_code_model",
+            template_name="agent_generated_structural_plate_seed",
+        )
+
+        assert draft.name == "generated_code_draft"
+        assert "simulation_plan_generated_code" in draft.required_tools
+        assert "GENERATED_CODE_START" in draft.prompt
+        assert "Do not call simulation_validate_template" in draft.prompt
+        assert execute.name == "generated_code_execute"
+        assert "simulation_run_template" in execute.required_tools
+        assert "RAW_GENERATED_CODE" in execute.prompt
+        assert "model.param().set('L', '50[mm]');" in execute.prompt
+
+        marked = (
+            "Here is code\n"
+            "GENERATED_CODE_START\n"
+            "```java\nmodel.param().set('L', '50[mm]');\n```\n"
+            "GENERATED_CODE_END"
+        )
+        assert extract_generated_code(marked) == "model.param().set('L', '50[mm]');"
+        assert extract_generated_code("```java\nmodel.component().create('comp1', true);\n```") == "model.component().create('comp1', true);"
+
     def test_template_tools_list_and_read_seeded_templates(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.simulation.skills import seed_builtin_templates
