@@ -836,7 +836,8 @@ def register_all_tools() -> None:
         name="simulation_run_template",
         description=(
             "Validate and execute an archived or raw COMSOL Java/API template against an explicitly "
-            "selected loaded model or a newly created model, then persist a template_execution artifact."
+            "selected loaded model or a newly created model. Archived templates persist template_execution "
+            "artifacts; raw generated code persists generated_code_execution artifacts."
         ),
         parameters={
             "type": "object",
@@ -1108,8 +1109,8 @@ def register_all_tools() -> None:
                 },
                 "kind": {
                     "type": "string",
-                    "enum": ["parameter_sweep", "template_execution"],
-                    "description": "Artifact report type. Defaults to parameter_sweep; use template_execution for template run artifacts.",
+                    "enum": ["parameter_sweep", "template_execution", "generated_code_execution"],
+                    "description": "Artifact report type. Defaults to parameter_sweep; use template_execution for archived template runs and generated_code_execution for raw generated-code runs.",
                 },
                 "archive_path": {
                     "type": "string",

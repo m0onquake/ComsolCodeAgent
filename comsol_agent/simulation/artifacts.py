@@ -95,18 +95,20 @@ def persist_template_execution_result(
     run_name: str | None = None,
     archive_results: bool = True,
     archive_path: str | Path | None = None,
+    artifact_kind: str = "template_execution",
 ) -> dict[str, Any]:
-    """Persist a template execution result as JSON and a small manifest."""
+    """Persist a template or generated-code execution result as JSON and a small manifest."""
     target_dir = Path(output_dir or "runtime_smoke/template_runs").expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    run_id = _make_run_id(run_name or "template_execution")
+    run_id = _make_run_id(run_name or artifact_kind)
     json_path = target_dir / f"{run_id}.json"
     manifest_path = target_dir / f"{run_id}.manifest.json"
 
     payload = dict(result)
     payload.pop("artifacts", None)
     payload["artifact_run_id"] = run_id
+    payload["artifact_kind"] = artifact_kind
     json_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -115,7 +117,7 @@ def persist_template_execution_result(
     manifest = {
         "run_id": run_id,
         "created_at": _utc_now(),
-        "kind": "template_execution",
+        "kind": artifact_kind,
         "model_name": result.get("model_name"),
         "source": result.get("source") or {},
         "executed_cases": 1 if result.get("executed") else 0,
@@ -149,6 +151,7 @@ def persist_template_execution_result(
                     "execution_success": result.get("success"),
                     "execution_error_type": execution.get("error_type"),
                     "execution_exception_type": execution.get("exception_type"),
+                    "artifact_kind": artifact_kind,
                     "tool_sequence": result.get("tool_sequence") or [],
                 },
             )

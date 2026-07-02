@@ -556,7 +556,8 @@ Exported reports write both `<report_id>.md` and
 `<report_id>.manifest.json`. With `--format html` or `--format both`, they also
 write `<report_id>.html`. Sweep reports are indexed in the archive as
 `comparison_report` artifacts, and template execution reports are indexed as
-`template_execution_report` artifacts, so they can be found later with
+`template_execution_report` artifacts. Raw generated-code execution reports are
+indexed as `generated_code_execution_report` artifacts, so they can be found later with
 `/artifacts search <report_name>`.
 
 Export a template execution report instead of a sweep comparison:
@@ -585,11 +586,12 @@ The Agent-facing tool is `simulation_rerun_artifact`. For sweep artifacts, it
 reads the archived JSON record, reconstructs the original model source,
 parameter axes, and output expressions, then applies optional
 `parameter_overrides` and `expression_overrides` before calling
-`simulation_run_parameter_sweep` again. For `template_execution` artifacts, it
-reconstructs `simulation_run_template` from the archived template code/parameter
-snapshot when available, or from the archived template name for older records.
-Use `params_overrides`, `model_name`, or `create_model_name` to adjust the
-replay target. Artifacts from the replay are persisted and indexed as a new run.
+`simulation_run_parameter_sweep` again. For `template_execution` and
+`generated_code_execution` artifacts, it reconstructs `simulation_run_template`
+from the archived code/parameter snapshot when available, or from the archived
+template name for older records. Use `params_overrides`, `model_name`, or
+`create_model_name` to adjust the replay target. Artifacts from the replay are
+persisted and indexed as a new run.
 
 Run the full DeepSeek + AgentLoop + high-level parameter sweep smoke test:
 

@@ -695,6 +695,7 @@ def simulation_run_template(
                 "template": template_snapshot,
                 "validation": validation,
             }
+            artifact_kind = _execution_artifact_kind(source)
             if persist_results:
                 result["artifacts"] = persist_template_execution_result(
                     result,
@@ -702,6 +703,7 @@ def simulation_run_template(
                     run_name=artifact_name or _template_run_name(name, create_model_name or model_name),
                     archive_results=archive_results,
                     archive_path=archive_path,
+                    artifact_kind=artifact_kind,
                 )
             return result
 
@@ -721,6 +723,7 @@ def simulation_run_template(
                     "validation": validation,
                     "create": create_result,
                 }
+                artifact_kind = _execution_artifact_kind(source)
                 if persist_results:
                     result["artifacts"] = persist_template_execution_result(
                         result,
@@ -728,6 +731,7 @@ def simulation_run_template(
                         run_name=artifact_name or _template_run_name(name, create_model_name),
                         archive_results=archive_results,
                         archive_path=archive_path,
+                        artifact_kind=artifact_kind,
                     )
                 return result
             active_model_name = create_result["model_name"]
@@ -761,12 +765,14 @@ def simulation_run_template(
             ],
         }
         if persist_results:
+            artifact_kind = _execution_artifact_kind(source)
             result["artifacts"] = persist_template_execution_result(
                 result,
                 output_dir=artifact_dir,
                 run_name=artifact_name or _template_run_name(name, active_model_name),
                 archive_results=archive_results,
                 archive_path=archive_path,
+                artifact_kind=artifact_kind,
             )
         return result
     except Exception as exc:
@@ -940,10 +946,13 @@ def simulation_export_artifact_report(
             return {"success": False, "error": "direction must be 'max' or 'min'."}
         if output_format not in {"markdown", "html", "both"}:
             return {"success": False, "error": "output_format must be 'markdown', 'html', or 'both'."}
-        if kind not in {"parameter_sweep", "template_execution"}:
-            return {"success": False, "error": "kind must be 'parameter_sweep' or 'template_execution'."}
+        if kind not in {"parameter_sweep", "template_execution", "generated_code_execution"}:
+            return {
+                "success": False,
+                "error": "kind must be 'parameter_sweep', 'template_execution', or 'generated_code_execution'.",
+            }
         store = _archive_store(archive_path)
-        if kind == "template_execution":
+        if kind in {"template_execution", "generated_code_execution"}:
             report = write_template_execution_report(
                 store,
                 run_ids=run_ids,
@@ -954,6 +963,7 @@ def simulation_export_artifact_report(
                 title=title,
                 output_format=output_format,
                 archive_path=archive_path,
+                artifact_kind=kind,
             )
             return {
                 "success": True,
@@ -1017,7 +1027,7 @@ def simulation_rerun_artifact(
     try:
         store = _archive_store(archive_path)
         artifact = store.get_simulation_artifact(run_id)
-        if artifact.kind == "template_execution":
+        if artifact.kind in {"template_execution", "generated_code_execution"}:
             replay = build_template_replay_request(
                 store,
                 run_id=run_id,
@@ -1677,6 +1687,13 @@ def _template_run_name(template_name: str | None, model_name: str | None) -> str
     raw = "_".join(part for part in (template_name or "template", model_name or "model") if part)
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip()).strip("._-")
     return slug or "template_execution"
+
+
+def _execution_artifact_kind(source: dict[str, Any] | None) -> str:
+    source = source or {}
+    if source.get("type") == "raw_template":
+        return "generated_code_execution"
+    return "template_execution"
 
 
 def _template_execution_snapshot(

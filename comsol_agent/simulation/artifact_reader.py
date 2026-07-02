@@ -26,13 +26,13 @@ def read_archived_artifact(
         "preview": {},
     }
 
-    if artifact.kind in {"comparison_report", "template_execution_report"}:
+    if artifact.kind in {"comparison_report", "template_execution_report", "generated_code_execution_report"}:
         result["preview"]["markdown"] = _read_text_preview(Path(artifact.json_path), max_lines=max_lines)
     elif artifact.kind == "parameter_sweep":
         result["preview"]["summary"] = _sweep_json_summary(Path(artifact.json_path))
         if artifact.csv_path:
             result["preview"]["csv"] = _read_csv_preview(Path(artifact.csv_path), max_rows=max_lines)
-    elif artifact.kind == "template_execution":
+    elif artifact.kind in {"template_execution", "generated_code_execution"}:
         result["preview"]["summary"] = _template_execution_summary(Path(artifact.json_path))
     elif artifact.kind == "bearing_contact_package":
         result["preview"]["summary"] = _bearing_contact_package_summary(Path(artifact.json_path))
@@ -121,6 +121,7 @@ def _template_execution_summary(path: Path) -> dict[str, Any]:
         "exists": True,
         "path": str(path),
         "success": payload.get("success"),
+        "kind": payload.get("artifact_kind") or payload.get("kind") or "template_execution",
         "executed": payload.get("executed"),
         "model_name": payload.get("model_name"),
         "template_name": payload.get("template_name") or template.get("name"),

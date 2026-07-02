@@ -2928,6 +2928,45 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         archived = ArchiveStore(archive_path).get_simulation_artifact(result["artifacts"]["run_id"])
         assert archived.kind == "template_execution"
 
+    def test_generated_code_run_persists_as_generated_code_execution(self, tmp_path, monkeypatch):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.tools import simulation as simulation_tools
+
+        calls = []
+
+        def fake_create_model(name):
+            calls.append(("create", name))
+            return {"success": True, "model_name": name}
+
+        def fake_execute_java(java_code, model_name):
+            calls.append(("execute", model_name, java_code))
+            return {"success": True, "output": "Code executed successfully (no output)."}
+
+        def fake_close_model(model_name, save=False):
+            calls.append(("close", model_name, save))
+            return {"success": True, "model_name": model_name, "save": save}
+
+        monkeypatch.setattr(simulation_tools, "comsol_create_model", fake_create_model)
+        monkeypatch.setattr(simulation_tools, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(simulation_tools, "comsol_close_model", fake_close_model)
+
+        archive_path = tmp_path / "archive.sqlite3"
+        result = simulation_tools.simulation_run_template(
+            name="generated_bearing_seed",
+            java_code="model.component().create('comp1', true);",
+            create_model_name="generated_code_model",
+            params={"radial_load": "3000[N]"},
+            artifact_dir=str(tmp_path / "template_runs"),
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["executed"] is True
+        assert calls[0] == ("create", "generated_code_model")
+        assert Path(result["artifacts"]["json_path"]).exists()
+        archived = ArchiveStore(archive_path).get_simulation_artifact(result["artifacts"]["run_id"])
+        assert archived.kind == "generated_code_execution"
+
     @pytest.mark.asyncio
     async def test_agent_loop_injects_skill_context(self):
         from collections.abc import AsyncIterator
@@ -3860,6 +3899,56 @@ class TestParameterSweeps:
         assert request["create_model_name"] == "template_model"
         assert request["validate_first"] is True
 
+    def test_build_generated_code_replay_request_uses_archived_snapshot(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.simulation.artifacts import persist_template_execution_result
+        from comsol_agent.simulation.replay import build_template_replay_request
+
+        archive_path = tmp_path / "archive.sqlite3"
+        source_artifact = persist_template_execution_result(
+            {
+                "success": True,
+                "executed": True,
+                "template_name": "generated_bearing_seed",
+                "model_name": "generated_model",
+                "source": {"type": "raw_template", "name": "generated_bearing_seed", "domain": "structural"},
+                "params": {"radial_load": "3000[N]"},
+                "template": {
+                    "name": "generated_bearing_seed",
+                    "domain": "structural",
+                    "params": {"radial_load": "3000[N]"},
+                    "java_code": "model.component().create('comp1', true);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "create": {"success": True, "model_name": "generated_model"},
+                "execution": {"success": True, "stdout": "", "error": None},
+                "tool_sequence": [
+                    "comsol_create_model",
+                    "simulation_validate_template",
+                    "comsol_execute_java",
+                    "comsol_close_model",
+                ],
+            },
+            output_dir=tmp_path / "artifacts",
+            run_name="generated_code_replay_source",
+            archive_path=archive_path,
+            artifact_kind="generated_code_execution",
+        )
+
+        replay = build_template_replay_request(
+            ArchiveStore(archive_path),
+            run_id=source_artifact["run_id"],
+            params_overrides={"radial_load": "3200[N]"},
+        )
+
+        request = replay["request"]
+        assert replay["source_artifact"]["kind"] == "generated_code_execution"
+        assert request["name"] == "generated_bearing_seed"
+        assert request["java_code"] == "model.component().create('comp1', true);"
+        assert request["params"] == {"radial_load": "3200[N]"}
+        assert request["create_model_name"] == "generated_model"
+        assert request["validate_first"] is True
+
     def test_simulation_rerun_artifact_dispatches_template_execution(
         self,
         monkeypatch,
@@ -4017,6 +4106,105 @@ class TestParameterSweeps:
         assert read_result["success"] is True
         assert read_result["artifact"]["kind"] == "template_execution_report"
         assert read_result["preview"]["markdown"]["lines"][0] == "# COMSOL Template Execution Report"
+
+    def test_simulation_export_artifact_report_handles_generated_code_execution(self, tmp_path):
+        from comsol_agent.simulation.artifacts import persist_template_execution_result
+        from comsol_agent.tools.simulation import (
+            simulation_export_artifact_report,
+            simulation_read_artifact,
+            simulation_search_artifacts,
+        )
+
+        archive_path = tmp_path / "archive.sqlite3"
+        artifact_dir = tmp_path / "artifacts"
+        persist_template_execution_result(
+            {
+                "success": True,
+                "executed": True,
+                "template_name": "generated_bearing_seed",
+                "model_name": "generated_model_ok",
+                "source": {"type": "raw_template", "name": "generated_bearing_seed", "domain": "structural"},
+                "params": {"radial_load": "3000[N]"},
+                "template": {
+                    "name": "generated_bearing_seed",
+                    "domain": "structural",
+                    "params": {"radial_load": "3000[N]"},
+                    "java_code": "model.component().create('comp1', true);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "execution": {"success": True},
+                "tool_sequence": ["comsol_execute_java"],
+            },
+            output_dir=artifact_dir,
+            run_name="generated_report_ok",
+            archive_path=archive_path,
+            artifact_kind="generated_code_execution",
+        )
+        persist_template_execution_result(
+            {
+                "success": False,
+                "executed": True,
+                "template_name": "generated_bearing_seed",
+                "model_name": "generated_model_fail",
+                "source": {"type": "raw_template", "name": "generated_bearing_seed", "domain": "structural"},
+                "params": {"radial_load": "bad"},
+                "template": {
+                    "name": "generated_bearing_seed",
+                    "domain": "structural",
+                    "params": {"radial_load": "bad"},
+                    "java_code": "model.component().create('comp1', true);",
+                },
+                "validation": {"status": "ok", "errors": [], "warnings": []},
+                "execution": {
+                    "success": False,
+                    "error": "Unknown pair selection",
+                    "error_type": "api_error",
+                },
+                "tool_sequence": ["comsol_execute_java"],
+            },
+            output_dir=artifact_dir,
+            run_name="generated_report_fail",
+            archive_path=archive_path,
+            artifact_kind="generated_code_execution",
+        )
+
+        result = simulation_export_artifact_report(
+            query="generated_report_",
+            kind="generated_code_execution",
+            output_dir=str(tmp_path / "reports"),
+            report_name="generated_code_report",
+            output_format="html",
+            archive_path=str(archive_path),
+        )
+
+        report_path = Path(result["report"]["path"])
+        html_path = Path(result["report"]["html_path"])
+        content = report_path.read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert result["kind"] == "generated_code_execution"
+        assert result["summary"]["run_count"] == 2
+        assert result["summary"]["success_count"] == 1
+        assert result["summary"]["failure_count"] == 1
+        assert result["report"]["archive"]["kind"] == "generated_code_execution_report"
+        assert "# COMSOL Generated-Code Execution Report" in content
+        assert "generated_model_fail" in content
+        assert "<!doctype html>" in html_path.read_text(encoding="utf-8")
+
+        search_result = simulation_search_artifacts(
+            query="generated_code_report",
+            archive_path=str(archive_path),
+        )
+        assert search_result["success"] is True
+        assert any(item["kind"] == "generated_code_execution_report" for item in search_result["artifacts"])
+
+        read_result = simulation_read_artifact(
+            run_id=result["report"]["report_id"],
+            archive_path=str(archive_path),
+            max_lines=5,
+        )
+        assert read_result["success"] is True
+        assert read_result["artifact"]["kind"] == "generated_code_execution_report"
+        assert read_result["preview"]["markdown"]["lines"][0] == "# COMSOL Generated-Code Execution Report"
 
     def test_simulation_run_parameter_sweep_loads_and_closes_example(
         self,

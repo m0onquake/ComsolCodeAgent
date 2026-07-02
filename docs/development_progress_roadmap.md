@@ -642,8 +642,10 @@ Remaining P7 work:
    complete demo now supports bounded fallback from a failed generated snippet
    to a verified real-bearing contact cell, but production-grade generated
    geometry still needs robust named selections instead of fixture boundary IDs.
-2. Add first-class artifact kind/reporting for generated-code runs instead of
-   reusing only `template_execution` artifacts.
+2. Done: generated-code runs now persist as first-class
+   `generated_code_execution` artifacts and export
+   `generated_code_execution_report` reports instead of reusing only
+   `template_execution` artifacts.
 3. Promote robust named geometry/contact selections for generated multi-roller
    bearing code so boundary IDs are not fixture-specific.
 4. Add richer prompt-time extraction of code parameters versus modeling

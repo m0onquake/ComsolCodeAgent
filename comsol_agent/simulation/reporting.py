@@ -102,8 +102,9 @@ def write_template_execution_report(
     output_format: str = "markdown",
     archive_results: bool = True,
     archive_path: str | Path | None = None,
+    artifact_kind: str = "template_execution",
 ) -> dict[str, Any]:
-    """Write a report for archived template execution artifacts."""
+    """Write a report for archived template or generated-code execution artifacts."""
     if output_format not in {"markdown", "html", "both"}:
         raise ValueError("output_format must be 'markdown', 'html', or 'both'.")
 
@@ -112,23 +113,37 @@ def write_template_execution_report(
         run_ids=run_ids,
         query=query,
         limit=limit,
+        artifact_kind=artifact_kind,
     )
     if not artifacts:
-        raise ValueError("No template_execution artifacts found for report export.")
+        raise ValueError(f"No {artifact_kind} artifacts found for report export.")
 
     summary = _template_execution_summary(artifacts)
     target_dir = Path(output_dir or "runtime_smoke/reports").expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    report_id = _make_report_id(report_name, default_prefix="template_execution_report")
+    report_prefix = (
+        "generated_code_execution_report"
+        if artifact_kind == "generated_code_execution"
+        else "template_execution_report"
+    )
+    report_id = _make_report_id(report_name, default_prefix=report_prefix)
     path = target_dir / f"{report_id}.md"
     html_path = target_dir / f"{report_id}.html"
     manifest_path = target_dir / f"{report_id}.manifest.json"
-    markdown = render_template_execution_report(summary, title=title, report_id=report_id)
+    markdown = render_template_execution_report(
+        summary,
+        title=title or _default_execution_report_title(artifact_kind),
+        report_id=report_id,
+    )
     path.write_text(markdown, encoding="utf-8")
     wrote_html = output_format in {"html", "both"}
     if wrote_html:
-        html = render_template_execution_report_html(summary, title=title, report_id=report_id)
+        html = render_template_execution_report_html(
+            summary,
+            title=title or _default_execution_report_title(artifact_kind),
+            report_id=report_id,
+        )
         html_path.write_text(html, encoding="utf-8")
 
     manifest = _template_report_manifest(
@@ -137,6 +152,7 @@ def write_template_execution_report(
         report_path=path,
         manifest_path=manifest_path,
         html_path=html_path if wrote_html else None,
+        artifact_kind=artifact_kind,
     )
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
@@ -156,7 +172,7 @@ def write_template_execution_report(
                     "html_path": str(html_path) if wrote_html else None,
                     "html_size_bytes": html_path.stat().st_size if wrote_html else None,
                     "output_format": output_format,
-                    "source_kind": "template_execution",
+                    "source_kind": artifact_kind,
                     "success_count": summary["success_count"],
                     "failure_count": summary["failure_count"],
                 },
@@ -591,14 +607,15 @@ def _select_template_execution_artifacts(
     run_ids: list[str] | None,
     query: str | None,
     limit: int,
+    artifact_kind: str = "template_execution",
 ) -> list[SimulationArtifact]:
     if run_ids:
         artifacts = [archive_store.get_simulation_artifact(run_id) for run_id in run_ids]
     elif query:
         artifacts = archive_store.search_simulation_artifacts(query, limit=limit)
     else:
-        artifacts = archive_store.list_simulation_artifacts(kind="template_execution", limit=limit)
-    return [artifact for artifact in artifacts if artifact.kind == "template_execution"][:limit]
+        artifacts = archive_store.list_simulation_artifacts(kind=artifact_kind, limit=limit)
+    return [artifact for artifact in artifacts if artifact.kind == artifact_kind][:limit]
 
 
 def _template_execution_summary(artifacts: list[SimulationArtifact]) -> dict[str, Any]:
@@ -620,6 +637,7 @@ def _template_execution_run_summary(artifact: SimulationArtifact) -> dict[str, A
     template = payload.get("template") or {}
     return {
         "run_id": artifact.run_id,
+        "kind": artifact.kind,
         "model_name": payload.get("model_name") or artifact.model_name,
         "template_name": payload.get("template_name") or template.get("name") or artifact.source.get("name"),
         "template_domain": template.get("domain") or artifact.source.get("domain"),
@@ -689,15 +707,21 @@ def _template_report_manifest(
     report_path: Path,
     manifest_path: Path,
     html_path: Path | None = None,
+    artifact_kind: str = "template_execution",
 ) -> dict[str, Any]:
     model_names = sorted({run.get("model_name") for run in summary["runs"] if run.get("model_name")})
+    report_kind = (
+        "generated_code_execution_report"
+        if artifact_kind == "generated_code_execution"
+        else "template_execution_report"
+    )
     return {
         "run_id": report_id,
-        "kind": "template_execution_report",
+        "kind": report_kind,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model_name": model_names[0] if len(model_names) == 1 else None,
         "source": {
-            "type": "template_execution_report",
+            "type": report_kind,
             "source_run_ids": summary["source_run_ids"],
             "success_count": summary["success_count"],
             "failure_count": summary["failure_count"],
@@ -709,6 +733,12 @@ def _template_report_manifest(
         "csv_path": None,
         "manifest_path": str(manifest_path),
     }
+
+
+def _default_execution_report_title(artifact_kind: str) -> str:
+    if artifact_kind == "generated_code_execution":
+        return "COMSOL Generated-Code Execution Report"
+    return "COMSOL Template Execution Report"
 
 
 def _html_metric(label: str, value: Any) -> str:
