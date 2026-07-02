@@ -175,6 +175,13 @@ def _select_or_create_plot_group(
     plot_type: str,
 ) -> str:
     if expression:
+        existing_plot_group = _first_existing_plot_group(java_model, result)
+        if existing_plot_group:
+            try:
+                java_model.result(existing_plot_group).run()
+            except Exception:
+                pass
+            return existing_plot_group
         return _create_expression_plot_group(
             java_model,
             result,
@@ -194,6 +201,61 @@ def _select_or_create_plot_group(
     )
 
 
+def _first_existing_plot_group(java_model: Any, result: Any) -> str | None:
+    for tag in _tags(result):
+        if _looks_like_plot_group(java_model, tag):
+            return tag
+    return None
+
+
+def _preferred_plot_group_type(java_model: Any, plot_type: str) -> str:
+    if "3d" in plot_type.lower():
+        return "PlotGroup3D"
+    try:
+        geom_tags = _tags(java_model.geom())
+        for geom_tag in geom_tags:
+            geom = java_model.geom(geom_tag)
+            for attr in ("getSDim", "getSpaceDim"):
+                try:
+                    if int(getattr(geom, attr)()) == 3:
+                        return "PlotGroup3D"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        component_tags = _tags(java_model.component())
+        for component_tag in component_tags:
+            component = java_model.component(component_tag)
+            for geom_tag in _tags(component.geom()):
+                geom = component.geom(geom_tag)
+                for attr in ("getSDim", "getSpaceDim"):
+                    try:
+                        if int(getattr(geom, attr)()) == 3:
+                            return "PlotGroup3D"
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return "PlotGroup2D"
+
+
+def _preferred_plot_feature_type(plot_group_type: str, plot_type: str) -> str:
+    plot_type_lower = plot_type.lower()
+    if plot_group_type == "PlotGroup3D":
+        return {
+            "surface": "Surface",
+            "volume": "Volume",
+            "slice": "Slice",
+            "contour": "Contour",
+        }.get(plot_type_lower, "Surface")
+    return {
+        "surface": "Surface",
+        "contour": "Contour",
+        "arrow": "ArrowSurface",
+    }.get(plot_type_lower, "Surface")
+
+
 def _create_expression_plot_group(
     java_model: Any,
     result: Any,
@@ -201,15 +263,12 @@ def _create_expression_plot_group(
     expression: str | None,
     plot_type: str,
 ) -> str:
+    plot_group_type = _preferred_plot_group_type(java_model, plot_type)
     plot_group = "pg_codex"
     plot_group = _unique_tag(_tags(result), plot_group)
-    result.create(plot_group, "PlotGroup2D")
+    result.create(plot_group, plot_group_type)
     if expression:
-        feature_type = {
-            "surface": "Surface",
-            "contour": "Contour",
-            "arrow": "ArrowSurface",
-        }.get(plot_type.lower(), "Surface")
+        feature_type = _preferred_plot_feature_type(plot_group_type, plot_type)
         java_model.result(plot_group).create("plot_codex", feature_type)
         java_model.result(plot_group).feature("plot_codex").set("expr", expression)
     try:

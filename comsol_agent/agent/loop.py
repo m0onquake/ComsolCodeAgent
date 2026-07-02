@@ -43,6 +43,15 @@ def _is_authentication_error(exc: Exception) -> bool:
     return any(marker in name or marker in message for marker in auth_markers)
 
 
+def _tool_call_signature(tool_call: ToolCall) -> str:
+    """Return a stable signature for repeated failed-tool-call detection."""
+    try:
+        arguments = json.dumps(tool_call.arguments or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        arguments = str(tool_call.arguments)
+    return f"{tool_call.name}:{arguments}"
+
+
 @dataclass
 class ConversationTurn:
     """Records a single turn in the conversation history."""
@@ -149,6 +158,7 @@ class AgentLoop:
         log.info(f"Processing user input ({len(user_input)} chars)")
 
         final_response = ""
+        repeated_failed_tool_calls: dict[str, int] = {}
 
         for iteration in range(self.max_tool_iterations):
             self.state.tool_iterations_this_turn = iteration + 1
@@ -184,6 +194,7 @@ class AgentLoop:
 
             # Process tool calls
             if response.is_tool_calls:
+                stop_after_tool_batch = False
                 # Record assistant message with tool calls
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
@@ -205,6 +216,16 @@ class AgentLoop:
                 # Execute each tool call
                 for tc in response.tool_calls:
                     tool_result = await self._execute_tool(tc)
+                    if tool_result.is_error:
+                        signature = _tool_call_signature(tc)
+                        repeated_failed_tool_calls[signature] = repeated_failed_tool_calls.get(signature, 0) + 1
+                        if repeated_failed_tool_calls[signature] >= 3:
+                            final_response = (
+                                "Stopped after the same tool call failed repeatedly. "
+                                f"Tool `{tc.name}` was called with the same arguments "
+                                f"{repeated_failed_tool_calls[signature]} times; inspect the last tool error before retrying."
+                            )
+                            stop_after_tool_batch = True
                     self._append_message({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -214,6 +235,12 @@ class AgentLoop:
 
                     if tool_result.is_error and self.config.agent.auto_repair:
                         self._record_repair_detection(tc, tool_result)
+                if stop_after_tool_batch:
+                    self._append_message({
+                        "role": "assistant",
+                        "content": final_response,
+                    })
+                    break
 
             # Safety: if we hit the max iterations, force a final response
             if iteration >= self.max_tool_iterations - 1:

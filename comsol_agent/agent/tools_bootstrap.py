@@ -27,6 +27,7 @@ from comsol_agent.tools.comsol.solve import (
 from comsol_agent.tools.comsol.evaluate import comsol_export_results, comsol_plot
 from comsol_agent.tools.file_ops import file_list, file_read, file_write, shell_execute
 from comsol_agent.tools.simulation import (
+    simulation_answer_artifact_question,
     simulation_compare_artifacts,
     simulation_export_bearing_contact_package,
     simulation_export_template,
@@ -36,6 +37,7 @@ from comsol_agent.tools.simulation import (
     simulation_list_templates,
     simulation_plan_generated_code,
     simulation_plan_bearing_contact,
+    simulation_plan_multiroller_bearing,
     simulation_plan_parameter_sweep,
     simulation_read_artifact,
     simulation_read_template,
@@ -443,6 +445,38 @@ def register_all_tools() -> None:
     )
 
     register_sync(
+        name="simulation_plan_multiroller_bearing",
+        description=(
+            "Plan a real multi-roller/cylindrical-roller/needle-bearing contact workflow. "
+            "Use this before generated-code fallback for bearing requests that require inner ring, "
+            "outer ring, multiple rollers, and explicit roller-raceway Contact Pair/Contact features. "
+            "Returns follow-up questions or defaulted parameters plus mandatory contact requirements."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's multi-roller bearing simulation request.",
+                },
+                "provided_params": {
+                    "type": "object",
+                    "description": (
+                        "Known parameters such as inner_diameter, outer_diameter, roller_count, "
+                        "roller_diameter, roller_length, radial_load, cage_included."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "If true, use clear engineering defaults while recording assumptions.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_multiroller_bearing,
+    )
+
+    register_sync(
         name="simulation_plan_parameter_sweep",
         description=(
             "Plan a parameter sweep without running COMSOL. Expands parameter axes "
@@ -736,7 +770,8 @@ def register_all_tools() -> None:
         name="simulation_validate_template",
         description=(
             "Validate an archived COMSOL Java/API template or raw Java/API seed code offline "
-            "before saving, exporting, or executing it in COMSOL."
+            "before saving, exporting, or executing it in COMSOL. Always provide either "
+            "`java_code` or an archived template `name`; never call this tool with empty arguments."
         ),
         parameters={
             "type": "object",
@@ -940,6 +975,39 @@ def register_all_tools() -> None:
             "required": ["run_id"],
         },
         handler=simulation_read_artifact,
+    )
+
+    register_sync(
+        name="simulation_answer_artifact_question",
+        description=(
+            "Answer common follow-up questions about a saved simulation artifact/package using "
+            "archived evidence, not guesses. Use for questions such as maximum stress, approximate "
+            "max-stress location, highest-risk roller/contact region, contact-pair status, model "
+            "parameters, and plot/model paths."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "User follow-up question about a saved simulation result.",
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional artifact run ID. If omitted, query is used to search artifacts.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional artifact search query when run_id is not known.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path.",
+                },
+            },
+            "required": ["question"],
+        },
+        handler=simulation_answer_artifact_question,
     )
 
     register_sync(

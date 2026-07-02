@@ -14,7 +14,10 @@ from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.simulation.artifact_reader import read_archived_artifact
 from comsol_agent.simulation.artifacts import persist_sweep_result
 from comsol_agent.simulation.artifacts import persist_template_execution_result
-from comsol_agent.simulation.bearing_contact import plan_bearing_contact_setup
+from comsol_agent.simulation.bearing_contact import (
+    plan_bearing_contact_setup,
+    plan_multiroller_bearing_setup,
+)
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
@@ -82,6 +85,31 @@ def simulation_plan_bearing_contact(
         return {"success": False, "error": str(exc)}
 
 
+def simulation_plan_multiroller_bearing(
+    user_request: str,
+    provided_params: dict | None = None,
+    allow_defaults: bool = False,
+) -> dict:
+    """Plan a real multi-roller bearing contact workflow."""
+    try:
+        plan = plan_multiroller_bearing_setup(
+            user_request=user_request,
+            provided_params=provided_params or {},
+            allow_defaults=allow_defaults,
+        )
+        return {
+            "success": True,
+            "plan": plan.to_dict(),
+            "note": (
+                "Use this plan for multi-roller/cylindrical-roller/needle-bearing requests. "
+                "Do not substitute unrelated plate/block structural simulations. If no true "
+                "multi-roller template fits, use generated-code fallback with explicit contact pairs."
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 def simulation_export_bearing_contact_package(
     model_name: str,
     template_run_id: str | None = None,
@@ -115,7 +143,10 @@ def simulation_export_bearing_contact_package(
 
         evaluations = [
             comsol_evaluate(model_name, "solid.mises"),
-            comsol_evaluate(model_name, "contact_pressure_guess"),
+            _evaluate_first_available(
+                model_name,
+                ["contact_pressure_guess", "contact_pressure_est", "max_contact_pressure"],
+            ),
         ]
         failed_eval = [item for item in evaluations if not item.get("success")]
         if failed_eval:
@@ -139,6 +170,9 @@ def simulation_export_bearing_contact_package(
                 template_artifact = {"error": str(exc), "run_id": template_run_id}
 
         plot = _package_plot_info(plot_path)
+        template_params = _template_artifact_params(template_artifact)
+        contact_summary = _bearing_contact_contact_summary(template_artifact)
+        assumptions = _bearing_contact_package_assumptions(template_params, contact_summary)
         summary = {
             "success": True,
             "kind": "bearing_contact_package",
@@ -149,12 +183,17 @@ def simulation_export_bearing_contact_package(
             "plot": plot,
             "evaluations": evaluations,
             "metrics": _bearing_contact_metrics(evaluations),
+            "result_interpretation": {
+                "max_stress_location_approx": contact_summary["max_stress_location_approx"],
+                "highest_risk_region": contact_summary["highest_risk_region"],
+                "contact_pair_status": contact_summary["contact_pair_status"],
+                "location_precision": (
+                    "approximate_region_from_model_setup; exact coordinates require point/coordinate probes"
+                ),
+            },
+            "model_parameters": template_params,
             "template_artifact": template_artifact,
-            "assumptions": [
-                "2D single-ball/raceway workflow unless the template states otherwise.",
-                "Inspect the template execution record to distinguish Hertz-style pressure and explicit COMSOL contact-pair models.",
-                "Use the package for workflow review; inspect boundary selections, mesh, and contact convergence before production bearing design.",
-            ],
+            "assumptions": assumptions,
         }
 
         json_path = package_dir / "summary.json"
@@ -514,7 +553,16 @@ def simulation_validate_template(
             code = template.java_code
             effective_params = template.params if params is None else params
         if code is None:
-            return {"success": False, "error": "Either name or java_code is required."}
+            return {
+                "success": False,
+                "error": "Either name or java_code is required.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
+                "repair_hint": (
+                    "Do not retry this tool with empty arguments. Pass the raw generated code as "
+                    "`java_code`, or pass an archived template `name` plus `archive_path`."
+                ),
+            }
         validation = _validate_template_code(name=name, java_code=code, params=effective_params)
         return {
             "success": not validation["errors"],
@@ -594,9 +642,21 @@ def simulation_run_template(
             return {
                 "success": False,
                 "error": "Provide exactly one of model_name or create_model_name.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
             }
         if not name and java_code is None:
-            return {"success": False, "error": "Either name or java_code is required."}
+            return {
+                "success": False,
+                "error": "Either name or java_code is required.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
+                "repair_hint": (
+                    "Do not retry this tool with empty code. Pass raw setup code as `java_code`, "
+                    "or pass archived template `name`; also pass exactly one target model via "
+                    "`model_name` or `create_model_name`."
+                ),
+            }
 
         template = None
         effective_code = java_code
@@ -783,6 +843,49 @@ def simulation_read_artifact(
         }
     except Exception as exc:
         return {"success": False, "error": str(exc), "run_id": run_id}
+
+
+def simulation_answer_artifact_question(
+    question: str,
+    run_id: str | None = None,
+    query: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Answer common result questions from archived artifact/package content."""
+    try:
+        store = _archive_store(archive_path)
+        artifact_id = run_id
+        if artifact_id is None:
+            search_query = query or "bearing_contact_package"
+            matches = store.search_simulation_artifacts(search_query, limit=10)
+            package_match = next(
+                (artifact for artifact in matches if artifact.kind in {"bearing_contact_package", "multiroller_bearing_package"}),
+                None,
+            )
+            artifact_id = (package_match or matches[0]).run_id if matches else None
+        if not artifact_id:
+            return {
+                "success": False,
+                "error": "No artifact run_id was provided and no matching artifact was found.",
+                "question": question,
+            }
+
+        artifact = read_archived_artifact(store, run_id=artifact_id, max_lines=120)
+        summary = (artifact.get("preview") or {}).get("summary") or {}
+        answer = _answer_from_artifact_summary(question, summary)
+        return {
+            "success": True,
+            "archive_path": str(store.db_path),
+            "run_id": artifact_id,
+            "question": question,
+            "answer": answer,
+            "evidence": {
+                "kind": (artifact.get("artifact") or {}).get("kind"),
+                "summary": summary,
+            },
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "question": question, "run_id": run_id}
 
 
 def simulation_compare_artifacts(
@@ -1369,11 +1472,92 @@ def _bearing_contact_metrics(evaluations: list[dict]) -> dict:
             metrics["von_mises_mean"] = stats.get("mean")
         elif expression == "contact_pressure_guess":
             metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
+        elif expression in {"contact_pressure_est", "max_contact_pressure"}:
+            metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
+            metrics["contact_pressure_expression"] = expression
     return metrics
+
+
+def _evaluate_first_available(model_name: str, expressions: list[str]) -> dict:
+    last_result = None
+    for expression in expressions:
+        result = comsol_evaluate(model_name, expression)
+        if result.get("success"):
+            return result
+        last_result = result
+    return last_result or {
+        "success": False,
+        "model_name": model_name,
+        "expression": expressions[0] if expressions else "",
+        "error": "No expressions were provided.",
+    }
+
+
+def _template_artifact_params(template_artifact: dict | None) -> dict:
+    if not isinstance(template_artifact, dict):
+        return {}
+    preview = template_artifact.get("preview") or {}
+    summary = preview.get("summary") or {}
+    return summary.get("params") or {}
+
+
+def _bearing_contact_contact_summary(template_artifact: dict | None) -> dict:
+    template_name = ""
+    params = {}
+    if isinstance(template_artifact, dict):
+        preview = template_artifact.get("preview") or {}
+        summary = preview.get("summary") or {}
+        template_name = str(summary.get("template_name") or "")
+        params = summary.get("params") or {}
+    is_multiroller = "multiroller" in template_name or "roller_count" in params
+    has_contact_pair = (
+        is_multiroller
+        or "pair" in template_name
+        or "contact_pair" in template_name
+    )
+    if is_multiroller:
+        return {
+            "max_stress_location_approx": "roller/raceway contact patch near the loaded roller set",
+            "highest_risk_region": "roller-to-inner/outer-raceway contact pair region",
+            "contact_pair_status": "explicit COMSOL Contact pairs were created for roller-to-raceway interfaces",
+        }
+    return {
+        "max_stress_location_approx": (
+            "roller/raceway contact patch near the loaded rolling element"
+            if has_contact_pair
+            else "ball/raceway contact patch near the loaded rolling element"
+        ),
+        "highest_risk_region": (
+            "rolling-element to raceway contact pair"
+            if has_contact_pair
+            else "loaded rolling-element/raceway contact region"
+        ),
+        "contact_pair_status": (
+            "explicit COMSOL contact pair was requested by the template execution"
+            if has_contact_pair
+            else "Hertz-style pressure workflow; inspect template before claiming explicit Contact Pair"
+        ),
+    }
+
+
+def _bearing_contact_package_assumptions(params: dict, contact_summary: dict) -> list[str]:
+    if "roller_count" in params:
+        return [
+            "2D plane-strain multi-roller bearing contact workflow with explicit roller/raceway contact pairs.",
+            "Cage geometry is omitted in this first demo and preserved as a follow-up extension.",
+            "Boundary selections are generated for this smoke geometry; inspect mesh/contact convergence before production bearing design.",
+            f"Contact status: {contact_summary.get('contact_pair_status')}.",
+        ]
+    return [
+        "2D single-ball/raceway workflow unless the template states otherwise.",
+        "Inspect the template execution record to distinguish Hertz-style pressure and explicit COMSOL contact-pair models.",
+        "Use the package for workflow review; inspect boundary selections, mesh, and contact convergence before production bearing design.",
+    ]
 
 
 def _bearing_contact_package_markdown(summary: dict) -> str:
     metrics = summary.get("metrics") or {}
+    interpretation = summary.get("result_interpretation") or {}
     model_save = summary.get("model_save") or {}
     plot = summary.get("plot") or {}
     lines = [
@@ -1391,6 +1575,9 @@ def _bearing_contact_package_markdown(summary: dict) -> str:
         f"- von Mises max: `{metrics.get('von_mises_max')}`",
         f"- von Mises mean: `{metrics.get('von_mises_mean')}`",
         f"- Contact pressure estimate: `{metrics.get('contact_pressure_guess')}`",
+        f"- Max stress location: `{interpretation.get('max_stress_location_approx') or ''}`",
+        f"- Highest-risk region: `{interpretation.get('highest_risk_region') or ''}`",
+        f"- Contact pair status: `{interpretation.get('contact_pair_status') or ''}`",
         "",
         "## Assumptions",
         "",
@@ -1406,6 +1593,60 @@ def _bearing_contact_package_markdown(summary: dict) -> str:
         "",
     ])
     return "\n".join(lines)
+
+
+def _answer_from_artifact_summary(question: str, summary: dict) -> str:
+    lowered = question.lower()
+    metrics = summary.get("metrics") or {}
+    interpretation = summary.get("result_interpretation") or {}
+    params = summary.get("model_parameters") or {}
+    highest_risk_roller = summary.get("highest_risk_roller") or interpretation.get("highest_risk_roller")
+    cage_model = summary.get("cage_model") or interpretation.get("cage_status")
+    roller_risk = summary.get("roller_risk_ranking") or []
+    selection_status = summary.get("selection_status")
+    selection_plan = summary.get("selection_plan") or {}
+    probe_scope_status = summary.get("probe_scope_status")
+    plot_path = summary.get("plot_path") or (summary.get("plot") or {}).get("path")
+    model_path = summary.get("model_path") or (summary.get("model_save") or {}).get("saved_to")
+
+    if any(marker in lowered for marker in ("最大应力", "max stress", "von mises", "mises")):
+        value = summary.get("max_von_mises_pa") or metrics.get("von_mises_max")
+        location = interpretation.get("max_stress_location_approx")
+        region = interpretation.get("highest_risk_region")
+        return (
+            f"最大 von Mises 应力为 {value}；位置为 {location or '未记录'}；"
+            f"最高风险滚子为 {highest_risk_roller or '未记录'}；最高风险区域为 {region or '未记录'}。"
+        )
+    if any(marker in lowered for marker in ("位置", "where", "location", "哪个滚子", "哪一个滚子", "最高风险滚子")):
+        ranking = ""
+        if roller_risk:
+            ranking = "；风险排序为 " + ", ".join(
+                f"{item.get('roller')}({item.get('relative_risk')})" for item in roller_risk[:6]
+            )
+        return (
+            f"记录的近似位置是 {interpretation.get('max_stress_location_approx') or '未记录'}；"
+            f"最高风险滚子是 {highest_risk_roller or '未记录'}；"
+            f"最高风险区域是 {interpretation.get('highest_risk_region') or '未记录'}{ranking}。"
+        )
+    if any(marker in lowered for marker in ("保持架", "cage", "pocket")):
+        return f"保持架建模状态：{cage_model or 'artifact 中未记录保持架状态'}。"
+    if any(marker in lowered for marker in ("选择", "selection", "probe", "探针", "边界")):
+        global_selections = (selection_plan.get("global_selections") or {}) if isinstance(selection_plan, dict) else {}
+        return (
+            f"选择状态：{selection_status or '未记录'}；"
+            f"probe 作用域状态：{probe_scope_status or '未记录'}；"
+            f"计划的关键 named selections：{json.dumps(global_selections, ensure_ascii=False, sort_keys=True)}。"
+        )
+    if any(marker in lowered for marker in ("接触", "contact", "外圈", "内圈")):
+        return interpretation.get("contact_pair_status") or "artifact 中未记录接触对状态。"
+    if any(marker in lowered for marker in ("参数", "载荷", "材料", "load", "material", "params")):
+        return f"本次记录的模型参数为：{json.dumps(params, ensure_ascii=False, sort_keys=True)}"
+    if any(marker in lowered for marker in ("图", "png", "plot", "产物", "artifact")):
+        return f"应力图路径：{plot_path or '未记录'}；模型路径：{model_path or '未记录'}。"
+    return (
+        "已读取 artifact。可回答最大应力、近似位置、最高风险接触区域、接触对状态、"
+        "模型参数和图像/模型路径等问题。"
+    )
 
 
 def _utc_now_for_package() -> str:

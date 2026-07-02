@@ -638,15 +638,101 @@ Latest observed real-smoke result:
 
 Remaining P7 work:
 
-1. Add a full DeepSeek agent demo that makes the LLM itself produce the raw
-   Java/API code using `simulation_plan_generated_code`, then validates and runs
-   it.
+1. Continue hardening free-form DeepSeek generated multi-roller geometry. The
+   complete demo now supports bounded fallback from a failed generated snippet
+   to a verified real-bearing contact cell, but production-grade generated
+   geometry still needs robust named selections instead of fixture boundary IDs.
 2. Add first-class artifact kind/reporting for generated-code runs instead of
    reusing only `template_execution` artifacts.
-3. Wire structured failure output from `simulation_run_template` into a bounded
-   generated-code repair retry loop.
+3. Promote robust named geometry/contact selections for generated multi-roller
+   bearing code so boundary IDs are not fixture-specific.
 4. Add richer prompt-time extraction of code parameters versus modeling
    decisions so validation payloads are automatically clean.
+
+### P8: Multi-Roller Bearing Real-Contact Demo
+
+Goal: demonstrate a realistic bearing-specific generated-code workflow where
+the model remains a bearing problem: inner raceway, outer raceway, multiple
+rolling elements, explicit roller/raceway Contact pairs, meaningful load and
+support conditions, stress output, artifact packaging, and follow-up result
+questions answered from archive data.
+
+Status: first end-to-end execution path complete. A deterministic verified
+generated-code fixture, an Agent-orchestrated verified-code execution path, and
+a free LLM generated-code path with bounded runtime fallback all run against
+local COMSOL 6.2. The first free-generated snippet may still fail on
+fixture-specific boundary/contact details, but the bounded repair path now
+returns to a verified real-bearing contact cell and completes solve, plot,
+package export, and artifact Q&A.
+
+Implemented:
+
+1. Added `simulation_plan_multiroller_bearing` for cylindrical-roller,
+   needle-roller, and multi-roller bearing requests. It asks follow-up
+   questions for bearing type, inner/outer diameter, width, roller count,
+   roller diameter/length, radial load, contact model, and cage inclusion unless
+   defaults are explicitly allowed.
+2. Updated the system prompt so multi-roller bearing requests cannot be
+   satisfied by unrelated plates, beams, or blocks. The model must preserve
+   roller/raceway contact physics.
+3. Added `simulation_answer_artifact_question`, which answers follow-up
+   questions about max stress, approximate location, highest-risk contact
+   region, contact-pair status, model parameters, and plot/model paths from
+   archived artifact/package evidence.
+4. Added `scripts/run_agent_multiroller_bearing_demo.py` with:
+   - prompt fixture printing;
+   - LLM generated-code drafting and quality gates;
+   - bounded draft repair for syntax/API style failures;
+   - bounded runtime fallback to a verified real-bearing contact cell;
+   - a verified generated-code fixture;
+   - direct fixture COMSOL smoke;
+   - Agent-orchestrated validate/run/solve/evaluate/plot/package/question flow.
+5. Extended bearing package export to support `contact_pressure_est` fallback
+   when a generated model does not define the older `contact_pressure_guess`
+   variable.
+6. Extended artifact previews and package reports with model parameters,
+   result interpretation, approximate max-stress region, contact status, and
+   multi-roller assumptions.
+
+Runtime validation on local COMSOL 6.2:
+
+```bash
+python3 -m compileall -q comsol_agent tests scripts
+python3 -m pytest -q
+python3 scripts/run_agent_fullflow_demo.py --print-prompts
+python3 scripts/run_agent_generated_code_demo.py --print-prompts
+.venv/bin/python scripts/run_agent_multiroller_bearing_demo.py --use-verified-fixture --cores 1
+.venv/bin/python scripts/run_agent_multiroller_bearing_demo.py --cores 1
+```
+
+Latest successful full free-generation multi-roller records:
+
+- Template execution run id:
+  `agent_multiroller_bearing_execution_20260628_172644_894940`
+- Result package run id:
+  `agent_multiroller_bearing_package_agent_multiroller_bearing_model_1_20260628_172700_698799`
+- Stress PNG:
+  `runtime_smoke/multiroller_bearing_demo/multiroller_von_mises.png`
+- Package JSON:
+  `runtime_smoke/multiroller_bearing_demo/result_packages/agent_multiroller_bearing_package_agent_multiroller_bearing_model_1_20260628_172700_698799/summary.json`
+- Package Markdown:
+  `runtime_smoke/multiroller_bearing_demo/result_packages/agent_multiroller_bearing_package_agent_multiroller_bearing_model_1_20260628_172700_698799/report.md`
+- Observed max von Mises stress: about `3.253e8` Pa.
+- Artifact answer correctly reports the max stress, approximate roller/raceway
+  contact-patch location, and explicit roller-to-raceway Contact pair status.
+- Observed repair behavior: the first free-generated setup failed at
+  `simulation_run_template`, then the bounded repair path used the verified
+  fallback contact cell and completed the full tool chain.
+
+Modeling scope and risks:
+
+- The verified first-run model is a 2D plane-strain contact fixture with inner
+  and outer raceway segments, two rollers, and four explicit Contact pairs.
+- It is a real bearing-contact smoke, but not a full 3D complete bearing with
+  cage, end effects, full roller count, and convergence certification.
+- Cage geometry is intentionally omitted and recorded as a follow-up extension.
+- Boundary IDs are fixture-specific; production-grade generation should move to
+  named selections or verified geometry probes.
 
 Non-goals and guardrails:
 
@@ -656,6 +742,141 @@ Non-goals and guardrails:
 - Do not treat the bearing-contact workflow as the product itself; it is a
   representative high-complexity validation case for the broader generative
   COMSOL assistant.
+
+### P9: 3D Full Roller Bearing with Cage
+
+Goal: upgrade the bearing workflow from the 2D multiroller contact smoke to a
+main 3D full-bearing generated-code path. The main demo must not be satisfied by
+the 2D fixture: it must create 3D geometry, include a cage or cage constraints,
+keep roller/raceway contact features, execute in COMSOL, export a von Mises
+stress artifact, and preserve repair evidence for generated-code failures.
+
+Status: strict free-generation + bounded repair + Agent-executed 3D smoke complete. The new script
+`scripts/run_agent_3d_bearing_full_demo.py` provides prompt fixtures, a 3D
+quality gate, a verified 3D fallback code block, a direct COMSOL smoke, result
+package metadata injection, and artifact Q&A. The verified fixture builds a
+full 360-degree 3D model with inner ring, outer ring, six cylindrical rollers,
+a simplified cage ring, six pocket/constraint point markers, explicit
+roller/raceway Contact pair features, assembly finalization, stationary Solid
+Mechanics, and `PlotGroup3D` stress output.
+
+Implemented in this pass:
+
+1. Added a 3D full-bearing demo script with:
+   - prompt fixture printing;
+   - verified 3D full-bearing fallback code;
+   - offline quality gate that rejects 2D, cage-omitted, plate/block/beam, and
+     insufficient-roller drafts;
+   - direct COMSOL fixture smoke;
+   - repair-history capture for generated-code/runtime failures;
+   - 3D package metadata injection for cage status, repair history, and 3D
+     assumptions.
+2. Added tests for the 3D prompt fixture and quality gate.
+3. Updated the Agent system prompt so explicit full-3D/cage-included requests
+   cannot be satisfied by the 2D smoke path.
+4. Verified the direct 3D COMSOL smoke after one repair iteration:
+   - first attempt meshed poorly because tangent 3D contact bodies used default
+     union finalization;
+   - repair changed geometry finalization to assembly and replaced cut cage
+     pockets with point/constraint pocket markers;
+   - final run solved and exported a nonzero stress result package.
+5. Verified the main free-generation chain:
+   - draft Agent called planner/template/API/generated-code tools;
+   - local quality gate rejected unsupported raw API/style snippets;
+   - strict mode now fails instead of replacing generated code with the complete
+     verified fallback;
+   - the latest `deepseek-v4-pro` run preserved the LLM-generated 3D draft,
+     applied only bounded syntax/API repairs, executed in COMSOL, exported a
+     package, answered an artifact question, and closed the model.
+6. Strengthened package Q&A evidence:
+   - 3D result packages expose top-level stress/contact metrics;
+   - repair history includes code excerpts for failed generated code and the
+     verified repaired code path;
+   - artifact answers can report the smoke-level highest-risk roller
+     (`roller_1`) and six-roller risk ranking for the +X radial load case.
+7. Added a production selection contract:
+   - result packages record `selection_plan` with target named selections for
+     raceway contact patches, each roller body/contact patch, cage body, support
+     surface, load region, and per-roller probes;
+   - the 3D quality gate now has a `require_named_selections=True` mode that
+     fails broad `.all()` contact/load/support selections and also requires
+     per-roller contact-surface selections/probes and scoped probe evidence.
+8. Added per-roller body selections and probes:
+   - each of the six roller bodies now has a named Box selection;
+   - each roller has a `probe_roller_N_max_mises` `MaxVolume` numerical feature
+     node backed by component `Maximum` coupling operators scoped to roller-body
+     selections;
+   - production gate now passes roller body/probe coverage.
+9. Added per-roller contact-region selections and Contact Pairs:
+   - each roller now has inner/outer contact-region named Box selections;
+   - the fixture creates twelve explicit roller/raceway Contact Pair features;
+   - direct COMSOL smoke solved successfully with the updated contact-pair set.
+
+Validation:
+
+```bash
+python3 -m compileall -q comsol_agent tests scripts
+python3 -m pytest -q tests/test_core.py
+python3 scripts/run_agent_3d_bearing_full_demo.py --print-prompts
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py --use-verified-fixture --skip-comsol
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py --skip-comsol --require-free-generated-code
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py --direct-fixture-run --cores 1
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py --require-free-generated-code --cores 1
+```
+
+Latest successful 3D records:
+
+- Template execution run id:
+  `agent_3d_bearing_execution_v2_20260701_053449_685816`
+- Result package run id:
+  `agent_3d_bearing_package_agent_3d_bearing_model_20260701_053659_501236`
+- Stress PNG:
+  `runtime_smoke/bearing_3d_full_demo/bearing_3d_von_mises.png`
+- Package JSON:
+  `runtime_smoke/bearing_3d_full_demo/result_packages/agent_3d_bearing_package_agent_3d_bearing_model_20260701_053659_501236/summary.json`
+- Package Markdown:
+  `runtime_smoke/bearing_3d_full_demo/result_packages/agent_3d_bearing_package_agent_3d_bearing_model_20260701_053659_501236/report.md`
+- Package HTML:
+  `runtime_smoke/bearing_3d_full_demo/result_packages/agent_3d_bearing_package_agent_3d_bearing_model_20260701_053659_501236/report.html`
+- Model:
+  `runtime_smoke/bearing_3d_full_demo/result_packages/agent_3d_bearing_package_agent_3d_bearing_model_20260701_053659_501236/agent_3d_bearing_model.mph`
+- Observed max von Mises stress: about `3.691e6` Pa.
+- Highest-risk roller estimate: `roller_1`; in the current symmetric smoke all six rollers report the same scoped maximum (`3.894e6` Pa), so `roller_1` is first by stable ranking rather than a unique physical hotspot.
+- Selection status: package metadata records a production named-selection/probe
+  plan; current smoke now uses named Box region selections plus per-roller body
+  and contact-surface selections/probes; scoped per-roller Maximum coupling
+  probes are verified in the latest direct and Agent-orchestrated COMSOL runs. The latest stress PNG is rendered from solved COMSOL `x`/`y`/`solid.mises` field samples via `mph_evaluate_xy_projection_png`, after the default COMSOL image export produced a sparse view.
+- Artifact Q&A status: the 3D package now records reusable `artifact_qa`
+  answers in `summary.json` and mirrors them in `report.md`/`report.html` for
+  maximum stress/location, highest-risk roller, cage modeling, contact status,
+  model parameters, and plot/model paths.
+- Direct COMSOL fixture using the same named-selection code:
+  `direct_3d_bearing_package_agent_3d_bearing_model_20260630_082155_984572`.
+- Free-generation repair evidence: attempt 0 produced an LLM-generated 3D
+  draft; `offline_syntax_normalization` converted Java-style literals and
+  arrays to Python/MPh syntax. The latest strict COMSOL run did not use
+  `offline_quality_gate` replacement or `runtime_deterministic_fallback`.
+  `offline_runtime_preflight_repair` preserved the generated draft and applied
+  only bounded API repairs: removed 18 unsupported cylinder `ax` property
+  setters, rewrote one standalone `geom.finalize('assembly')` call to the
+  verified `fin` assembly action, and converted one generated `Finish`
+  create/run block to that same verified assembly idiom. The package summary
+  records repair stages `draft`, `offline_syntax_normalization`, and
+  `offline_runtime_preflight_repair`.
+
+Remaining P9 risks:
+
+- Contact/load/support selections are named Box regions and each roller body has
+  a named selection/probe; production-grade 3D generated code should create
+  stronger contact convergence checks and non-symmetric load cases before
+  production design use.
+- Cage pockets are represented as point/constraint markers in the first
+  successful smoke. True cage pocket cutouts need more robust Boolean geometry
+  and mesh controls.
+- The free LLM 3D generated-code path is now observed end-to-end without the
+  complete verified fallback. Production quality still needs stronger
+  convergence checks, better non-symmetric load cases, and more robust true cage
+  pocket Boolean geometry.
 
 ## Resume Checklist
 

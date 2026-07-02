@@ -805,6 +805,42 @@ model.java.geom("geom1")        ──▶    model.geom("geom1")
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 7.4 3D 全轴承生成式 Demo 契约
+
+当前 3D 全轴承路径由 `scripts/run_agent_3d_bearing_full_demo.py` 承载，
+用于验证 Agent 在固定 2D 模板之外生成、校验、修补并执行 3D 轴承代码的
+能力。它与 2D multiroller smoke 的关系如下：
+
+- 2D multiroller 仅作为快速回归 smoke，不能满足“完整 3D + 保持架”的主需求。
+- 3D 主 demo 必须创建 `geom1` 三维几何、内圈、外圈、多个滚子、保持架或保持架约束。
+- 生成代码必须包含 Solid Mechanics、roller/raceway Contact Pair/Contact、
+  载荷/约束、mesh、stationary study、`PlotGroup3D` 和 `solid.mises` 输出。
+- 执行失败时保留 `repair_history`，记录失败阶段、错误、修补策略和最终状态。
+- Result package 需要包含 3D 建模假设、保持架状态、最大应力/风险区域、
+  最高风险滚子估计、接触状态、模型参数、PNG/report 路径、应力图生成方法和修补证据。
+
+首个已验证 3D smoke 使用 6 个圆柱滚子、完整 360°模型、简化 cage ring
+以及 6 个 pocket/constraint point markers。几何 finalization 使用
+`assembly`，以避免相切滚子/滚道在默认 union 下产生不可网格化薄片。当前
+已将接触/载荷/支撑提升为 named Box region selections，并为 6 个滚子体
+建立了 named Box selection 和逐滚子 max-stress numerical probe 节点；生产级
+3D 生成还已包含逐滚子、逐滚道接触面的 named Box selections 与 12 个
+roller/raceway Contact Pair；逐滚子风险读取通过 component `Maximum`
+coupling operators 绑定滚子体 selection，再由 `maxop_roller_N(solid.mises)`
+进行 scoped evaluation。当前应力 PNG 优先使用 COMSOL GUI 图形导出；当该导出过稀或近似白图时，
+脚本会从已求解 COMSOL 模型评估 `x`/`y`/`solid.mises` 数组并生成
+`mph_evaluate_xy_projection_png` 投影图，保证 result package 中的 PNG 具有可见应力分布且保留解场来源。
+自由生成阶段的代码提取器只接受 fenced `model.*` 代码块，避免将解释性文字误作为代码；随后
+`offline_syntax_normalization` 会把常见 Java 风格布尔值、quoted brace arrays 和 `new double[]`/`new String[]`/`new int[]` 转成 Python/MPh 可执行语法，并把修补前后片段写入 `repair_history`；同时会清理 Java block comments，避免 `new int[]{/*...*/}` 这类片段进入 Python 执行器。随后 `offline_runtime_preflight_repair` 会在整块 fallback 前修正高频生成式 API 误用，例如 component-scoped `study/result`、小写 `contact` pair 类型、`pair1/pair2` 占位接触对、`FixedConstraint`、`contact_pair` 属性、`geom1` placeholder selection、`ExplicitSelection` 特征类型、contact pair `set('source')/set('destination')` endpoint setters、Cylinder `ax/axis` 属性以及不兼容的 `geom.finalize('assembly')`/generated `Finish` 片段。质量门还会提前拦截当前不可安全修补的 API 形态，例如 `CylinderSelection`/`BoxSelection`、geometry-level `Explicit` selections、把 `ContactPair` 当 physics interface 创建，以及 Difference 的 Java 风格 `object/objects` setter。严格模式 `--require-free-generated-code` 会在这些 bounded repairs 后直接执行自由生成代码，并在失败时停止而不是整块替换；最新真实 COMSOL 证据已经在该模式下产出 3D result package，`repair_history` 只有 `draft`、`offline_syntax_normalization` 和 `offline_runtime_preflight_repair`。非严格模式仍保留 verified fallback 作为演示/回归保底。运行时若模型反复调用同一失败工具/同一参数，Agent loop 会在连续 3 次失败后熔断；`simulation_validate_template` 与 `simulation_run_template` 对缺少 `java_code`/`name` 的空参调用返回 `retryable: false` 的 `TOOL_INPUT_ERROR`，避免坏参数修补循环。
+
+为避免把 smoke 误判为生产级结果，3D 包会记录 `selection_plan`：内/外滚道
+接触、每个滚子体/内外接触面、保持架体、外圈支撑面、内圈载荷区域和逐滚子
+应力 probe 的目标 named selection/probe 名称。质量门
+`validate_3d_bearing_code_draft(require_named_selections=True)` 会把 `.all()`
+式接触/载荷/支撑选择提升为错误，并要求逐滚子体 selection/probe、逐滚子
+接触面 selection 与 `probe_scope_verified` 证据；默认 smoke gate 允许
+region-level/body-level/contact-level named selections 作为快速验证。
+
 ---
 
 ## 8. CLI 界面层

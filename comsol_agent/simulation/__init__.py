@@ -24,7 +24,9 @@ from comsol_agent.simulation.examples import (
 from comsol_agent.simulation.sweeps import SweepAxis, SweepCase, SweepPlan, plan_parameter_sweep
 from comsol_agent.simulation.bearing_contact import (
     BearingContactPlan,
+    MultirollerBearingPlan,
     plan_bearing_contact_setup,
+    plan_multiroller_bearing_setup,
 )
 
 __all__ = [
@@ -34,6 +36,7 @@ __all__ = [
     "LocalDocumentIndex",
     "SearchResult",
     "BearingContactPlan",
+    "MultirollerBearingPlan",
     "SimulationExample",
     "SimulationSkill",
     "SweepAxis",
@@ -47,6 +50,7 @@ __all__ = [
     "list_skills",
     "match_skills",
     "plan_bearing_contact_setup",
+    "plan_multiroller_bearing_setup",
     "plan_parameter_sweep",
     "seed_builtin_templates",
 ]

@@ -6,6 +6,7 @@ COMSOL-specific tests require a local COMSOL installation and are marked accordi
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,7 @@ class TestToolRegistry:
         assert "comsol_evaluate" in names
         assert "comsol_set_parameter" in names
         assert "simulation_plan_bearing_contact" in names
+        assert "simulation_plan_multiroller_bearing" in names
         assert "simulation_plan_generated_code" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
@@ -330,6 +332,7 @@ class TestToolRegistry:
         assert "simulation_list_artifacts" in names
         assert "simulation_search_artifacts" in names
         assert "simulation_read_artifact" in names
+        assert "simulation_answer_artifact_question" in names
         assert "simulation_compare_artifacts" in names
         assert "simulation_export_artifact_report" in names
         assert "simulation_export_bearing_contact_package" in names
@@ -825,6 +828,155 @@ class TestRepairDetector:
             "Fallback diagnosis" in str(message.get("content", ""))
             for message in agent.state.messages
         )
+
+    @pytest.mark.asyncio
+    async def test_agent_loop_stops_repeated_identical_failed_tool_calls(self):
+        from collections.abc import AsyncIterator
+        from typing import Any
+
+        from comsol_agent.agent.loop import AgentLoop
+        from comsol_agent.agent.tool_registry import register_sync
+        from comsol_agent.cli.config import Config
+        from comsol_agent.llm.base import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+
+        def bad_input_tool() -> dict:
+            return {
+                "success": False,
+                "error": "Either name or java_code is required.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
+            }
+
+        register_sync(
+            name="repeated_bad_input_tool",
+            description="Always fails with a deterministic input error",
+            parameters={"type": "object", "properties": {}},
+            handler=bad_input_tool,
+        )
+
+        class RepeatingBadToolProvider(LLMProvider):
+            def __init__(self):
+                super().__init__(model="fake")
+
+            async def generate(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> LLMResponse:
+                return LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id=f"call_bad_{len(messages)}",
+                            name="repeated_bad_input_tool",
+                            arguments={},
+                        )
+                    ]
+                )
+
+            async def generate_stream(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> AsyncIterator[str]:
+                if False:
+                    yield ""
+
+            def count_tokens(self, messages: list[dict[str, Any]]) -> int:
+                return 1
+
+        config = Config()
+        config.agent.max_tool_iterations = 10
+        agent = AgentLoop(RepeatingBadToolProvider(), config)
+        response = await agent.run("Trigger repeated bad tool calls")
+
+        assert "Stopped after the same tool call failed repeatedly" in response
+        assert agent.state.tool_iterations_this_turn == 3
+
+    @pytest.mark.asyncio
+    async def test_repeated_failure_batch_records_all_tool_responses_before_stop(self):
+        from collections.abc import AsyncIterator
+        from typing import Any
+
+        from comsol_agent.agent.loop import AgentLoop
+        from comsol_agent.agent.tool_registry import register_sync
+        from comsol_agent.cli.config import Config
+        from comsol_agent.llm.base import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+
+        def repeated_batch_bad_tool() -> dict:
+            return {"success": False, "error": "deterministic failure"}
+
+        def repeated_batch_side_tool() -> dict:
+            return {"success": True, "ok": True}
+
+        register_sync(
+            name="repeated_batch_bad_tool",
+            description="Always fails for batch history testing",
+            parameters={"type": "object", "properties": {}},
+            handler=repeated_batch_bad_tool,
+        )
+        register_sync(
+            name="repeated_batch_side_tool",
+            description="Always succeeds for batch history testing",
+            parameters={"type": "object", "properties": {}},
+            handler=repeated_batch_side_tool,
+        )
+
+        class BatchFailingProvider(LLMProvider):
+            def __init__(self):
+                super().__init__(model="fake")
+                self.calls = 0
+
+            async def generate(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> LLMResponse:
+                self.calls += 1
+                return LLMResponse(
+                    tool_calls=[
+                        ToolCall(id=f"bad_{self.calls}", name="repeated_batch_bad_tool", arguments={}),
+                        ToolCall(id=f"side_{self.calls}", name="repeated_batch_side_tool", arguments={}),
+                    ]
+                )
+
+            async def generate_stream(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> AsyncIterator[str]:
+                if False:
+                    yield ""
+
+            def count_tokens(self, messages: list[dict[str, Any]]) -> int:
+                return 1
+
+        config = Config()
+        config.agent.max_tool_iterations = 10
+        agent = AgentLoop(BatchFailingProvider(), config)
+
+        response = await agent.run("Trigger repeated failure in a multi-tool batch")
+
+        assert "Stopped after the same tool call failed repeatedly" in response
+        last_batch_index = max(
+            index
+            for index, msg in enumerate(agent.state.messages)
+            if msg["role"] == "assistant" and msg.get("tool_calls")
+        )
+        last_tool_call_ids = [
+            tool_call["id"] for tool_call in agent.state.messages[last_batch_index]["tool_calls"]
+        ]
+        final_assistant_index = len(agent.state.messages) - 1
+        assert agent.state.messages[final_assistant_index]["role"] == "assistant"
+        tool_messages_after_last_batch = [
+            msg
+            for msg in agent.state.messages[last_batch_index + 1 : final_assistant_index]
+            if msg["role"] == "tool"
+        ]
+        assert [msg["tool_call_id"] for msg in tool_messages_after_last_batch] == last_tool_call_ids
 
     @pytest.mark.asyncio
     async def test_agent_loop_stores_fix_prompt_when_code_snippet_exists(self):
@@ -1901,10 +2053,20 @@ class TestSimulationSkills:
     def test_bearing_contact_template_validates_offline(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.simulation.skills import seed_builtin_templates
-        from comsol_agent.tools.simulation import simulation_validate_template
+        from comsol_agent.tools.simulation import simulation_run_template, simulation_validate_template
 
         archive_path = tmp_path / "archive.sqlite3"
         seed_builtin_templates(ArchiveStore(archive_path))
+
+        empty_result = simulation_validate_template()
+        assert empty_result["success"] is False
+        assert empty_result["error_type"] == "TOOL_INPUT_ERROR"
+        assert empty_result["retryable"] is False
+        assert "java_code" in empty_result["repair_hint"]
+        run_empty_result = simulation_run_template(create_model_name="bad_empty_code")
+        assert run_empty_result["success"] is False
+        assert run_empty_result["error_type"] == "TOOL_INPUT_ERROR"
+        assert run_empty_result["retryable"] is False
 
         result = simulation_validate_template(
             name="bearing_contact_hertz_seed",
@@ -1973,6 +2135,39 @@ class TestSimulationSkills:
         assert plan["template_name"] == "bearing_contact_pair_seed"
         assert any("contact-pair" in note for note in plan["notes"])
 
+    def test_multiroller_bearing_planner_requires_real_contact_scope(self):
+        from comsol_agent.tools.simulation import simulation_plan_multiroller_bearing
+
+        result = simulation_plan_multiroller_bearing(
+            user_request="建立一个多子滚轴轴承真实接触仿真",
+            provided_params={"radial_load": "3500[N]"},
+        )
+        plan = result["plan"]
+
+        assert result["success"] is True
+        assert plan["ready_to_run"] is False
+        assert "inner_diameter" in plan["missing_required"]
+        assert any("滚子" in question for question in plan["follow_up_questions"])
+        assert any("Contact Pair" in item or "Contact" in item for item in plan["contact_requirements"])
+        assert "generated_code_multiroller_contact" == plan["workflow"]
+
+    def test_multiroller_bearing_planner_defaults_still_require_bearing_contact(self):
+        from comsol_agent.tools.simulation import simulation_plan_multiroller_bearing
+
+        result = simulation_plan_multiroller_bearing(
+            user_request="先用默认参数跑通圆柱滚子轴承真实接触 demo",
+            provided_params={"rollers": "4", "cage": "false"},
+            allow_defaults=True,
+        )
+        plan = result["plan"]
+
+        assert result["success"] is True
+        assert plan["ready_to_run"] is True
+        assert plan["resolved_params"]["roller_count"] == "4"
+        assert plan["resolved_params"]["cage_included"] == "false"
+        assert any("inner ring" in item for item in plan["contact_requirements"])
+        assert any("generated-code fallback" in note for note in plan["notes"])
+
     def test_bearing_contact_package_exports_report_and_archive(self, tmp_path, monkeypatch):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.tools import simulation as simulation_tools
@@ -2031,6 +2226,64 @@ class TestSimulationSkills:
         )
         assert read_back["success"] is True
         assert read_back["preview"]["summary"]["metrics"]["von_mises_max"] == 250.0
+        assert read_back["preview"]["summary"]["result_interpretation"]["highest_risk_region"]
+
+        answer = simulation_tools.simulation_answer_artifact_question(
+            "最大应力是多少，位置在哪里？",
+            run_id=result["run_id"],
+            archive_path=str(archive_path),
+        )
+        assert answer["success"] is True
+        assert "250.0" in answer["answer"]
+        assert "位置" in answer["answer"]
+
+    def test_bearing_contact_package_accepts_contact_pressure_est_fallback(self, tmp_path, monkeypatch):
+        from comsol_agent.tools import simulation as simulation_tools
+
+        archive_path = tmp_path / "archive.sqlite3"
+        plot_path = tmp_path / "stress.png"
+        plot_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        monkeypatch.setattr(
+            simulation_tools,
+            "comsol_save_model",
+            lambda model_name, filepath: {
+                "success": True,
+                "model_name": model_name,
+                "saved_to": filepath,
+            },
+        )
+
+        def fake_evaluate(model_name, expression):
+            if expression == "solid.mises":
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "expression": expression,
+                    "statistics": {"min": 1.0, "max": 325.0, "mean": 25.0},
+                }
+            if expression == "contact_pressure_guess":
+                return {"success": False, "expression": expression, "error": "undefined"}
+            return {
+                "success": True,
+                "model_name": model_name,
+                "expression": expression,
+                "statistics": {"min": 10.0, "max": 10.0, "mean": 10.0},
+            }
+
+        monkeypatch.setattr(simulation_tools, "comsol_evaluate", fake_evaluate)
+
+        result = simulation_tools.simulation_export_bearing_contact_package(
+            model_name="multiroller_model",
+            plot_path=str(plot_path),
+            output_dir=str(tmp_path / "packages"),
+            package_name="multiroller_package",
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["metrics"]["contact_pressure_guess"] == 10.0
+        assert result["metrics"]["contact_pressure_expression"] == "contact_pressure_est"
 
     def test_bearing_contact_demo_prompt_fixture(self):
         from scripts.run_agent_bearing_contact_demo import build_bearing_contact_prompts
@@ -2057,6 +2310,354 @@ class TestSimulationSkills:
         assert "comsol_execute_java" in prompts[0].prompt
         assert "bearing_contact_hertz_seed" in prompts[0].prompt
         assert prompts[1].name == "bearing_contact_artifact_report"
+
+    def test_multiroller_bearing_demo_prompt_fixture_and_quality_gate(self):
+        from scripts.run_agent_multiroller_bearing_demo import (
+            build_multiroller_code_generation_prompt,
+            build_multiroller_execution_prompt,
+            validate_multiroller_code_draft,
+        )
+
+        draft = build_multiroller_code_generation_prompt(
+            archive_path="runtime_smoke/multiroller_bearing_demo.sqlite3",
+        )
+        execute = build_multiroller_execution_prompt(
+            java_code="<generated_code>",
+            archive_path="runtime_smoke/multiroller_bearing_demo.sqlite3",
+            artifact_dir="runtime_smoke/multiroller_bearing_demo/template_runs",
+            plot_path="runtime_smoke/multiroller_bearing_demo/multiroller_von_mises.png",
+            model_name="agent_multiroller_bearing_model",
+            template_name="agent_multiroller_bearing_generated_seed",
+            package_dir="runtime_smoke/multiroller_bearing_demo/result_packages",
+        )
+
+        assert draft.name == "multiroller_code_draft"
+        assert "simulation_plan_multiroller_bearing" in draft.required_tools
+        assert "plate, beam, or block" in draft.prompt
+        assert "Contact Pair/Contact" in draft.prompt
+        assert "unfolded bearing contact cell" in draft.prompt
+        assert "Do not create annular rings with Difference/Union" in draft.prompt
+        assert execute.name == "multiroller_execute_package_answer"
+        assert "simulation_answer_artifact_question" in execute.required_tools
+        assert "Do not replace it with a plate/block" in execute.prompt
+        assert "do not call COMSOL introspection/probing APIs" in execute.prompt
+        assert "VERIFIED_FALLBACK_CODE" in execute.prompt
+        assert "cp_r1_outer" in execute.prompt
+        assert "cp_r2_outer" in execute.prompt
+
+        good_code = """
+        model.param().set('inner_diameter', '40[mm]');
+        model.param().set('outer_diameter', '80[mm]');
+        model.component().create('comp1', true);
+        model.component('comp1').geom().create('geom1', 2);
+        model.component('comp1').geom('geom1').create('inner_raceway', 'Circle');
+        model.component('comp1').geom('geom1').create('outer_raceway', 'Circle');
+        model.component('comp1').geom('geom1').create('roller_1', 'Circle');
+        model.component('comp1').geom('geom1').create('roller_2', 'Circle');
+        model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+        model.component('comp1').pair().create('cp_roller_outer', 'Contact');
+        model.component('comp1').pair().create('cp_roller_inner', 'Contact');
+        model.component('comp1').mesh().create('mesh1');
+        model.study().create('std1');
+        model.study('std1').create('stat', 'Stationary');
+        model.result().create('pg_stress', 'PlotGroup2D');
+        model.result('pg_stress').feature().create('surf_stress', 'Surface');
+        model.result('pg_stress').feature('surf_stress').set('expr', 'solid.mises');
+        output.write('cage omitted for first demo');
+        """
+        bad_code = "model.component().create('comp1', true); // rectangular structural plate"
+        bad_introspection = good_code + "\nmodel.component('comp1').geom('geom1').getBoundaries();"
+        bad_difference = """
+        model.param().set('roller_diameter', '8[mm]');
+        model.component().create('comp1', true);
+        model.component('comp1').geom().create('geom1', 2);
+        model.component('comp1').geom('geom1').create('inner_ring', 'Difference');
+        model.component('comp1').geom('geom1').create('roller1', 'Circle');
+        model.component('comp1').geom('geom1').create('roller2', 'Circle');
+        model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+        model.component('comp1').pair().create('cp_roller_outer', 'Contact');
+        model.component('comp1').mesh().create('mesh1');
+        model.study().create('std1');
+        model.study('std1').create('stat', 'Stationary');
+        model.result().create('pg_stress', 'PlotGroup2D');
+        model.result('pg_stress').feature().create('surf_stress', 'Surface');
+        model.result('pg_stress').feature('surf_stress').set('expr', 'solid.mises');
+        output.write('cage omitted');
+        """
+
+        assert validate_multiroller_code_draft(good_code)["success"] is True
+        assert validate_multiroller_code_draft(bad_code)["success"] is False
+        assert validate_multiroller_code_draft(bad_introspection)["success"] is False
+        assert validate_multiroller_code_draft(bad_difference)["success"] is False
+
+    def test_3d_full_bearing_demo_prompt_fixture_and_quality_gate(self):
+        from scripts.run_agent_3d_bearing_full_demo import (
+            VERIFIED_3D_FULL_BEARING_CODE,
+            build_3d_bearing_code_generation_prompt,
+            build_3d_bearing_execution_prompt,
+            extract_generated_code,
+            normalize_generated_mph_code,
+            apply_bounded_3d_generated_code_repairs,
+            apply_runtime_preflight_3d_repairs,
+            validate_3d_bearing_code_draft,
+            VERIFIED_ROLLER_COUNT,
+        )
+
+        draft = build_3d_bearing_code_generation_prompt(
+            archive_path="runtime_smoke/bearing_3d_full_demo.sqlite3",
+        )
+        execute = build_3d_bearing_execution_prompt(
+            java_code="<generated_code>",
+            archive_path="runtime_smoke/bearing_3d_full_demo.sqlite3",
+            artifact_dir="runtime_smoke/bearing_3d_full_demo/template_runs",
+            plot_path="runtime_smoke/bearing_3d_full_demo/bearing_3d_von_mises.png",
+            model_name="agent_3d_bearing_model",
+            template_name="agent_3d_bearing_generated_seed",
+            package_dir="runtime_smoke/bearing_3d_full_demo/result_packages",
+        )
+
+        assert draft.name == "bearing_3d_code_draft"
+        assert "simulation_plan_multiroller_bearing" in draft.required_tools
+        assert "complete 3D cylindrical-roller bearing" in draft.prompt
+        assert "explicit cage ring with Boolean roller pockets" in draft.prompt
+        assert "Do not replace it with a plate, block, beam, 2D" in draft.prompt
+        assert "Do not call simulation_validate_template" in draft.prompt
+        assert "file_read, file_write, or any file tools" in draft.prompt
+        assert "PlotGroup3D" in draft.prompt
+        assert "Do not use CylinderSelection" in draft.prompt
+        assert "physics-level ContactPair" in draft.prompt
+        assert "Difference object/objects setters" in draft.prompt
+        assert "do not call output.write or model.output().write" in draft.prompt
+        assert "model.component('comp1').pair().create" in draft.prompt
+        assert "pair.set('source')" in draft.prompt
+        assert "source().named" in draft.prompt
+        assert "top-level model.study()/model.result()" in draft.prompt
+        assert execute.name == "bearing_3d_execute_package_answer"
+        assert "Every repair attempt must keep the model 3D" in execute.prompt
+        assert "VERIFIED_3D_FALLBACK_CODE" in execute.prompt
+        assert "cage_pocket_12" in execute.prompt
+        assert ".manualSelection(True)" in VERIFIED_3D_FULL_BEARING_CODE
+        assert ".set('pfm', 'penalty')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "selection().create('sel_inner_raceway_12_contact', 'Intersection')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "selection('sel_inner_raceway_12_contact').set('input', ['box_roller_12_inner_contact_patch', 'geom1_inner_ring_bnd'])" in VERIFIED_3D_FULL_BEARING_CODE
+        assert ".destination().named('sel_outer_raceway_12_contact')" in VERIFIED_3D_FULL_BEARING_CODE
+
+        quality = validate_3d_bearing_code_draft(VERIFIED_3D_FULL_BEARING_CODE)
+        assert quality["success"] is True
+        assert quality["quality_level"] == "smoke"
+        assert quality["warnings"] == []
+        production_quality = validate_3d_bearing_code_draft(
+            VERIFIED_3D_FULL_BEARING_CODE,
+            require_named_selections=True,
+        )
+        assert production_quality["success"] is True
+        assert production_quality["quality_level"] == "production_candidate"
+        assert not any("sel_roller_1_body" in error for error in production_quality["errors"])
+        assert not any("probe_roller_1_max_mises" in error for error in production_quality["errors"])
+        assert not any("sel_roller_1_inner_contact" in error for error in production_quality["errors"])
+        assert not any("sel_roller_1_outer_contact" in error for error in production_quality["errors"])
+        assert production_quality["errors"] == []
+
+        bad_2d = """
+        model.component().create('comp1', true);
+        model.component('comp1').geom().create('geom1', 2);
+        model.component('comp1').geom('geom1').create('inner_raceway', 'Rectangle');
+        model.component('comp1').geom('geom1').create('outer_raceway', 'Rectangle');
+        model.component('comp1').geom('geom1').create('roller_1', 'Circle');
+        model.component('comp1').geom('geom1').create('roller_2', 'Circle');
+        model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+        model.component('comp1').pair().create('cp_roller_outer', 'Contact');
+        model.result().create('pg_stress', 'PlotGroup2D');
+        output.write('cage geometry is omitted');
+        """
+        bad_no_cage = VERIFIED_3D_FULL_BEARING_CODE.replace("cage_pocket_12", "pocket_missing")
+
+        assert validate_3d_bearing_code_draft(bad_2d)["success"] is False
+        assert validate_3d_bearing_code_draft(bad_no_cage)["success"] is False
+
+        marked_with_prose = (
+            "I will produce code, not a plate model.\n"
+            "GENERATED_CODE_START\n"
+            "```java\n"
+            'model.component().create("comp1", true);\n'
+            'model.component("comp1").geom().create("geom1", 3);\n'
+            'model.component("comp1").geom("geom1").create("roller_1", "Cylinder");\n'
+            "```\n"
+            "GENERATED_CODE_END\n"
+            "This explanation mentions a plate only outside the code."
+        )
+        extracted = extract_generated_code(marked_with_prose)
+        assert extracted is not None
+        assert extracted.startswith('model.component().create("comp1", true);')
+        assert "This explanation" not in extracted
+        marked_without_fence = (
+            "GENERATED_CODE_START\n"
+            "The following table summarizes the design before code.\n"
+            "// setup-only 3D code\n"
+            "model.param().set('inner_diameter', '40[mm]');\n"
+            "model.geom().create('geom1', 3);\n"
+            "\n"
+            "### Summary\n"
+            "- not executable code\n"
+            "GENERATED_CODE_END"
+        )
+        assert extract_generated_code(marked_without_fence) == (
+            "// setup-only 3D code\n"
+            "model.param().set('inner_diameter', '40[mm]');\n"
+            "model.geom().create('geom1', 3);"
+        )
+        normalized = normalize_generated_mph_code(
+            'model.component().create("comp1", true);\n'
+            'model.component("comp1").geom("geom1").feature("roller_1").set("pos", {"0", "0", "-1[mm]"});'
+        )
+        assert 'create("comp1", True)' in normalized
+        assert '["0", "0", "-1[mm]"]' in normalized
+        normalized_arrays = normalize_generated_mph_code(
+            'model.geom("geom1").feature("cyl_r6").set("pos", new double[]{pitch_diameter/2*0.5, 0, -roller_length/2});\n'
+            'model.geom("geom1").feature("diff").selection("input2").set(new String[]{"pocket1", "pocket6"});\n'
+            'model.material("mat1").selection().set(new int[]{1, 2, 3});\n'
+            'model.physics("solid").feature("fix1").selection().set(new int[]{/* outer boundary */ 4});'
+        )
+        assert '["pitch_diameter/2*0.5", 0, "-roller_length/2"]' in normalized_arrays
+        assert '["pocket1", "pocket6"]' in normalized_arrays
+        assert "[1, 2, 3]" in normalized_arrays
+        assert "/*" not in normalized_arrays
+        assert "[4]" in normalized_arrays
+
+        double_quote_code = VERIFIED_3D_FULL_BEARING_CODE.replace(
+            "geom().create('geom1', 3)",
+            'geom().create("geom1", 3)',
+        )
+        assert validate_3d_bearing_code_draft(double_quote_code)["success"] is True
+        python_comment_code = (
+            "# no new int[], no new String[] should be ignored in comments\n"
+            + VERIFIED_3D_FULL_BEARING_CODE
+        )
+        assert validate_3d_bearing_code_draft(python_comment_code)["success"] is True
+        alternate_names = VERIFIED_3D_FULL_BEARING_CODE.replace("roller_12", "cyl_r12").replace("cage_pocket_12", "pocket12")
+        assert validate_3d_bearing_code_draft(alternate_names)["success"] is True
+        short_generated_names = VERIFIED_3D_FULL_BEARING_CODE.replace("roller_12", "rol12").replace("cage_pocket_12", "pkt12")
+        assert validate_3d_bearing_code_draft(short_generated_names)["success"] is True
+
+        missing_pairs = "\n".join(
+            line for line in VERIFIED_3D_FULL_BEARING_CODE.splitlines()
+            if ".pair().create" not in line
+        )
+        missing_pairs_quality = validate_3d_bearing_code_draft(missing_pairs)
+        assert missing_pairs_quality["success"] is False
+        repaired, repair_reports, repaired_quality = apply_bounded_3d_generated_code_repairs(
+            missing_pairs,
+            missing_pairs_quality,
+            max_attempts=2,
+        )
+        assert repair_reports
+        assert repair_reports[0]["stage"] == "offline_bounded_repair"
+        assert repair_reports[0]["strategy"] == "append_verified_contact_pair_anchor_snippet"
+        assert repair_reports[0]["api_doc_query"]
+        assert "repair_cp_inner_raceway" in repaired
+        assert repaired_quality["success"] is True
+
+        runtime_risky_generated = (
+            VERIFIED_3D_FULL_BEARING_CODE
+            .replace("model.study().create('std1');", "model.component(\"comp1\").study().create(\"std1\")")
+            .replace("model.study('std1').create('stat', 'Stationary');", "model.component(\"comp1\").study(\"std1\").feature().create(\"stat\", \"Stationary\")")
+            .replace("model.result().create('pg_stress3d', 'PlotGroup3D');", "model.component(\"comp1\").result().create(\"pg1\", \"PlotGroup3D\")")
+            .replace("model.result('pg_stress3d').feature().create('surf_mises', 'Surface');", "model.component(\"comp1\").result(\"pg1\").feature().create(\"surf1\", \"Surface\")")
+            .replace("model.result('pg_stress3d').feature('surf_mises').set('expr', 'solid.mises');", "model.component(\"comp1\").result(\"pg1\").feature(\"surf1\").set(\"expr\", \"solid.mises\")")
+            .replace("'Fixed'", "\"FixedConstraint\"", 1)
+            + """
+model.component("comp1").geom("geom1").feature("roller_1").set("ax", ["0", "0", "1"])
+model.component("comp1").pair().create("pair1", "contact")
+model.component("comp1").pair("pair1").source().set(["geom1"])
+model.component("comp1").pair("pair1").destination().set(["geom1"])
+model.component("comp1").physics("solid").feature().create("cp_extra", "Contact", 1)
+model.component("comp1").physics("solid").feature("cp_extra").set("contact_pair", "pair1")
+model.component("comp1").geom("geom1").run()
+model.component("comp1").geom("geom1").finalize("assembly")
+model.component("comp1").geom("geom1").selection().create("sel_r1_inner", "Explicit")
+model.component("comp1").geom("geom1").selection("sel_r1_inner").set("entitydim", 2)
+model.output().write("Cage included: Boolean cage ring with twelve pockets.")
+"""
+        )
+        risky_quality = validate_3d_bearing_code_draft(runtime_risky_generated)
+        assert risky_quality["success"] is False
+        assert any("runtime-risky COMSOL API pattern" in error for error in risky_quality["errors"])
+        preflight_repaired, preflight_reports, preflight_quality = apply_runtime_preflight_3d_repairs(
+            runtime_risky_generated,
+            risky_quality,
+        )
+        assert preflight_reports
+        assert preflight_reports[0]["stage"] == "offline_runtime_preflight_repair"
+        assert preflight_reports[0]["changes"]
+        assert "model.study().create" in preflight_repaired
+        assert "model.result().create" in preflight_repaired
+        assert "cp_roller_inner_raceway" in preflight_repaired
+        assert "FixedConstraint" not in preflight_repaired
+        assert '"contact_pair"' not in preflight_repaired
+        assert "model.output().write" not in preflight_repaired
+        assert '.set("ax"' not in preflight_repaired
+        assert ".finalize(" not in preflight_repaired
+        assert ".feature('fin').set('action', 'assembly')" in preflight_repaired
+        assert '.geom("geom1").selection()' not in preflight_repaired
+        assert 'model.component("comp1").selection().create("sel_r1_inner", "Explicit")' in preflight_repaired
+        assert "model_output_write_to_comment" in " ".join(preflight_reports[0]["changes"])
+        assert "remove_unsupported_cylinder_axis_property" in " ".join(preflight_reports[0]["changes"])
+        assert "geom_finalize_assembly_to_verified_fin_action" in " ".join(preflight_reports[0]["changes"])
+        assert "geom_scoped_selection_create_to_component_selection" in " ".join(preflight_reports[0]["changes"])
+        assert preflight_quality["success"] is True, preflight_quality
+
+        unsupported_runtime_api = runtime_risky_generated + """
+        model.component("comp1").geom("geom1").feature().create("sel_bad", "CylinderSelection")
+        model.component("comp1").geom("geom1").feature().create("sel_explicit_bad", "Explicit")
+        model.component("comp1").physics().create("pair_bad", "ContactPair", "geom1")
+        model.component("comp1").geom("geom1").feature("diff_bad").set("objects", ["hole"])
+        model.component("comp1").pair("cp_bad").set("source", ["sel_rollers"])
+        """
+        unsupported_quality = validate_3d_bearing_code_draft(unsupported_runtime_api)
+        assert unsupported_quality["success"] is False
+        assert any("CylinderSelection/BoxSelection/ExplicitSelection" in error for error in unsupported_quality["errors"])
+        assert any("Explicit as a geometry operation" in error for error in unsupported_quality["errors"])
+        assert any("ContactPair as a physics interface" in error for error in unsupported_quality["errors"])
+        assert any("Difference object/objects setters" in error for error in unsupported_quality["errors"])
+        assert any("Contact pair endpoints" in error for error in unsupported_quality["errors"])
+
+        latest_prompt_style = runtime_risky_generated + """
+        model.component("comp1").geom("geom1").feature().create("sel_rollers", "ExplicitSelection")
+        model.component("comp1").pair().create("pair1", "Contact")
+        model.component("comp1").pair("pair1").set("source", ["sel_rollers"])
+        model.component("comp1").pair("pair1").set("destination", ["sel_inner_raceway"])
+        """
+        latest_prompt_quality = validate_3d_bearing_code_draft(latest_prompt_style)
+        latest_prompt_repaired, latest_prompt_reports, latest_prompt_repaired_quality = apply_runtime_preflight_3d_repairs(
+            latest_prompt_style,
+            latest_prompt_quality,
+        )
+        assert latest_prompt_reports
+        assert "explicitselection_to_explicit" in " ".join(latest_prompt_reports[0]["changes"])
+        assert "contact_pair_set_endpoint_to_named" in " ".join(latest_prompt_reports[0]["changes"])
+        assert '"ExplicitSelection"' not in latest_prompt_repaired
+        assert ".source().named" in latest_prompt_repaired
+        assert ".destination().named" in latest_prompt_repaired
+        assert latest_prompt_repaired_quality["success"] is False
+        assert any("Explicit as a geometry operation" in error for error in latest_prompt_repaired_quality["errors"])
+
+        historical_generated = Path("runtime_smoke/bearing_3d_full_demo/generated_code_3d_bearing_cage.java")
+        if historical_generated.exists():
+            historical_code = normalize_generated_mph_code(historical_generated.read_text())
+            historical_quality = validate_3d_bearing_code_draft(historical_code)
+            historical_repaired, historical_reports, historical_repaired_quality = apply_runtime_preflight_3d_repairs(
+                historical_code,
+                historical_quality,
+            )
+            assert historical_quality["success"] is False
+            assert historical_reports
+            assert "component_scoped_study_create_to_top_level" in " ".join(historical_reports[0]["changes"])
+            assert "rename_placeholder_contact_pair_pair1" in " ".join(historical_reports[0]["changes"])
+            assert "result_create_to_numerical_create" in " ".join(historical_reports[0]["changes"])
+            assert "FixedConstraint" not in historical_repaired
+            assert historical_repaired_quality["success"] is False
+            assert any("twelfth roller" in error for error in historical_repaired_quality["errors"])
+            assert any("Boolean pocket cutouts" in error for error in historical_repaired_quality["errors"])
 
     def test_generated_code_agent_demo_prompt_fixture_and_extraction(self):
         from scripts.run_agent_generated_code_demo import (
@@ -2094,6 +2695,105 @@ class TestSimulationSkills:
         )
         assert extract_generated_code(marked) == "model.param().set('L', '50[mm]');"
         assert extract_generated_code("```java\nmodel.component().create('comp1', true);\n```") == "model.component().create('comp1', true);"
+
+    def test_3d_package_metadata_injection_exposes_top_level_metrics(self, tmp_path):
+        from scripts.run_agent_3d_bearing_full_demo import VERIFIED_ROLLER_COUNT, _inject_3d_package_metadata
+
+        summary_path = tmp_path / "summary.json"
+        report_path = tmp_path / "report.md"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "metrics": {
+                        "von_mises_max": 123.0,
+                        "von_mises_mean": 45.0,
+                        "von_mises_min": 6.0,
+                        "contact_pressure_guess": 78.0,
+                        "contact_pressure_expression": "contact_pressure_est",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        report_path.write_text("# Report\n", encoding="utf-8")
+
+        _inject_3d_package_metadata(
+            {"json_path": str(summary_path), "markdown_path": str(report_path)},
+            repair_history=[{"attempt": 1, "stage": "offline_quality_gate", "success": True}],
+            cage_model="simplified cage ring",
+            per_roller_probe_results=[
+                {"roller": f"roller_{index}", "success": True, "value": float(index)}
+                for index in range(1, VERIFIED_ROLLER_COUNT + 1)
+            ],
+        )
+
+        injected = json.loads(summary_path.read_text(encoding="utf-8"))
+        assert injected["kind"] == "bearing_3d_full_package"
+        assert injected["max_von_mises_pa"] == 123.0
+        assert injected["mean_von_mises_pa"] == 45.0
+        assert injected["contact_pressure_estimate_pa"] == 78.0
+        assert "roller/raceway contact region" in injected["max_stress_location_approx"]
+        assert injected["highest_risk_roller"] == "roller_12"
+        assert injected["roller_risk_ranking"][0]["roller"] == "roller_12"
+        assert injected["selection_status"].startswith("verified_named_box_region_roller_body_and_contact_surface")
+        assert "probe_scope_verified" in injected["probe_scope_status"]
+        assert injected["per_roller_probe_results"][0]["value"] == 1.0
+        assert injected["selection_plan"]["global_selections"]["outer_support_surface"] == "sel_outer_support_surface"
+        assert injected["selection_plan"]["roller_contact_sets"][0]["risk_probe"] == "probe_roller_1_max_mises"
+        assert "failed_code_excerpt" not in injected["repair_history"][0]
+        assert injected["repair_history"][0]["stage"] == "offline_quality_gate"
+        assert "Max stress location" in report_path.read_text(encoding="utf-8")
+        assert "Highest-risk roller estimate" in report_path.read_text(encoding="utf-8")
+        assert "Selection status" in report_path.read_text(encoding="utf-8")
+        assert injected["artifact_qa"]
+        assert any("最大 von Mises 应力" in item["answer"] for item in injected["artifact_qa"])
+        assert injected["report_paths"]["markdown_path"] == str(report_path)
+        html_path = Path(injected["report_paths"]["html_path"])
+        assert html_path.exists()
+        html = html_path.read_text(encoding="utf-8")
+        assert "<!doctype html>" in html
+        assert "Artifact Q&amp;A Smoke" in html
+        assert "最大应力是多少" in html
+
+    def test_3d_artifact_answer_reports_risk_roller_and_cage(self):
+        from comsol_agent.tools.simulation import _answer_from_artifact_summary
+
+        summary = {
+            "max_von_mises_pa": 123.0,
+            "cage_model": "simplified cage ring with six pocket/constraint point markers",
+            "roller_risk_ranking": [
+                {"roller": "roller_1", "relative_risk": 1.0},
+                {"roller": "roller_2", "relative_risk": 0.5},
+            ],
+            "highest_risk_roller": "roller_1",
+            "selection_status": "verified_named_box_region_roller_body_and_contact_surface_selections_with_scoped_per_roller_probe_evaluation",
+            "probe_scope_status": "probe_scope_verified via component Maximum coupling operators bound to per-roller body selections",
+            "selection_plan": {
+                "global_selections": {
+                    "outer_support_surface": "sel_outer_support_surface",
+                    "inner_load_region": "sel_inner_load_region",
+                }
+            },
+            "result_interpretation": {
+                "max_stress_location_approx": "3D roller/raceway contact region",
+                "highest_risk_region": "roller_1 roller/raceway contact interfaces",
+                "contact_pair_status": "explicit COMSOL Contact pair features were created",
+                "cage_status": "cage included",
+            },
+        }
+
+        stress_answer = _answer_from_artifact_summary("最大应力和哪个滚子风险最高？", summary)
+        cage_answer = _answer_from_artifact_summary("保持架是否建模？", summary)
+        selection_answer = _answer_from_artifact_summary("边界选择和 probe 情况？", summary)
+
+        assert "123.0" in stress_answer
+        assert "roller_1" in stress_answer
+        assert "保持架建模状态" in cage_answer
+        assert "simplified cage ring" in cage_answer
+        assert "选择状态" in selection_answer
+        assert "probe 作用域状态" in selection_answer
+        assert "sel_outer_support_surface" in selection_answer
 
     def test_template_tools_list_and_read_seeded_templates(self, tmp_path):
         from comsol_agent.memory.archive_store import ArchiveStore
@@ -4014,6 +4714,121 @@ class TestCOMSOLRuntimeConfig:
             .values["expr"]
             == "solid.mises"
         )
+        assert target.read_bytes().startswith(b"\x89PNG")
+        COMSOLClient.reset_instance()
+
+    def test_comsol_plot_creates_3d_plot_group_for_3d_models(self, tmp_path):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+        from comsol_agent.tools.comsol.evaluate import comsol_plot
+
+        class FakeMPhModel:
+            def export(self, export_type, filepath):
+                raise RuntimeError('Node "exports/image" does not exist in model tree.')
+
+        class FakeExportFeature:
+            def __init__(self):
+                self.values = {}
+
+            def set(self, key, value):
+                self.values[key] = value
+
+            def run(self):
+                Path(self.values["pngfilename"]).write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        class FakeExportList:
+            def __init__(self):
+                self.features = {}
+
+            def tags(self):
+                return list(self.features)
+
+            def create(self, tag, export_type):
+                self.features[tag] = FakeExportFeature()
+
+            def remove(self, tag):
+                self.features.pop(tag, None)
+
+        class FakePlotGroup:
+            def __init__(self, result_type):
+                self.result_type = result_type
+                self.features = {}
+                self.ran = False
+
+            def getType(self):
+                return self.result_type
+
+            def create(self, tag, feature_type):
+                self.features[tag] = FakePlotFeature(feature_type)
+
+            def feature(self, tag):
+                return self.features[tag]
+
+            def run(self):
+                self.ran = True
+
+        class FakePlotFeature:
+            def __init__(self, feature_type):
+                self.feature_type = feature_type
+                self.values = {}
+
+            def set(self, key, value):
+                self.values[key] = value
+
+        class FakeResult:
+            def __init__(self):
+                self.exports = FakeExportList()
+                self.nodes = {}
+
+            def tags(self):
+                return list(self.nodes)
+
+            def create(self, tag, result_type):
+                self.nodes[tag] = FakePlotGroup(result_type)
+
+            def export(self, tag=None):
+                if tag is None:
+                    return self.exports
+                return self.exports.features[tag]
+
+        class FakeGeomList:
+            def tags(self):
+                return ["geom1"]
+
+        class FakeGeom:
+            def getSDim(self):
+                return 3
+
+        class FakeJavaModel:
+            def __init__(self):
+                self.fake_result = FakeResult()
+
+            def result(self, tag=None):
+                if tag is not None:
+                    return self.fake_result.nodes[tag]
+                return self.fake_result
+
+            def geom(self, tag=None):
+                if tag is None:
+                    return FakeGeomList()
+                return FakeGeom()
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake3d"] = ModelHandle(
+            name="fake3d",
+            java_model=FakeJavaModel(),
+            mph_model=FakeMPhModel(),
+        )
+
+        target = tmp_path / "plot.png"
+        result = comsol_plot("fake3d", expression="solid.mises", filename=str(target))
+
+        assert result["success"] is True
+        plot_group = client._models["fake3d"].java_model.fake_result.nodes["pg_codex"]
+        assert plot_group.getType() == "PlotGroup3D"
+        assert plot_group.features["plot_codex"].values["expr"] == "solid.mises"
         assert target.read_bytes().startswith(b"\x89PNG")
         COMSOLClient.reset_instance()
 
