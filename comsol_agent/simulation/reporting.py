@@ -191,6 +191,7 @@ def write_template_execution_report(
             "success_count": summary["success_count"],
             "failure_count": summary["failure_count"],
             "source_run_ids": summary["source_run_ids"],
+            "runs": summary["runs"],
         },
     }
     if wrote_html:
@@ -330,8 +331,8 @@ def render_template_execution_report(
         "",
         "## Runs",
         "",
-        "| Run ID | Template | Model | Success | Validation | Error Type | Params |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Run ID | Template | Model | Success | Validation | Error Type | Workflow | Quality | Binding | Binding Runtime | Physics | Physics Gate | Contact | Contact Runtime | Repairs | Params |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for run in summary.get("runs", []):
         lines.append(
@@ -344,6 +345,15 @@ def render_template_execution_report(
                     _md_code(str(run.get("success"))),
                     _md_code(run.get("validation_status") or ""),
                     _md_code(run.get("execution_error_type") or run.get("execution_exception_type") or ""),
+                    _md_code(run.get("workflow") or ""),
+                    _md_code(_format_quality_gate(run)),
+                    _md_code(_format_optional_bool(run.get("selection_binding_success"))),
+                    _md_code(_format_optional_bool(run.get("selection_binding_runtime_checked"))),
+                    _md_code(_format_optional_bool(run.get("physical_result_success"))),
+                    _md_code(_format_physics_gate(run)),
+                    _md_code(run.get("contact_convergence_level") or ""),
+                    _md_code(_format_optional_bool(run.get("contact_runtime_verified"))),
+                    _md_code(str(run.get("repair_history_count", 0))),
                     _md_code(_format_parameters(run.get("params") or {})),
                 ]
             )
@@ -362,6 +372,9 @@ def render_template_execution_report(
                 f"- Model: `{run.get('model_name') or ''}`",
                 f"- Stage/Error: `{run.get('stage') or run.get('error') or ''}`",
                 f"- Execution Error: `{run.get('execution_error') or ''}`",
+                f"- Workflow: `{run.get('workflow') or ''}`",
+                f"- Repair History Count: `{run.get('repair_history_count', 0)}`",
+                f"- Last Repair Stage: `{run.get('last_repair_stage') or ''}`",
                 "",
             ])
 
@@ -537,7 +550,7 @@ def render_template_execution_report_html(
         "<h2>Runs</h2>",
         '<div class="table-wrap">',
         "<table>",
-        "<thead><tr><th>Run ID</th><th>Template</th><th>Model</th><th>Success</th><th>Validation</th><th>Error Type</th><th>Params</th></tr></thead>",
+        "<thead><tr><th>Run ID</th><th>Template</th><th>Model</th><th>Success</th><th>Validation</th><th>Error Type</th><th>Workflow</th><th>Quality</th><th>Binding</th><th>Binding Runtime</th><th>Physics</th><th>Physics Gate</th><th>Contact</th><th>Contact Runtime</th><th>Repairs</th><th>Params</th></tr></thead>",
         "<tbody>",
     ]
     for run in summary.get("runs", []):
@@ -550,6 +563,15 @@ def render_template_execution_report_html(
             f"<td><code>{escape(str(run.get('success')))}</code></td>"
             f"<td><code>{escape(str(run.get('validation_status') or ''))}</code></td>"
             f"<td><code>{escape(str(error_type))}</code></td>"
+            f"<td><code>{escape(str(run.get('workflow') or ''))}</code></td>"
+            f"<td><code>{escape(_format_quality_gate(run))}</code></td>"
+            f"<td><code>{escape(_format_optional_bool(run.get('selection_binding_success')))}</code></td>"
+            f"<td><code>{escape(_format_optional_bool(run.get('selection_binding_runtime_checked')))}</code></td>"
+            f"<td><code>{escape(_format_optional_bool(run.get('physical_result_success')))}</code></td>"
+            f"<td><code>{escape(_format_physics_gate(run))}</code></td>"
+            f"<td><code>{escape(str(run.get('contact_convergence_level') or ''))}</code></td>"
+            f"<td><code>{escape(_format_optional_bool(run.get('contact_runtime_verified')))}</code></td>"
+            f"<td><code>{escape(str(run.get('repair_history_count', 0)))}</code></td>"
             f"<td><code>{escape(_format_parameters(run.get('params') or {}))}</code></td>"
             "</tr>"
         )
@@ -561,7 +583,8 @@ def render_template_execution_report_html(
         for run in failures:
             detail = run.get("execution_error") or run.get("stage") or run.get("error") or ""
             sections.append(
-                f"<li><code>{escape(str(run.get('run_id')))}</code>: {escape(str(detail))}</li>"
+                f"<li><code>{escape(str(run.get('run_id')))}</code>: {escape(str(detail))}"
+                f" (workflow={escape(str(run.get('workflow') or ''))}, repairs={escape(str(run.get('repair_history_count', 0)))}, last_repair_stage={escape(str(run.get('last_repair_stage') or ''))})</li>"
             )
         sections.extend(["</ul>", "</section>"])
 
@@ -586,6 +609,28 @@ def _format_parameters(parameters: dict[str, Any]) -> str:
     if not parameters:
         return ""
     return ", ".join(f"{name}={value}" for name, value in parameters.items())
+
+
+def _format_quality_gate(run: dict[str, Any]) -> str:
+    success = run.get("quality_gate_success")
+    level = run.get("quality_gate_level")
+    if success is None and not level:
+        return ""
+    return f"{success}/{level or ''}"
+
+
+def _format_optional_bool(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _format_physics_gate(run: dict[str, Any]) -> str:
+    production_ready = run.get("physical_result_production_ready")
+    level = run.get("physical_result_quality_level")
+    if production_ready is None and not level:
+        return ""
+    return f"{production_ready}/{level or ''}"
 
 
 def _md_code(value: str) -> str:
@@ -635,6 +680,12 @@ def _template_execution_run_summary(artifact: SimulationArtifact) -> dict[str, A
     validation = payload.get("validation") or {}
     execution = payload.get("execution") or {}
     template = payload.get("template") or {}
+    execution_context = payload.get("execution_context") or {}
+    repair_history = execution_context.get("repair_history") or []
+    draft_quality = execution_context.get("draft_quality") or {}
+    selection_binding_audit = execution_context.get("selection_binding_audit") or {}
+    physical_result_audit = execution_context.get("physical_result_audit") or {}
+    contact_convergence_report = execution_context.get("contact_convergence_report") or {}
     return {
         "run_id": artifact.run_id,
         "kind": artifact.kind,
@@ -652,6 +703,18 @@ def _template_execution_run_summary(artifact: SimulationArtifact) -> dict[str, A
         "execution_error": execution.get("error"),
         "execution_error_type": execution.get("error_type"),
         "execution_exception_type": execution.get("exception_type"),
+        "workflow": execution_context.get("workflow"),
+        "repair_history_count": len(repair_history),
+        "last_repair_stage": repair_history[-1].get("stage") if repair_history else None,
+        "quality_gate_success": draft_quality.get("success"),
+        "quality_gate_level": draft_quality.get("quality_level"),
+        "selection_binding_success": selection_binding_audit.get("success"),
+        "selection_binding_runtime_checked": selection_binding_audit.get("runtime_checked"),
+        "physical_result_success": physical_result_audit.get("success"),
+        "physical_result_quality_level": physical_result_audit.get("quality_level"),
+        "physical_result_production_ready": physical_result_audit.get("production_ready"),
+        "contact_convergence_level": contact_convergence_report.get("quality_level"),
+        "contact_runtime_verified": contact_convergence_report.get("runtime_verified"),
         "source": payload.get("source") or artifact.source,
         "json_path": artifact.json_path,
         "manifest_path": artifact.manifest_path,

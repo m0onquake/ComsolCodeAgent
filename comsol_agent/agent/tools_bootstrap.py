@@ -39,6 +39,7 @@ from comsol_agent.tools.simulation import (
     simulation_plan_bearing_contact,
     simulation_plan_multiroller_bearing,
     simulation_plan_parameter_sweep,
+    simulation_probe_3d_selection_binding,
     simulation_read_artifact,
     simulation_read_template,
     simulation_rerun_artifact,
@@ -477,6 +478,38 @@ def register_all_tools() -> None:
     )
 
     register_sync(
+        name="simulation_probe_3d_selection_binding",
+        description=(
+            "Probe runtime COMSOL entity counts for the 3D bearing named-selection contract. "
+            "Use after generated/template setup execution and geometry finalization, before trusting "
+            "roller/raceway contact, load, support, cage, or per-roller probe bindings."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "type": "string",
+                    "description": "Loaded COMSOL model name to probe.",
+                },
+                "java_code": {
+                    "type": "string",
+                    "description": "Optional setup code to cross-check declared selection tags against runtime entity counts.",
+                },
+                "roller_count": {
+                    "type": "integer",
+                    "description": "Expected rolling element count. Defaults to 12.",
+                },
+                "component_tag": {
+                    "type": "string",
+                    "description": "COMSOL component tag. Defaults to comp1.",
+                },
+            },
+            "required": ["model_name"],
+        },
+        handler=simulation_probe_3d_selection_binding,
+    )
+
+    register_sync(
         name="simulation_plan_parameter_sweep",
         description=(
             "Plan a parameter sweep without running COMSOL. Expands parameter axes "
@@ -861,6 +894,10 @@ def register_all_tools() -> None:
                 "create_model_name": {
                     "type": "string",
                     "description": "Create a new empty model with this name before running. Mutually exclusive with model_name.",
+                },
+                "execution_context": {
+                    "type": "object",
+                    "description": "Optional structured audit context to persist with the execution artifact, such as workflow, repair history, quality-gate status, or selection evidence.",
                 },
                 "validate_first": {
                     "type": "boolean",

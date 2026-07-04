@@ -317,6 +317,7 @@ class TestToolRegistry:
         assert "comsol_set_parameter" in names
         assert "simulation_plan_bearing_contact" in names
         assert "simulation_plan_multiroller_bearing" in names
+        assert "simulation_probe_3d_selection_binding" in names
         assert "simulation_plan_generated_code" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
@@ -391,6 +392,7 @@ class TestSystemPrompt:
         assert "bearing_contact_hertz_seed" in prompt
         assert "simulation_plan_generated_code" in prompt
         assert "template-first but not template-only" in prompt
+        assert "simulation_probe_3d_selection_binding" in prompt
 
     def test_domain_prompt(self):
         from comsol_agent.agent.prompt import build_system_prompt
@@ -2391,17 +2393,59 @@ class TestSimulationSkills:
         assert validate_multiroller_code_draft(bad_difference)["success"] is False
 
     def test_3d_full_bearing_demo_prompt_fixture_and_quality_gate(self):
+        from comsol_agent.simulation.bearing_3d import (
+            SEGMENTED_3D_CODE_SPECS,
+            SEGMENT_MARKER_MANIFEST_END,
+            SEGMENT_MARKER_MANIFEST_START,
+            VERIFIED_ROLLER_COUNT,
+            assemble_segmented_3d_code,
+            audit_3d_physical_results,
+            audit_3d_selection_binding,
+            build_3d_execution_context,
+            build_contact_convergence_report,
+            build_selection_binding_probe_code,
+            build_segmented_3d_generation_prompt,
+            extract_generated_code,
+            extract_segment_manifest,
+            normalize_generated_mph_code,
+            parse_selection_binding_probe_output,
+            selection_binding_contract,
+            validate_3d_bearing_code_draft,
+            validate_segmented_3d_segment,
+        )
         from scripts.run_agent_3d_bearing_full_demo import (
             VERIFIED_3D_FULL_BEARING_CODE,
+            __file__ as demo_script_file,
+            SEGMENTED_3D_CODE_SPECS as SCRIPT_SEGMENTED_3D_CODE_SPECS,
             build_3d_bearing_code_generation_prompt,
             build_3d_bearing_execution_prompt,
-            extract_generated_code,
-            normalize_generated_mph_code,
             apply_bounded_3d_generated_code_repairs,
             apply_runtime_preflight_3d_repairs,
-            validate_3d_bearing_code_draft,
-            VERIFIED_ROLLER_COUNT,
         )
+
+        assert SCRIPT_SEGMENTED_3D_CODE_SPECS is SEGMENTED_3D_CODE_SPECS
+        demo_source = Path(demo_script_file).read_text(encoding="utf-8")
+        assert "def build_segmented_3d_generation_prompt(" not in demo_source
+        assert "class Segmented3DCodeSpec" not in demo_source
+        assert "def validate_3d_bearing_code_draft(" not in demo_source
+        assert "def _build_3d_execution_context(" not in demo_source
+
+        execution_context = build_3d_execution_context(
+            workflow="bearing_3d_generated_code_agent_execution",
+            draft_quality={"success": True, "quality_level": "production_candidate"},
+            repair_history=[{"stage": "offline_quality_gate", "success": True}],
+            require_free_generated_code=True,
+            allow_verified_fallback=False,
+            draft_summary={"name": "draft", "success": True, "response": "x" * 500},
+            selection_binding_audit={"success": True, "runtime_checked": True},
+            physical_result_audit={"success": True, "production_ready": True},
+            contact_convergence_report={"success": True, "runtime_verified": True},
+        )
+        assert execution_context["workflow"] == "bearing_3d_generated_code_agent_execution"
+        assert execution_context["draft_summary"]["response_excerpt"] == "x" * 400
+        assert execution_context["selection_binding_audit"]["runtime_checked"] is True
+        assert execution_context["physical_result_audit"]["production_ready"] is True
+        assert execution_context["contact_convergence_report"]["runtime_verified"] is True
 
         draft = build_3d_bearing_code_generation_prompt(
             archive_path="runtime_smoke/bearing_3d_full_demo.sqlite3",
@@ -2434,6 +2478,8 @@ class TestSimulationSkills:
         assert "top-level model.study()/model.result()" in draft.prompt
         assert execute.name == "bearing_3d_execute_package_answer"
         assert "Every repair attempt must keep the model 3D" in execute.prompt
+        assert "simulation_probe_3d_selection_binding" in execute.prompt
+        assert "simulation_probe_3d_selection_binding" in execute.required_tools
         assert "VERIFIED_3D_FALLBACK_CODE" in execute.prompt
         assert "cage_pocket_12" in execute.prompt
         assert ".manualSelection(True)" in VERIFIED_3D_FULL_BEARING_CODE
@@ -2441,6 +2487,64 @@ class TestSimulationSkills:
         assert "selection().create('sel_inner_raceway_12_contact', 'Intersection')" in VERIFIED_3D_FULL_BEARING_CODE
         assert "selection('sel_inner_raceway_12_contact').set('input', ['box_roller_12_inner_contact_patch', 'geom1_inner_ring_bnd'])" in VERIFIED_3D_FULL_BEARING_CODE
         assert ".destination().named('sel_outer_raceway_12_contact')" in VERIFIED_3D_FULL_BEARING_CODE
+
+        segment_b = SEGMENTED_3D_CODE_SPECS[1]
+        segment_prompt = build_segmented_3d_generation_prompt(
+            segment_b,
+            completed_manifests=[{
+                "segment_id": "A_base_geometry",
+                "creates": ["comp1", "geom1", "inner_ring", "outer_ring", "cage_annulus"],
+            }],
+            previous_code_tail="model.component('comp1').geom('geom1').create('cage_annulus', 'Difference');",
+        )
+        assert "SEGMENT_ID: B_cage_pockets_and_rollers" in segment_prompt
+        assert "COMPLETED_MANIFESTS_JSON" in segment_prompt
+        assert "Do not recreate comp1/geom1" in segment_prompt
+        assert "SEGMENT_MANIFEST_START" in segment_prompt
+        segmented_response = (
+            f"{SEGMENT_MARKER_MANIFEST_START}\n"
+            '{"segment_id":"B_cage_pockets_and_rollers","depends_on":["A_base_geometry"],'
+            '"creates":["cage_pocket_1","cage_pocket_12","cage","roller_1","roller_12"],"uses":["cage_annulus"]}\n'
+            f"{SEGMENT_MARKER_MANIFEST_END}\n"
+            "GENERATED_CODE_START\n"
+            "model.component('comp1').geom('geom1').create('cage_pocket_1', 'Cylinder');\n"
+            "model.component('comp1').geom('geom1').create('cage_pocket_12', 'Cylinder');\n"
+            "model.component('comp1').geom('geom1').create('cage', 'Difference');\n"
+            "model.component('comp1').geom('geom1').create('roller_1', 'Cylinder');\n"
+            "model.component('comp1').geom('geom1').create('roller_12', 'Cylinder');\n"
+            "GENERATED_CODE_END"
+        )
+        manifest = extract_segment_manifest(segmented_response)
+        assert manifest is not None
+        assert manifest["segment_id"] == "B_cage_pockets_and_rollers"
+        segment_code = extract_generated_code(segmented_response) or ""
+        segment_quality = validate_segmented_3d_segment(
+            segment_b,
+            manifest,
+            segment_code,
+            completed_manifests=[{"segment_id": "A_base_geometry"}],
+            existing_tags={"comp1", "geom1", "inner_ring", "outer_ring", "cage_annulus"},
+        )
+        assert segment_quality["success"] is True
+        duplicate_quality = validate_segmented_3d_segment(
+            segment_b,
+            manifest,
+            "model.component().create('comp1', True);\n" + segment_code,
+            completed_manifests=[{"segment_id": "A_base_geometry"}],
+            existing_tags={"comp1", "geom1"},
+        )
+        assert duplicate_quality["success"] is False
+        assert any("forbidden snippet" in error or "duplicate" in error for error in duplicate_quality["errors"])
+        assembled_code, assembly_manifest = assemble_segmented_3d_code([
+            {
+                "code": VERIFIED_3D_FULL_BEARING_CODE,
+                "manifest": {"segment_id": "verified_single_segment"},
+                "created_tags": [],
+                "warnings": [],
+            }
+        ])
+        assert "cage_pocket_12" in assembled_code
+        assert assembly_manifest["final_quality"]["success"] is True
 
         quality = validate_3d_bearing_code_draft(VERIFIED_3D_FULL_BEARING_CODE)
         assert quality["success"] is True
@@ -2457,6 +2561,124 @@ class TestSimulationSkills:
         assert not any("sel_roller_1_inner_contact" in error for error in production_quality["errors"])
         assert not any("sel_roller_1_outer_contact" in error for error in production_quality["errors"])
         assert production_quality["errors"] == []
+
+        binding_contract = selection_binding_contract()
+        assert binding_contract["kind"] == "bearing_3d_selection_binding_contract"
+        assert binding_contract["roller_count"] == VERIFIED_ROLLER_COUNT
+        assert len(binding_contract["entries"]) == 5 + 5 * VERIFIED_ROLLER_COUNT
+        code_binding_audit = audit_3d_selection_binding(
+            java_code=VERIFIED_3D_FULL_BEARING_CODE,
+        )
+        assert code_binding_audit["success"] is True
+        assert code_binding_audit["runtime_checked"] is False
+        assert code_binding_audit["code_declared_count"] == code_binding_audit["required_selection_count"]
+        runtime_selection_report = {
+            entry["tag"]: {
+                "entitydim": entry["entitydim"],
+                "entity_count": entry["expected_min_entities"],
+                "binding_source": entry["binding_method"],
+            }
+            for entry in binding_contract["entries"]
+        }
+        runtime_binding_audit = audit_3d_selection_binding(
+            java_code=VERIFIED_3D_FULL_BEARING_CODE,
+            selection_report=runtime_selection_report,
+        )
+        assert runtime_binding_audit["success"] is True
+        assert runtime_binding_audit["runtime_bound_count"] == runtime_binding_audit["required_selection_count"]
+        runtime_selection_report["sel_roller_1_inner_contact"]["entity_count"] = 0
+        failed_binding_audit = audit_3d_selection_binding(
+            java_code=VERIFIED_3D_FULL_BEARING_CODE,
+            selection_report=runtime_selection_report,
+        )
+        assert failed_binding_audit["success"] is False
+        assert any("sel_roller_1_inner_contact selected 0 entities" in error for error in failed_binding_audit["errors"])
+        probe_code = build_selection_binding_probe_code()
+        assert "SELECTION_BINDING_PROBE_START" in probe_code
+        assert "selection_probe_selection.entities()" in probe_code
+        parsed_probe = parse_selection_binding_probe_output(
+            "noise\n"
+            "SELECTION_BINDING_PROBE_START\n"
+            "SEL|sel_inner_raceway_contact|2|2|3,4|\n"
+            "SEL|sel_roller_1_inner_contact|2|-1||Missing selection\n"
+            "SELECTION_BINDING_PROBE_END\n"
+        )
+        assert parsed_probe["count"] == 2
+        assert parsed_probe["success"] is False
+        assert parsed_probe["selections"][0]["entity_count"] == 2
+        assert parsed_probe["selections"][1]["error"] == "Missing selection"
+        physical_audit = audit_3d_physical_results(
+            evaluations=[
+                {
+                    "success": True,
+                    "expression": "solid.mises",
+                    "statistics": {"max": 3.17e6, "mean": 1.2e5},
+                },
+                {"success": True, "expression": "contact_pressure_est", "value": 1.95e6},
+            ],
+            metrics={"von_mises_max": 3.17e6},
+        )
+        assert physical_audit["success"] is True
+        assert physical_audit["production_ready"] is False
+        assert physical_audit["quality_level"] == "nonzero_stress_smoke_gate"
+        assert any("displacement_nonzero" in warning for warning in physical_audit["warnings"])
+        production_physical_audit = audit_3d_physical_results(
+            evaluations=[
+                {
+                    "success": True,
+                    "expression": "solid.mises",
+                    "statistics": {"max": 3.17e6, "mean": 1.2e5},
+                },
+                {"success": True, "expression": "contact_pressure_est", "value": 1.95e6},
+                {"success": True, "expression": "solid.disp", "statistics": {"max": 2.5e-6, "mean": 7.5e-7}},
+            ],
+            metrics={"von_mises_max": 3.17e6},
+            require_displacement=True,
+            require_contact_pressure=True,
+        )
+        assert production_physical_audit["success"] is True
+        assert production_physical_audit["production_ready"] is True
+        assert production_physical_audit["quality_level"] == "production_physics_gate"
+        zero_stress_audit = audit_3d_physical_results(
+            evaluations=[
+                {
+                    "success": True,
+                    "expression": "solid.mises",
+                    "statistics": {"max": 0.0, "mean": 0.0},
+                }
+            ],
+        )
+        assert zero_stress_audit["success"] is False
+        assert any("von_mises_nonzero is near zero" in error for error in zero_stress_audit["errors"])
+        contact_report = build_contact_convergence_report(
+            solve_result={"success": True, "status": "Solve completed.", "elapsed_seconds": 12.3},
+            metrics={"contact_pressure_guess": 1.95e6},
+            selection_binding_audit=runtime_binding_audit,
+            physical_result_audit=production_physical_audit,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+        )
+        assert contact_report["success"] is True
+        assert contact_report["runtime_verified"] is True
+        assert contact_report["quality_level"] == "contact_runtime_convergence_checked"
+        unverified_contact_report = build_contact_convergence_report(
+            metrics={"contact_pressure_guess": 1.95e6},
+            selection_binding_audit=code_binding_audit,
+            physical_result_audit=production_physical_audit,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+        )
+        assert unverified_contact_report["success"] is True
+        assert unverified_contact_report["runtime_verified"] is False
+        assert any("Solve result was not provided" in warning for warning in unverified_contact_report["warnings"])
+        code_only_contact_report = build_contact_convergence_report(
+            solve_result={"success": True, "status": "Solve completed."},
+            metrics={"contact_pressure_guess": 1.95e6},
+            selection_binding_audit=code_binding_audit,
+            physical_result_audit=production_physical_audit,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+        )
+        assert code_only_contact_report["success"] is True
+        assert code_only_contact_report["runtime_verified"] is False
+        assert any("code-declared only" in warning for warning in code_only_contact_report["warnings"])
 
         bad_2d = """
         model.component().create('comp1', true);
@@ -2711,6 +2933,9 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
                         "von_mises_min": 6.0,
                         "contact_pressure_guess": 78.0,
                         "contact_pressure_expression": "contact_pressure_est",
+                        "displacement_max": 2.0e-6,
+                        "displacement_mean": 8.0e-7,
+                        "displacement_expression": "solid.disp",
                     },
                 }
             ),
@@ -2741,11 +2966,22 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert injected["per_roller_probe_results"][0]["value"] == 1.0
         assert injected["selection_plan"]["global_selections"]["outer_support_surface"] == "sel_outer_support_surface"
         assert injected["selection_plan"]["roller_contact_sets"][0]["risk_probe"] == "probe_roller_1_max_mises"
+        assert injected["selection_binding_contract"]["kind"] == "bearing_3d_selection_binding_contract"
+        assert len(injected["selection_binding_contract"]["entries"]) == 5 + 5 * VERIFIED_ROLLER_COUNT
+        assert injected["selection_binding_audit"]["success"] is True
+        assert injected["physical_result_audit"]["success"] is True
+        assert injected["physical_result_audit"]["production_ready"] is True
+        assert injected["physical_result_audit"]["quality_level"] == "production_physics_gate"
+        assert injected["physical_result_audit"]["checks"]["von_mises_nonzero"]["value"] == 123.0
+        assert injected["max_displacement_m"] == 2.0e-6
+        assert injected["contact_convergence_report"]["success"] is True
+        assert injected["contact_convergence_report"]["quality_level"] == "contact_smoke_convergence_unverified"
         assert "failed_code_excerpt" not in injected["repair_history"][0]
         assert injected["repair_history"][0]["stage"] == "offline_quality_gate"
         assert "Max stress location" in report_path.read_text(encoding="utf-8")
         assert "Highest-risk roller estimate" in report_path.read_text(encoding="utf-8")
         assert "Selection status" in report_path.read_text(encoding="utf-8")
+        assert "Contact convergence report" in report_path.read_text(encoding="utf-8")
         assert injected["artifact_qa"]
         assert any("最大 von Mises 应力" in item["answer"] for item in injected["artifact_qa"])
         assert injected["report_paths"]["markdown_path"] == str(report_path)
@@ -2931,6 +3167,7 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
     def test_generated_code_run_persists_as_generated_code_execution(self, tmp_path, monkeypatch):
         from comsol_agent.memory.archive_store import ArchiveStore
         from comsol_agent.tools import simulation as simulation_tools
+        from comsol_agent.tools.simulation import simulation_read_artifact
 
         calls = []
 
@@ -2956,6 +3193,23 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             java_code="model.component().create('comp1', true);",
             create_model_name="generated_code_model",
             params={"radial_load": "3000[N]"},
+            execution_context={
+                "workflow": "bearing_3d_generated_code_agent_execution",
+                "draft_quality": {"success": True, "quality_level": "production_candidate"},
+                "repair_history": [{"stage": "offline_runtime_preflight_repair", "success": True}],
+                "selection_binding_audit": {"success": True, "runtime_checked": True},
+                "physical_result_audit": {
+                    "success": True,
+                    "quality_level": "production_physics_gate",
+                    "production_ready": True,
+                },
+                "contact_convergence_report": {
+                    "success": True,
+                    "quality_level": "contact_runtime_convergence_checked",
+                    "runtime_verified": True,
+                },
+                "require_free_generated_code": True,
+            },
             artifact_dir=str(tmp_path / "template_runs"),
             archive_path=str(archive_path),
         )
@@ -2966,6 +3220,62 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert Path(result["artifacts"]["json_path"]).exists()
         archived = ArchiveStore(archive_path).get_simulation_artifact(result["artifacts"]["run_id"])
         assert archived.kind == "generated_code_execution"
+        assert archived.metadata["selection_binding_runtime_checked"] is True
+        assert archived.metadata["physical_result_production_ready"] is True
+        assert archived.metadata["contact_runtime_verified"] is True
+        read_back = simulation_read_artifact(
+            run_id=result["artifacts"]["run_id"],
+            archive_path=str(archive_path),
+        )
+        assert read_back["success"] is True
+        assert read_back["preview"]["summary"]["execution_audit"]["workflow"] == "bearing_3d_generated_code_agent_execution"
+        assert read_back["preview"]["summary"]["execution_audit"]["repair_history_count"] == 1
+        assert read_back["preview"]["summary"]["execution_audit"]["quality_gate_level"] == "production_candidate"
+        assert read_back["preview"]["summary"]["execution_audit"]["selection_binding_success"] is True
+        assert read_back["preview"]["summary"]["execution_audit"]["selection_binding_runtime_checked"] is True
+        assert read_back["preview"]["summary"]["execution_audit"]["physical_result_success"] is True
+        assert read_back["preview"]["summary"]["execution_audit"]["physical_result_quality_level"] == "production_physics_gate"
+        assert read_back["preview"]["summary"]["execution_audit"]["physical_result_production_ready"] is True
+        assert read_back["preview"]["summary"]["execution_audit"]["contact_convergence_level"] == "contact_runtime_convergence_checked"
+        assert read_back["preview"]["summary"]["execution_audit"]["contact_runtime_verified"] is True
+
+    def test_simulation_probe_3d_selection_binding_parses_runtime_entities(self, monkeypatch):
+        from comsol_agent.simulation.bearing_3d import (
+            SELECTION_BINDING_PROBE_END,
+            SELECTION_BINDING_PROBE_START,
+            selection_binding_contract,
+        )
+        from comsol_agent.tools import simulation as simulation_tools
+
+        entries = selection_binding_contract()["entries"]
+        probe_lines = [SELECTION_BINDING_PROBE_START]
+        for entry in entries:
+            probe_lines.append(f"SEL|{entry['tag']}|{entry['entitydim']}|1|101|")
+        probe_lines.append(SELECTION_BINDING_PROBE_END)
+
+        calls = []
+
+        def fake_execute_java(java_code, model_name):
+            calls.append((java_code, model_name))
+            return {
+                "success": True,
+                "stdout": "\n".join(probe_lines),
+                "output": "\n".join(probe_lines),
+            }
+
+        monkeypatch.setattr(simulation_tools, "comsol_execute_java", fake_execute_java)
+
+        result = simulation_tools.simulation_probe_3d_selection_binding(
+            model_name="agent_3d_bearing_model",
+            java_code=" ".join(entry["tag"] for entry in entries),
+        )
+
+        assert result["success"] is True
+        assert calls and calls[0][1] == "agent_3d_bearing_model"
+        assert "selection_probe_entries" in calls[0][0]
+        assert result["selection_report"]["count"] == len(entries)
+        assert result["selection_binding_audit"]["runtime_checked"] is True
+        assert result["selection_binding_audit"]["runtime_bound_count"] == len(entries)
 
     @pytest.mark.asyncio
     async def test_agent_loop_injects_skill_context(self):
@@ -4131,6 +4441,22 @@ class TestParameterSweeps:
                     "params": {"radial_load": "3000[N]"},
                     "java_code": "model.component().create('comp1', true);",
                 },
+                "execution_context": {
+                    "workflow": "bearing_3d_generated_code_agent_execution",
+                    "draft_quality": {"success": True, "quality_level": "production_candidate"},
+                    "repair_history": [{"stage": "offline_runtime_preflight_repair", "success": True}],
+                    "selection_binding_audit": {"success": True, "runtime_checked": True},
+                    "physical_result_audit": {
+                        "success": True,
+                        "quality_level": "production_physics_gate",
+                        "production_ready": True,
+                    },
+                    "contact_convergence_report": {
+                        "success": True,
+                        "quality_level": "contact_runtime_convergence_checked",
+                        "runtime_verified": True,
+                    },
+                },
                 "validation": {"status": "ok", "errors": [], "warnings": []},
                 "execution": {"success": True},
                 "tool_sequence": ["comsol_execute_java"],
@@ -4153,6 +4479,25 @@ class TestParameterSweeps:
                     "domain": "structural",
                     "params": {"radial_load": "bad"},
                     "java_code": "model.component().create('comp1', true);",
+                },
+                "execution_context": {
+                    "workflow": "bearing_3d_generated_code_agent_execution",
+                    "draft_quality": {"success": False, "quality_level": "smoke"},
+                    "selection_binding_audit": {"success": False, "runtime_checked": False},
+                    "physical_result_audit": {
+                        "success": False,
+                        "quality_level": "failed_physics_gate",
+                        "production_ready": False,
+                    },
+                    "contact_convergence_report": {
+                        "success": False,
+                        "quality_level": "contact_smoke_convergence_unverified",
+                        "runtime_verified": False,
+                    },
+                    "repair_history": [
+                        {"stage": "offline_runtime_preflight_repair", "success": True},
+                        {"stage": "simulation_run_template", "success": False},
+                    ],
                 },
                 "validation": {"status": "ok", "errors": [], "warnings": []},
                 "execution": {
@@ -4185,9 +4530,21 @@ class TestParameterSweeps:
         assert result["summary"]["run_count"] == 2
         assert result["summary"]["success_count"] == 1
         assert result["summary"]["failure_count"] == 1
+        ok_run = next(run for run in result["summary"]["runs"] if run["model_name"] == "generated_model_ok")
+        assert ok_run["selection_binding_runtime_checked"] is True
+        assert ok_run["physical_result_production_ready"] is True
+        assert ok_run["physical_result_quality_level"] == "production_physics_gate"
+        assert ok_run["contact_runtime_verified"] is True
         assert result["report"]["archive"]["kind"] == "generated_code_execution_report"
         assert "# COMSOL Generated-Code Execution Report" in content
         assert "generated_model_fail" in content
+        assert "Binding Runtime" in content
+        assert "Physics Gate" in content
+        assert "Contact Runtime" in content
+        assert "production_physics_gate" in content
+        assert "bearing_3d_generated_code_agent_execution" in content
+        assert "contact_runtime_convergence_checked" in content
+        assert "contact_smoke_convergence_unverified" in content
         assert "<!doctype html>" in html_path.read_text(encoding="utf-8")
 
         search_result = simulation_search_artifacts(

@@ -14,6 +14,11 @@ from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.simulation.artifact_reader import read_archived_artifact
 from comsol_agent.simulation.artifacts import persist_sweep_result
 from comsol_agent.simulation.artifacts import persist_template_execution_result
+from comsol_agent.simulation.bearing_3d import (
+    audit_3d_selection_binding,
+    build_selection_binding_probe_code,
+    parse_selection_binding_probe_output,
+)
 from comsol_agent.simulation.bearing_contact import (
     plan_bearing_contact_setup,
     plan_multiroller_bearing_setup,
@@ -110,6 +115,47 @@ def simulation_plan_multiroller_bearing(
         return {"success": False, "error": str(exc)}
 
 
+def simulation_probe_3d_selection_binding(
+    model_name: str,
+    java_code: str | None = None,
+    roller_count: int = 12,
+    component_tag: str = "comp1",
+) -> dict:
+    """Probe runtime COMSOL selection entity counts for the 3D bearing contract."""
+    try:
+        probe_code = build_selection_binding_probe_code(
+            roller_count=roller_count,
+            component_tag=component_tag,
+        )
+        execution = comsol_execute_java(probe_code, model_name)
+        if not execution.get("success"):
+            return {
+                "success": False,
+                "stage": "execute_selection_probe",
+                "model_name": model_name,
+                "execution": execution,
+                "probe_code": probe_code,
+            }
+        selection_report = parse_selection_binding_probe_output(execution.get("stdout") or execution.get("output") or "")
+        audit = audit_3d_selection_binding(
+            java_code=java_code,
+            selection_report=selection_report,
+            roller_count=roller_count,
+        )
+        return {
+            "success": bool(selection_report.get("success")) and audit.get("success"),
+            "model_name": model_name,
+            "roller_count": roller_count,
+            "component_tag": component_tag,
+            "selection_report": selection_report,
+            "selection_binding_audit": audit,
+            "execution": execution,
+            "probe_code": probe_code,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "model_name": model_name}
+
+
 def simulation_export_bearing_contact_package(
     model_name: str,
     template_run_id: str | None = None,
@@ -148,6 +194,12 @@ def simulation_export_bearing_contact_package(
                 ["contact_pressure_guess", "contact_pressure_est", "max_contact_pressure"],
             ),
         ]
+        displacement_evaluation = _evaluate_first_available(
+            model_name,
+            ["solid.disp", "sqrt(u^2+v^2+w^2)", "max_displacement"],
+        )
+        if displacement_evaluation.get("success"):
+            evaluations.append(displacement_evaluation)
         failed_eval = [item for item in evaluations if not item.get("success")]
         if failed_eval:
             return {
@@ -625,6 +677,7 @@ def simulation_run_template(
     params: dict | None = None,
     model_name: str | None = None,
     create_model_name: str | None = None,
+    execution_context: dict | None = None,
     validate_first: bool = True,
     close_model: bool | None = None,
     persist_results: bool = True,
@@ -692,6 +745,7 @@ def simulation_run_template(
                 "model_name": model_name or create_model_name,
                 "source": source,
                 "params": effective_params,
+                "execution_context": execution_context or {},
                 "template": template_snapshot,
                 "validation": validation,
             }
@@ -719,6 +773,7 @@ def simulation_run_template(
                     "model_name": create_model_name,
                     "source": source,
                     "params": effective_params,
+                    "execution_context": execution_context or {},
                     "template": template_snapshot,
                     "validation": validation,
                     "create": create_result,
@@ -752,6 +807,7 @@ def simulation_run_template(
             "model_name": active_model_name,
             "source": source,
             "params": effective_params,
+            "execution_context": execution_context or {},
             "template": template_snapshot,
             "validation": validation,
             "create": create_result,
@@ -1485,6 +1541,10 @@ def _bearing_contact_metrics(evaluations: list[dict]) -> dict:
         elif expression in {"contact_pressure_est", "max_contact_pressure"}:
             metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
             metrics["contact_pressure_expression"] = expression
+        elif expression in {"solid.disp", "sqrt(u^2+v^2+w^2)", "max_displacement"}:
+            metrics["displacement_max"] = stats.get("max", evaluation.get("value"))
+            metrics["displacement_mean"] = stats.get("mean", evaluation.get("value"))
+            metrics["displacement_expression"] = expression
     return metrics
 
 

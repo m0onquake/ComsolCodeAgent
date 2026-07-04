@@ -117,6 +117,12 @@ def _template_execution_summary(path: Path) -> dict[str, Any]:
     validation = payload.get("validation") or {}
     execution = payload.get("execution") or {}
     template = payload.get("template") or {}
+    execution_context = payload.get("execution_context") or {}
+    repair_history = execution_context.get("repair_history") or []
+    draft_quality = execution_context.get("draft_quality") or {}
+    selection_binding_audit = execution_context.get("selection_binding_audit") or {}
+    physical_result_audit = execution_context.get("physical_result_audit") or {}
+    contact_convergence_report = execution_context.get("contact_convergence_report") or {}
     return {
         "exists": True,
         "path": str(path),
@@ -139,6 +145,25 @@ def _template_execution_summary(path: Path) -> dict[str, Any]:
             "exception_type": execution.get("exception_type"),
             "modified": execution.get("modified"),
         },
+        "execution_context": execution_context,
+        "selection_binding_audit": selection_binding_audit,
+        "physical_result_audit": physical_result_audit,
+        "contact_convergence_report": contact_convergence_report,
+        "execution_audit": {
+            "workflow": execution_context.get("workflow"),
+            "repair_history_count": len(repair_history),
+            "last_repair_stage": repair_history[-1].get("stage") if repair_history else None,
+            "quality_gate_success": draft_quality.get("success"),
+            "quality_gate_level": draft_quality.get("quality_level"),
+            "selection_binding_success": selection_binding_audit.get("success"),
+            "selection_binding_runtime_checked": selection_binding_audit.get("runtime_checked"),
+            "physical_result_success": physical_result_audit.get("success"),
+            "physical_result_quality_level": physical_result_audit.get("quality_level"),
+            "physical_result_production_ready": physical_result_audit.get("production_ready"),
+            "contact_convergence_level": contact_convergence_report.get("quality_level"),
+            "contact_runtime_verified": contact_convergence_report.get("runtime_verified"),
+            "require_free_generated_code": execution_context.get("require_free_generated_code"),
+        },
         "artifacts": payload.get("artifacts"),
     }
 
@@ -150,6 +175,9 @@ def _bearing_contact_package_summary(path: Path) -> dict[str, Any]:
     if "error" in payload:
         return payload
 
+    selection_binding_audit = payload.get("selection_binding_audit") or {}
+    physical_result_audit = payload.get("physical_result_audit") or {}
+    contact_convergence_report = payload.get("contact_convergence_report") or {}
     return {
         "exists": True,
         "path": str(path),
@@ -167,6 +195,18 @@ def _bearing_contact_package_summary(path: Path) -> dict[str, Any]:
         "risk_ranking_method": payload.get("risk_ranking_method"),
         "selection_status": payload.get("selection_status"),
         "selection_plan": payload.get("selection_plan") or {},
+        "selection_binding_audit": selection_binding_audit,
+        "physical_result_audit": physical_result_audit,
+        "contact_convergence_report": contact_convergence_report,
+        "quality_audit": {
+            "selection_binding_success": selection_binding_audit.get("success"),
+            "selection_binding_runtime_checked": selection_binding_audit.get("runtime_checked"),
+            "physical_result_success": physical_result_audit.get("success"),
+            "physical_result_quality_level": physical_result_audit.get("quality_level"),
+            "physical_result_production_ready": physical_result_audit.get("production_ready"),
+            "contact_convergence_level": contact_convergence_report.get("quality_level"),
+            "contact_runtime_verified": contact_convergence_report.get("runtime_verified"),
+        },
         "probe_scope_status": payload.get("probe_scope_status"),
         "repair_history": payload.get("repair_history") or [],
         "cage_model": payload.get("cage_model"),

@@ -469,6 +469,12 @@ def run_direct_fixture_smoke(args: argparse.Namespace) -> int:
                 "roller_diameter": "8[mm]",
                 "radial_load": "3000[N]",
             },
+            execution_context={
+                "workflow": "multiroller_direct_fixture",
+                "draft_quality": summary["fixture_quality"],
+                "repair_history": [],
+                "require_free_generated_code": False,
+            },
             create_model_name=args.model_name,
             close_model=False,
             artifact_dir=str(artifact_dir),

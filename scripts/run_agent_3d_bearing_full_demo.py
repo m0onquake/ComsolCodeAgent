@@ -28,6 +28,7 @@ from comsol_agent.agent.tools_bootstrap import register_all_tools
 from comsol_agent.cli.config import load_config
 from comsol_agent.llm.router import create_provider
 from comsol_agent.memory.archive_store import ArchiveStore
+from comsol_agent.simulation import bearing_3d as bearing_3d_contracts
 from comsol_agent.simulation.skills import seed_builtin_templates
 from comsol_agent.tools.comsol.client import COMSOLClient
 from comsol_agent.tools.comsol.evaluate import comsol_plot
@@ -37,6 +38,7 @@ from comsol_agent.tools.simulation import (
     _answer_from_artifact_summary,
     simulation_answer_artifact_question,
     simulation_export_bearing_contact_package,
+    simulation_probe_3d_selection_binding,
     simulation_retrieve_api_docs,
     simulation_run_template,
 )
@@ -338,6 +340,14 @@ class DemoPrompt:
         }
 
 
+class Segmented3DGenerationError(RuntimeError):
+    """Raised when segmented generation fails with auditable attempt history."""
+
+    def __init__(self, message: str, repair_history: list[dict[str, Any]]):
+        super().__init__(message)
+        self.repair_history = repair_history
+
+
 def build_3d_bearing_code_generation_prompt(*, archive_path: str) -> DemoPrompt:
     """Ask the agent to plan and draft a full 3D roller bearing with cage."""
     known_params = {
@@ -412,6 +422,7 @@ def build_3d_bearing_execution_prompt(
     model_name: str,
     template_name: str,
     package_dir: str,
+    execution_context: dict[str, Any] | None = None,
     allow_verified_fallback: bool = True,
 ) -> DemoPrompt:
     """Ask the agent to execute a 3D full bearing and record repair evidence."""
@@ -426,6 +437,7 @@ def build_3d_bearing_execution_prompt(
         "radial_load": "3000[N]",
         "cage_included": "true",
     }
+    execution_context = execution_context or {}
     fallback_instruction = (
         "If boundary/contact selection fails, replace the setup code with VERIFIED_3D_FALLBACK_CODE "
         "shown below and count that as one repair attempt. "
@@ -440,7 +452,7 @@ def build_3d_bearing_execution_prompt(
         prompt=(
             "Use the exact raw COMSOL Java/API code below as generated 3D full-bearing setup code. "
             "Run this deterministic chain: simulation_validate_template, simulation_run_template, "
-            "comsol_solve, comsol_evaluate, comsol_plot, simulation_export_bearing_contact_package, "
+            "comsol_solve, simulation_probe_3d_selection_binding, comsol_evaluate, comsol_plot, simulation_export_bearing_contact_package, "
             "simulation_answer_artifact_question, comsol_close_model. If validation or runtime execution fails, "
             "perform at most two repair attempts using the structured error and simulation_retrieve_api_docs. "
             "If you call simulation_validate_template during repair, you must pass the repaired raw code in "
@@ -450,9 +462,10 @@ def build_3d_bearing_execution_prompt(
             f"succeeded. {fallback_instruction}"
             f"Use params={params!r}. Validate with name={template_name!r}, java_code=<raw code>, params=params, "
             f"archive_path={archive_path!r}. Run with simulation_run_template name={template_name!r}, java_code=<raw code>, "
-            f"params=params, create_model_name={model_name!r}, close_model=false, artifact_dir={artifact_dir!r}, "
+            f"params=params, execution_context={execution_context!r}, create_model_name={model_name!r}, close_model=false, artifact_dir={artifact_dir!r}, "
             f"artifact_name='agent_3d_bearing_execution', archive_path={archive_path!r}. After run succeeds, solve the "
-            f"model, evaluate solid.mises, plot solid.mises to {plot_path!r}, export a result package with "
+            "model, call simulation_probe_3d_selection_binding with model_name and the raw java_code to verify runtime selection entity counts, "
+            f"evaluate solid.mises, solid.disp, and contact_pressure_est, plot solid.mises to {plot_path!r}, export a result package with "
             "simulation_export_bearing_contact_package using package_name='agent_3d_bearing_package', "
             f"output_dir={package_dir!r}, archive_path={archive_path!r}, and template_run_id from the template run. "
             "Then ask simulation_answer_artifact_question: '最大应力是多少，最大应力位置在哪里，哪个滚子附近风险最高，保持架是否建模，滚子和外圈有没有接触？' "
@@ -464,6 +477,7 @@ def build_3d_bearing_execution_prompt(
             "simulation_validate_template",
             "simulation_run_template",
             "comsol_solve",
+            "simulation_probe_3d_selection_binding",
             "comsol_evaluate",
             "comsol_plot",
             "simulation_export_bearing_contact_package",
@@ -474,6 +488,7 @@ def build_3d_bearing_execution_prompt(
             "simulation_validate_template",
             "simulation_run_template",
             "comsol_solve",
+            "simulation_probe_3d_selection_binding",
             "comsol_evaluate",
             "comsol_plot",
             "simulation_export_bearing_contact_package",
@@ -483,196 +498,170 @@ def build_3d_bearing_execution_prompt(
     )
 
 
-def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: bool = False) -> dict[str, Any]:
-    """Apply 3D full-bearing gates before launching COMSOL."""
-    code_for_validation = _strip_hash_comments(_strip_line_comments(_strip_code_fence(textwrap.dedent(java_code))))
-    compact = re.sub(r"\s+", "", code_for_validation).lower()
-    lowered = code_for_validation.lower()
-    errors: list[str] = []
-    warnings: list[str] = []
-    blocked = ("plate", "beam", "cantilever", "2d plane-strain", "plane strain")
-    for pattern in blocked:
-        if pattern in lowered:
-            errors.append(f"3D full-bearing code must not degrade to unrelated/2D model: {pattern}")
-    if "geom().create('geom1',2)" in compact or 'geom().create("geom1",2)' in compact:
-        errors.append("3D full-bearing code must create geom1 with dimension 3, not 2.")
-    required_patterns = {
-        "solidmechanics": "Solid Mechanics physics",
-        "contact": "Contact Pair/Contact setup",
-        "pair().create": "COMSOL pair creation",
-        "inner": "inner ring/raceway naming",
-        "outer": "outer ring/raceway naming",
-        "roller": "roller geometry",
-        "cage": "cage geometry or cage constraints",
-        "pocket": "cage pocket representation",
-        "cylinder": "3D cylinder geometry",
-        "solid.mises": "von Mises stress output",
-        "plotgroup3d": "3D stress plot group",
-        "stationary": "stationary study",
-        "model.param().set": "unit-aware parameters",
-    }
-    if "geom().create('geom1',3)" not in compact and 'geom().create("geom1",3)' not in compact:
-        errors.append("Generated code is missing expected 3D geometry creation: geom().create('geom1',3)")
-    roller_features = _count_3d_roller_feature_tags(compact)
-    pocket_features = _count_3d_cage_pocket_feature_tags(compact)
-    if roller_features < VERIFIED_ROLLER_COUNT and not any(token in compact for token in ("roller_12", "cyl_r12", "roller12", "rol12", "rol_11")):
-        errors.append("Generated code is missing expected twelfth roller geometry for full demo scale: roller_12/cyl_r12/rol12/rol_11")
-    if pocket_features < VERIFIED_ROLLER_COUNT and not any(token in compact for token in ("pocket_12", "pocket12", "cage_pocket_12", "pkt12", "pkt_11")):
-        errors.append("Generated code is missing expected twelfth cage pocket representation: pocket_12/pocket12/cage_pocket_12/pkt12/pkt_11")
-    for pattern, label in required_patterns.items():
-        if pattern == "pocket" and pocket_features >= VERIFIED_ROLLER_COUNT:
-            continue
-        if pattern not in compact:
-            errors.append(f"Generated code is missing expected {label}: {pattern}")
-    if roller_features < VERIFIED_ROLLER_COUNT:
-        errors.append(f"3D full-bearing demo must create or reference at least {VERIFIED_ROLLER_COUNT} rollers.")
-    if pocket_features < VERIFIED_ROLLER_COUNT:
-        errors.append(f"3D full-bearing demo must create or reference at least {VERIFIED_ROLLER_COUNT} cage pockets/constraints.")
-    if "cage" in compact and not re.search(r"feature\(['\"]cage['\"]\).*selection\(['\"]input2['\"]\).*cage_pocket_", compact):
-        errors.append("Cage must use Boolean pocket cutouts via cage Difference input2 selections, not only point/constraint markers.")
-    if "cage is omitted" in lowered or "cage geometry is omitted" in lowered:
-        errors.append("Cage must be included in the 3D main demo, not omitted.")
-    blocked_runtime_patterns = ("model.sol(", "study().run", "result().run", ".solve(")
-    if any(pattern in compact for pattern in blocked_runtime_patterns):
-        errors.append("Generated setup code must not solve or run plot/solver nodes; downstream tools own solving.")
-    unsupported_snippets = ("new int", "new string", "string ", "model.output()", "getinfo", "getboundaries", "getndobjects")
-    for pattern in unsupported_snippets:
-        if pattern in lowered:
-            errors.append(f"Generated code uses unsupported execution-wrapper syntax: {pattern}")
-    runtime_risks = _detect_3d_runtime_api_risks(code_for_validation)
-    errors.extend(runtime_risks)
-    broad_selection_patterns = (
-        ".source().all()",
-        ".destination().all()",
-    )
-    broad_selection_hits = [pattern for pattern in broad_selection_patterns if pattern in compact]
-    if broad_selection_hits:
-        message = (
-            "Contact/load/support selections use broad all-boundary placeholders; "
-            "promote to named roller/raceway/load/support selections before production use."
+async def generate_segmented_3d_bearing_code(
+    *,
+    provider: Any,
+    artifact_root: Path,
+    args: argparse.Namespace,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Generate 3D bearing setup code in small manifest-checked segments."""
+    completed_manifests: list[dict[str, Any]] = []
+    segment_results: list[dict[str, Any]] = []
+    repair_history: list[dict[str, Any]] = []
+    existing_tags: set[str] = set()
+    previous_code = ""
+    segment_dir = artifact_root / "segmented_generation"
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    for index, spec in enumerate(SEGMENTED_3D_CODE_SPECS):
+        validation: dict[str, Any] | None = None
+        raw_text = ""
+        code = ""
+        prompt = ""
+        last_error = ""
+        manifest: dict[str, Any] | None = None
+        for segment_attempt in range(args.segment_max_retries):
+            retry_note = (
+                ""
+                if not last_error
+                else "\n\nPREVIOUS_SEGMENT_ATTEMPT_FAILED:\n"
+                f"{last_error}\n"
+                "Regenerate this same segment only. Keep the manifest and code markers exact.\n"
+            )
+            prompt = build_segmented_3d_generation_prompt(
+                spec,
+                completed_manifests=completed_manifests,
+                previous_code_tail=previous_code,
+            ) + retry_note
+            try:
+                response = await asyncio.wait_for(
+                    provider.generate(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a segmented COMSOL code-generation assistant. "
+                                    "Return only the requested manifest and code markers."
+                                ),
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        tools=None,
+                        temperature=0,
+                        max_tokens=args.segment_llm_max_tokens,
+                    ),
+                    timeout=args.segment_timeout_seconds,
+                )
+                raw_text = response.text or ""
+                manifest = extract_segment_manifest(raw_text)
+                code = extract_segment_generated_code(raw_text) or _extract_executable_model_snippet(raw_text) or ""
+                code = normalize_generated_mph_code(code)
+                validation = validate_segmented_3d_segment(
+                    spec,
+                    manifest,
+                    code,
+                    completed_manifests=completed_manifests,
+                    existing_tags=existing_tags,
+                )
+                validation.update({
+                    "stage": "segmented_generation",
+                    "attempt": len(repair_history),
+                    "segment_attempt": segment_attempt,
+                    "segment_id": spec.segment_id,
+                    "llm_usage": response.usage,
+                    "finish_reason": response.finish_reason,
+                    "generated_code_excerpt": _code_excerpt(code),
+                })
+                if validation["success"]:
+                    break
+                last_error = json.dumps(validation.get("errors", []), ensure_ascii=False)
+            except Exception as exc:
+                last_error = (
+                    f"segment request timed out after {args.segment_timeout_seconds}s"
+                    if isinstance(exc, TimeoutError)
+                    else str(exc)
+                )
+                validation = {
+                    "success": False,
+                    "errors": [last_error],
+                    "warnings": [],
+                    "created_tags": [],
+                    "manifest": None,
+                    "code": "",
+                    "stage": "segmented_generation",
+                    "attempt": len(repair_history),
+                    "segment_attempt": segment_attempt,
+                    "segment_id": spec.segment_id,
+                    "generated_code_excerpt": "",
+                }
+            repair_history.append({
+                key: value
+                for key, value in validation.items()
+                if key not in {"code", "manifest"}
+            })
+            if validation["success"]:
+                break
+            await asyncio.sleep(min(2 ** segment_attempt, 8))
+        if validation is None:
+            raise RuntimeError(f"Segmented 3D generation did not run for {spec.segment_id}.")
+        repair_history.append({
+            "stage": "segmented_generation_segment_complete",
+            "attempt": len(repair_history),
+            "segment_id": spec.segment_id,
+            "success": validation["success"],
+            "segment_attempts": validation.get("segment_attempt", 0) + 1,
+        })
+        (segment_dir / f"{index + 1}_{spec.segment_id}.json").write_text(
+            json.dumps(
+                {
+                    "prompt": prompt,
+                    "response": raw_text,
+                    "manifest": manifest,
+                    "validation": {k: v for k, v in validation.items() if k != "code"},
+                    "code": code,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
         )
-        if require_named_selections:
-            errors.append(message)
-        else:
-            warnings.append(message)
-    named_selection_markers = ("selection().create", ".selection('", '.selection("')
-    if require_named_selections and not any(marker in compact for marker in named_selection_markers):
-        errors.append("Production 3D bearing code must create/use named selections for contact, load, support, and cage entities.")
-    if require_named_selections:
-        expected_selection_tokens = (
-            "sel_inner_raceway_contact",
-            "sel_outer_raceway_contact",
-            "sel_outer_support_surface",
-            "sel_inner_load_region",
-            "sel_cage_body",
-        )
-        for token in expected_selection_tokens:
-            if token not in lowered:
-                errors.append(f"Production 3D bearing code is missing named selection: {token}")
-        for index in range(1, VERIFIED_ROLLER_COUNT + 1):
-            if f"sel_roller_{index}_body" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller body selection: sel_roller_{index}_body")
-            if f"sel_roller_{index}_inner_contact" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller inner contact selection: sel_roller_{index}_inner_contact")
-            if f"sel_roller_{index}_outer_contact" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller outer contact selection: sel_roller_{index}_outer_contact")
-            if f"sel_inner_raceway_{index}_contact" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller inner raceway contact patch: sel_inner_raceway_{index}_contact")
-            if f"sel_outer_raceway_{index}_contact" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller outer raceway contact patch: sel_outer_raceway_{index}_contact")
-            if f"probe_roller_{index}_max_mises" not in lowered:
-                errors.append(f"Production 3D bearing code is missing per-roller max-stress probe: probe_roller_{index}_max_mises")
-        if "probe_scope_verified" not in lowered:
-            errors.append("Production 3D bearing code is missing verified selection-scoped per-roller probe evaluation evidence: probe_scope_verified")
-    return {
-        "success": not errors,
-        "errors": errors,
-        "warnings": warnings,
-        "quality_level": "production_candidate" if require_named_selections else "smoke",
-        "requires_named_selections": require_named_selections,
-    }
-
-
-def _count_3d_roller_feature_tags(compact_code: str) -> int:
-    return len(set(re.findall(r"(?:roller_|roller|cyl_r|rol_?)\d+", compact_code)))
-
-
-def _count_3d_cage_pocket_feature_tags(compact_code: str) -> int:
-    return len(set(re.findall(r"(?:cage_pocket_|pocket_|pocket|pkt_?|cpocket_?)\d+", compact_code)))
-
-
-def _detect_3d_runtime_api_risks(java_code: str) -> list[str]:
-    compact = re.sub(r"\s+", "", java_code).lower()
-    errors: list[str] = []
-    risky_patterns = {
-        ".component(\"comp1\").study()": "Use top-level model.study(), not component-scoped study(), for COMSOL/MPh execution.",
-        ".component('comp1').study()": "Use top-level model.study(), not component-scoped study(), for COMSOL/MPh execution.",
-        ".component(\"comp1\").study(": "Use top-level model.study('std1'), not component-scoped study('std1').",
-        ".component('comp1').study(": "Use top-level model.study('std1'), not component-scoped study('std1').",
-        ".component(\"comp1\").result()": "Use top-level model.result(), not component-scoped result(), for result nodes.",
-        ".component('comp1').result()": "Use top-level model.result(), not component-scoped result(), for result nodes.",
-        ".component(\"comp1\").result(": "Use top-level model.result('tag'), not component-scoped result('tag').",
-        ".component('comp1').result(": "Use top-level model.result('tag'), not component-scoped result('tag').",
-        ".selection().set([\"geom1\"])": "Selections cannot target the geometry tag geom1; create named geometric selections or bounded Box selections.",
-        ".selection().set(['geom1'])": "Selections cannot target the geometry tag geom1; create named geometric selections or bounded Box selections.",
-        ".source().set([\"geom1\"])": "Contact pair source cannot target geom1 placeholder; use named roller/raceway boundary selections.",
-        ".source().set(['geom1'])": "Contact pair source cannot target geom1 placeholder; use named roller/raceway boundary selections.",
-        ".destination().set([\"geom1\"])": "Contact pair destination cannot target geom1 placeholder; use named raceway boundary selections.",
-        ".destination().set(['geom1'])": "Contact pair destination cannot target geom1 placeholder; use named raceway boundary selections.",
-        "\"contact_pair\"": "Contact physics feature should set verified pairs list via set('pairs', [pair_tag]).",
-        "'contact_pair'": "Contact physics feature should set verified pairs list via set('pairs', [pair_tag]).",
-    }
-    for pattern, message in risky_patterns.items():
-        if pattern in compact:
-            errors.append(f"Generated code has runtime-risky COMSOL API pattern: {message}")
-    if re.search(r"\.pair\(\)\.create\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]contact['\"]", java_code):
-        errors.append("Generated code creates contact pairs with lower-case 'contact'; use COMSOL Contact pair type.")
-    if re.search(r"\.pair\(\)\.create\(\s*['\"](?:pair1|pair2|pair_inner|pair_outer)['\"]", java_code):
-        errors.append("Generated code has runtime-risky COMSOL API pattern: Contact pair tags should be explicit roller/raceway pairs, not broad pair placeholders.")
-    if re.search(r"\.pair\(\s*['\"](?:pair1|pair2|pair_inner|pair_outer)['\"]", java_code):
-        errors.append("Generated code has runtime-risky COMSOL API pattern: Contact pair tags should be explicit roller/raceway pairs, not broad pair placeholders.")
-    if re.search(r"['\"]FixedConstraint['\"]", java_code):
-        errors.append("Generated code has runtime-risky COMSOL API pattern: Solid Mechanics fixed support should use the verified Fixed feature id, not FixedConstraint.")
-    if re.search(r"feature\(\)\.create\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]Contact['\"]\s*,\s*1\s*\)", java_code):
-        errors.append("Generated code creates Solid Contact physics on entity dimension 1; use boundary dimension 2 for 3D contact.")
-    high_risk_patterns = (
-        (
-            r"['\"](?:CylinderSelection|BoxSelection|ExplicitSelection)['\"]",
-            "Generated code uses unsupported geometry selection feature types CylinderSelection/BoxSelection/ExplicitSelection; use verified component Box selections.",
-        ),
-        (
-            r"\.geom\(\s*['\"]geom1['\"]\s*\)\.feature\(\)\.create\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]Explicit['\"]",
-            "Generated code creates Explicit as a geometry operation; use model.component('comp1').selection().create(tag, 'Box') region selections.",
-        ),
-        (
-            r"\.physics\(\)\.create\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]ContactPair['\"]",
-            "Generated code creates ContactPair as a physics interface; use component pair().create plus Solid Mechanics Contact features.",
-        ),
-        (
-            r"\.physics\(\s*['\"]solid['\"]\s*\)\.create\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]ContactPair['\"]",
-            "Generated code creates ContactPair as a Solid Mechanics feature; use component pair().create plus Contact features.",
-        ),
-        (
-            r"\.set\(\s*['\"]object[s]?['\"]",
-            "Generated code uses Java-style Difference object/objects setters; use selection('input')/selection('input2').set([...]).",
-        ),
-        (
-            r"\.selection\(\)\.setNamed\(",
-            "Generated code uses setNamed selection API; use selection().named(...) or explicit verified selections.",
-        ),
-        (
-            r"\.pair\(\s*['\"][^'\"]+['\"]\s*\)\.set\(\s*['\"](?:source|destination)['\"]",
-            "Generated code sets Contact pair endpoints with set('source'/'destination'); use pair.source().named(...) and pair.destination().named(...).",
-        ),
+        if not validation["success"]:
+            raise Segmented3DGenerationError(
+                f"Segmented 3D generation failed at {spec.segment_id}: {validation['errors']}",
+                repair_history=repair_history,
+            )
+        segment_results.append(validation)
+        completed_manifests.append(validation["manifest"])
+        existing_tags.update(validation["created_tags"])
+        previous_code = f"{previous_code.rstrip()}\n\n{code.strip()}"
+    assembled_code, assembly_manifest = assemble_segmented_3d_code(segment_results)
+    (segment_dir / "assembled_manifest.json").write_text(
+        json.dumps(assembly_manifest, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
     )
-    for pattern, message in high_risk_patterns:
-        if re.search(pattern, java_code):
-            errors.append(f"Generated code has runtime-risky COMSOL API pattern: {message}")
-    syntax_error = _python_syntax_error(java_code)
-    if syntax_error:
-        errors.append(f"Generated code is not Python/MPh executable syntax after normalization: {syntax_error}")
-    return errors
-
+    (segment_dir / "assembled_code.pyfrag").write_text(assembled_code, encoding="utf-8")
+    draft_summary = {
+        "name": "bearing_3d_segmented_code_draft",
+        "success": assembly_manifest["final_quality"]["success"],
+        "response": "",
+        "observed_tools": [],
+        "missing_calls": [],
+        "missing_successes": [],
+        "new_tool_results": [],
+        "segmented_manifest_path": str(segment_dir / "assembled_manifest.json"),
+        "assembled_code_path": str(segment_dir / "assembled_code.pyfrag"),
+        "segment_count": len(segment_results),
+    }
+    repair_history.append({
+        "attempt": len(repair_history),
+        "stage": "segmented_assembly_quality_gate",
+        "strategy": "assemble_manifest_checked_segments_and_run_full_3d_quality_gate",
+        "success": assembly_manifest["final_quality"]["success"],
+        "errors": assembly_manifest["final_quality"].get("errors", []),
+        "warnings": assembly_manifest["final_quality"].get("warnings", []),
+        "assembled_code_excerpt": _code_excerpt(assembled_code),
+    })
+    return assembled_code, draft_summary, repair_history
 
 def apply_bounded_3d_generated_code_repairs(
     java_code: str,
@@ -722,8 +711,11 @@ def apply_runtime_preflight_3d_repairs(
     repaired_code, geometry_changes = _repair_generated_geometry_api_fragments(repaired_code)
     repaired_code, selection_changes = _repair_generated_selection_api_fragments(repaired_code)
     repaired_code, output_changes = _repair_generated_output_api_fragments(repaired_code)
+    repaired_code, set_list_changes = _repair_generated_set_list_literals(repaired_code)
+    repaired_code, parameter_changes = _repair_generated_missing_cross_segment_parameters(repaired_code)
+    repaired_code, material_changes = _repair_generated_material_properties(repaired_code)
 
-    changes = scoped_changes + contact_changes + numerical_changes + geometry_changes + selection_changes + output_changes
+    changes = scoped_changes + contact_changes + numerical_changes + geometry_changes + selection_changes + output_changes + set_list_changes + parameter_changes + material_changes
     if changes:
         quality_after = validate_3d_bearing_code_draft(repaired_code)
         reports.append({
@@ -757,6 +749,103 @@ def _repair_component_scoped_study_and_result(java_code: str) -> tuple[str, list
         repaired, count = re.subn(pattern, replacement, repaired)
         if count:
             changes.append(f"{change}:{count}")
+    return repaired, changes
+
+
+def _repair_generated_set_list_literals(java_code: str) -> tuple[str, list[str]]:
+    """Stringify Python list values passed to COMSOL PropFeature.set overloads."""
+    changes: list[str] = []
+
+    def _stringify_item(item: str) -> str:
+        stripped = item.strip()
+        if not stripped:
+            return stripped
+        if (stripped.startswith("'") and stripped.endswith("'")) or (stripped.startswith('"') and stripped.endswith('"')):
+            return stripped
+        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", stripped):
+            return repr(stripped)
+        if stripped.startswith("str("):
+            return stripped
+        return f"str({stripped})"
+
+    def _replace(match: re.Match[str]) -> str:
+        head, body, tail = match.groups()
+        items = [_stringify_item(part) for part in body.split(",")]
+        return f"{head}[{', '.join(items)}]{tail}"
+
+    repaired, count = re.subn(
+        r"(\.set\(\s*['\"][^'\"]+['\"]\s*,\s*)\[([^\]\n]+)\](\s*\))",
+        _replace,
+        java_code,
+    )
+    if count:
+        changes.append(f"stringify_propfeature_set_list_values:{count}")
+    return repaired, changes
+
+
+def _repair_generated_missing_cross_segment_parameters(java_code: str) -> tuple[str, list[str]]:
+    changes: list[str] = []
+    defaults = {
+        "pitch_dia": "(inner_ring_outer_dia+outer_ring_inner_dia)/2",
+        "pocket_dia": "roller_dia+1[mm]",
+        "radial_load": "3000[N]",
+        "contact_pressure_est": "radial_load/(roller_length*roller_dia*num_rollers)",
+        "max_contact_pressure": "contact_pressure_est",
+        "mesh_bulk_size": "2.4[mm]",
+        "mesh_contact_size": "0.7[mm]",
+    }
+    insertions = []
+    for name, value in defaults.items():
+        required_for_package = name in {"radial_load", "contact_pressure_est", "max_contact_pressure"}
+        if (required_for_package or name in java_code) and f"param().set('{name}'" not in java_code and f'param().set("{name}"' not in java_code:
+            insertions.append(f"model.param().set('{name}', '{value}')")
+            changes.append(f"add_missing_cross_segment_parameter_{name}")
+    if not insertions:
+        return java_code, changes
+    lines = java_code.splitlines()
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if "model.param().set(" in line:
+            insert_at = index + 1
+        elif insert_at and line.strip() and not line.lstrip().startswith("#"):
+            break
+    repaired_lines = lines[:insert_at] + insertions + lines[insert_at:]
+    return "\n".join(repaired_lines), changes
+
+
+def _repair_generated_material_properties(java_code: str) -> tuple[str, list[str]]:
+    repaired = java_code
+    changes: list[str] = []
+    repaired, count = re.subn(
+        r"^.*model\.(?:study|result)\([^)]*\)\.run\(\)\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_setup_stage_study_or_result_run:{count}")
+    repaired, count = re.subn(
+        r"^.*model\.result\(\)\.numerical\([^)]*\)\.run\(\)\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_setup_stage_numerical_run:{count}")
+    if "material('mat_steel')" in repaired and "youngsmodulus" not in repaired.lower():
+        material_patch = "\n".join([
+            "model.component('comp1').material('mat_steel').propertyGroup('def').set('youngsmodulus', '210[GPa]')",
+            "model.component('comp1').material('mat_steel').propertyGroup('def').set('poissonsratio', '0.30')",
+            "model.component('comp1').material('mat_steel').propertyGroup('def').set('density', '7850[kg/m^3]')",
+        ])
+        lines = repaired.splitlines()
+        insert_at = 0
+        for index, line in enumerate(lines):
+            if "material('mat_steel')" in line:
+                insert_at = index + 1
+        lines = lines[:insert_at] + material_patch.splitlines() + lines[insert_at:]
+        repaired = "\n".join(lines)
+        changes.append("add_missing_mat_steel_linear_elastic_properties")
     return repaired, changes
 
 
@@ -813,6 +902,20 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
     repaired, count = re.subn(r"['\"]FixedConstraint['\"]", "'Fixed'", repaired)
     if count:
         changes.append(f"fixedconstraint_to_fixed:{count}")
+    repaired, count = re.subn(
+        r"^.*\.physics\(\s*['\"]solid['\"]\s*\)\.prop\(\s*['\"]d['\"]\s*\)\.set\([^\n]*\)\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_invalid_solid_prop_d_set:{count}")
+    repaired, count = re.subn(r"\.coupling\(\)", ".cpl()", repaired)
+    if count:
+        changes.append(f"component_coupling_create_to_cpl_create:{count}")
+    repaired, count = re.subn(r"\.coupling\(([^)]*)\)", r".cpl(\1)", repaired)
+    if count:
+        changes.append(f"component_coupling_tag_to_cpl_tag:{count}")
     repaired, count = re.subn(
         r"\.set\((['\"])contact_pair\1\s*,\s*(['\"])([^'\"]+)\2\)",
         r".set('pairs', ['\3'])",
@@ -893,6 +996,35 @@ def _repair_generated_geometry_api_fragments(java_code: str) -> tuple[str, list[
 def _repair_generated_selection_api_fragments(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
+    repaired, count = re.subn(
+        r"(\.selection\([^)]*\)\.set\(\s*['\"]entitydim['\"]\s*,\s*)([123])(\s*\))",
+        r"\1'\2'\3",
+        repaired,
+    )
+    if count:
+        changes.append(f"selection_entitydim_int_to_string:{count}")
+    repaired, count = re.subn(
+        r"(\.selection\([^)]*\)\.set\(\s*['\"]condition['\"]\s*,\s*)['\"]intersect['\"](\s*\))",
+        r"\1'intersects'\2",
+        repaired,
+    )
+    if count:
+        changes.append(f"selection_condition_intersect_to_intersects:{count}")
+    repaired, count = re.subn(
+        r"(\.selection\([^)]*\)\.set\(\s*['\"](?:xmin|xmax|ymin|ymax|zmin|zmax)['\"]\s*,\s*)([-+]?\d+(?:\.\d+)?)(\s*\))",
+        r"\1'\2'\3",
+        repaired,
+    )
+    if count:
+        changes.append(f"selection_numeric_bounds_to_string:{count}")
+    repaired, count = re.subn(
+        r"^.*\.selection\([^)]*\)\.set\(\s*['\"]include['\"]\s*,\s*(?:True|False|true|false)\s*\)\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_unknown_selection_include_property:{count}")
     repaired, count = re.subn(
         r"(?P<indent>^[ \t]*)model\.component\((?P<comp>['\"]comp1['\"])\)\.geom\((?P<geom>['\"]geom1['\"])\)\.selection\(\)",
         lambda match: f"{match.group('indent')}model.component({match.group('comp')}).selection()",
@@ -1173,33 +1305,124 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
             on_tool_call=lambda name, call_args: tool_events.append((name, call_args)),
             archive_store=archive_store,
         )
-        draft_prompt = build_3d_bearing_code_generation_prompt(archive_path=str(archive_path))
-        draft_summary = await _run_prompt(agent, draft_prompt, tool_events)
-        generated_code = extract_generated_code(draft_summary["response"]) or ""
-        normalized_code = normalize_generated_mph_code(generated_code)
-        repair_history = [{
-            "attempt": 0,
-            "stage": "draft",
-            "strategy": "llm_generated_3d_full_bearing_code",
-            "success": bool(generated_code),
-            "generated_code_excerpt": _code_excerpt(generated_code),
-        }]
-        if not generated_code:
-            print("Could not extract generated 3D bearing code.")
-            print(draft_summary["response"])
+        try:
+            if args.segmented_code_path:
+                code_path = Path(args.segmented_code_path)
+                generated_code = code_path.read_text(encoding="utf-8")
+                manifest_path = code_path.with_name("assembled_manifest.json")
+                manifest = {}
+                if manifest_path.exists():
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                draft_summary = {
+                    "name": "bearing_3d_segmented_code_draft_reused",
+                    "success": bool(generated_code),
+                    "response": "",
+                    "observed_tools": [],
+                    "missing_calls": [],
+                    "missing_successes": [],
+                    "new_tool_results": [],
+                    "segmented_manifest_path": str(manifest_path) if manifest_path.exists() else None,
+                    "assembled_code_path": str(code_path),
+                    "segment_count": manifest.get("segment_count"),
+                }
+                repair_history = [{
+                    "attempt": 0,
+                    "stage": "segmented_generation_reuse",
+                    "strategy": "reuse_manifest_checked_segmented_assembled_code",
+                    "success": True,
+                    "assembled_code_path": str(code_path),
+                    "segmented_manifest_path": str(manifest_path) if manifest_path.exists() else None,
+                    "final_quality": manifest.get("final_quality", {}),
+                    "generated_code_excerpt": _code_excerpt(generated_code),
+                }]
+            elif args.segmented_generation:
+                generated_code, draft_summary, repair_history = await generate_segmented_3d_bearing_code(
+                    provider=provider,
+                    artifact_root=artifact_root,
+                    args=args,
+                )
+            else:
+                draft_prompt = build_3d_bearing_code_generation_prompt(archive_path=str(archive_path))
+                draft_summary = await _run_prompt(agent, draft_prompt, tool_events)
+                generated_code = extract_generated_code(draft_summary["response"]) or ""
+                normalized_code = normalize_generated_mph_code(generated_code)
+                repair_history = [{
+                    "attempt": 0,
+                    "stage": "draft",
+                    "strategy": "llm_generated_3d_full_bearing_code",
+                    "success": bool(generated_code),
+                    "generated_code_excerpt": _code_excerpt(generated_code),
+                }]
+                if not generated_code:
+                    print("Could not extract generated 3D bearing code.")
+                    print(draft_summary["response"])
+                    return 1
+                if normalized_code != generated_code:
+                    repair_history.append({
+                        "attempt": len(repair_history),
+                        "stage": "offline_syntax_normalization",
+                        "strategy": "normalize_java_style_literals_for_python_mph_execution",
+                        "success": True,
+                        "failed_code_excerpt": _code_excerpt(generated_code),
+                        "repaired_code_excerpt": _code_excerpt(normalized_code),
+                    })
+                    generated_code = normalized_code
+        except Exception as exc:
+            segment_history = (
+                exc.repair_history
+                if isinstance(exc, Segmented3DGenerationError)
+                else []
+            )
+            repair_history = [*segment_history, {
+                "attempt": 0,
+                "stage": "segmented_generation_failure" if args.segmented_generation else "llm_generation_failure",
+                "strategy": (
+                    "record_segmented_generation_failure_before_generated_code_fallback"
+                    if args.segmented_generation
+                    else "record_api_failure_before_generated_code_fallback"
+                ),
+                "success": False,
+                "error": str(exc),
+            }]
+            draft_quality = {
+                "success": False,
+                "quality_level": "generation_failed",
+                "errors": [str(exc)],
+                "warnings": [],
+            }
+            failure_payload = {
+                "success": False,
+                "workflow": "bearing_3d_segmented_free_generation" if args.segmented_generation else "bearing_3d_free_generation",
+                "draft_quality": draft_quality,
+                "repair_history": repair_history,
+                "execution_context": _build_3d_execution_context(
+                    workflow="bearing_3d_segmented_free_generation" if args.segmented_generation else "bearing_3d_free_generation",
+                    draft_quality=draft_quality,
+                    repair_history=repair_history,
+                    require_free_generated_code=args.require_free_generated_code,
+                    allow_verified_fallback=not args.require_free_generated_code,
+                ),
+                "free_generated_code_required": args.require_free_generated_code,
+                "verified_fallback_skipped": args.require_free_generated_code,
+                "deterministic_runtime_fallback": None,
+            }
+            failure_path = artifact_root / (
+                "segmented_generation_failure.json"
+                if args.segmented_generation
+                else "strict_generation_failure.json"
+            )
+            failure_path.write_text(
+                json.dumps(failure_payload, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            print(f"3D free-generation failed before code extraction; failure artifact: {failure_path}")
+            print(json.dumps(failure_payload, ensure_ascii=False, indent=2, default=str))
             return 1
-        if normalized_code != generated_code:
-            repair_history.append({
-                "attempt": len(repair_history),
-                "stage": "offline_syntax_normalization",
-                "strategy": "normalize_java_style_literals_for_python_mph_execution",
-                "success": True,
-                "failed_code_excerpt": _code_excerpt(generated_code),
-                "repaired_code_excerpt": _code_excerpt(normalized_code),
-            })
-            generated_code = normalized_code
 
-    draft_quality = validate_3d_bearing_code_draft(generated_code)
+    draft_quality = validate_3d_bearing_code_draft(
+        generated_code,
+        require_named_selections=args.segmented_generation,
+    )
     if not draft_quality["success"]:
         generated_code, preflight_repair_history, draft_quality = apply_runtime_preflight_3d_repairs(
             generated_code,
@@ -1208,6 +1431,8 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         for report in preflight_repair_history:
             report["attempt"] = len(repair_history)
             repair_history.append(report)
+        if args.segmented_generation:
+            draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
     if not draft_quality["success"]:
         generated_code, bounded_repair_history, draft_quality = apply_bounded_3d_generated_code_repairs(
             generated_code,
@@ -1217,7 +1442,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         for report in bounded_repair_history:
             report["attempt"] = len(repair_history)
             repair_history.append(report)
-    if not draft_quality["success"] and not args.use_verified_fixture:
+    if not draft_quality["success"] and not args.use_verified_fixture and not args.segmented_generation:
         llm_repaired_code, llm_repair_report = await repair_free_generated_3d_code_with_llm(
             provider=provider,
             original_code=generated_code,
@@ -1252,6 +1477,8 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
     for report in preflight_repair_history:
         report["attempt"] = len(repair_history)
         repair_history.append(report)
+    if args.segmented_generation:
+        draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
     if not draft_quality["success"]:
         repair_history.append({
             "attempt": len(repair_history),
@@ -1265,13 +1492,34 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         })
         if args.require_free_generated_code:
             if args.skip_comsol:
-                print(json.dumps({
+                failure_payload = {
+                    "success": False,
+                    "workflow": "bearing_3d_segmented_free_generation" if args.segmented_generation else "bearing_3d_free_generation",
                     "draft_summary": _compact_summaries([draft_summary]) if draft_summary else [],
                     "draft_quality": draft_quality,
                     "repair_history": repair_history,
                     "free_generated_code_required": True,
                     "verified_fallback_skipped": True,
-                }, ensure_ascii=False, indent=2, default=str))
+                    "execution_context": _build_3d_execution_context(
+                        workflow="bearing_3d_segmented_free_generation" if args.segmented_generation else "bearing_3d_free_generation",
+                        draft_quality=draft_quality,
+                        repair_history=repair_history,
+                        require_free_generated_code=True,
+                        allow_verified_fallback=False,
+                        draft_summary=draft_summary,
+                    ),
+                    "deterministic_runtime_fallback": None,
+                }
+                failure_path = artifact_root / (
+                    "segmented_generation_failure.json"
+                    if args.segmented_generation
+                    else "strict_generation_failure.json"
+                )
+                failure_path.write_text(
+                    json.dumps(failure_payload, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                print(json.dumps(failure_payload, ensure_ascii=False, indent=2, default=str))
                 return 1
             print("3D free-generated code failed the quality gate; verified fallback is disabled.")
             print(json.dumps(draft_quality, ensure_ascii=False, indent=2))
@@ -1297,6 +1545,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         tool_events=tool_events,
         generated_code=generated_code,
         draft_summary=draft_summary,
+        draft_quality=draft_quality,
         repair_history=repair_history,
     )
 
@@ -1308,6 +1557,7 @@ async def run_agent_execution_smoke(
     tool_events: list[tuple[str, dict[str, Any]]],
     generated_code: str,
     draft_summary: dict[str, Any] | None,
+    draft_quality: dict[str, Any],
     repair_history: list[dict[str, Any]],
 ) -> int:
     """Run the 3D bearing setup through the Agent tool chain."""
@@ -1327,6 +1577,18 @@ async def run_agent_execution_smoke(
             version=config.comsol.version,
             executable_path=config.comsol.executable_path,
         )
+        execution_context = _build_3d_execution_context(
+            workflow=(
+                "bearing_3d_segmented_generated_code_agent_execution"
+                if args.segmented_generation
+                else "bearing_3d_generated_code_agent_execution"
+            ),
+            draft_quality=draft_quality,
+            repair_history=repair_history,
+            require_free_generated_code=args.require_free_generated_code,
+            allow_verified_fallback=not args.require_free_generated_code,
+            draft_summary=draft_summary,
+        )
         execute_prompt = build_3d_bearing_execution_prompt(
             java_code=generated_code,
             archive_path=str(archive_path),
@@ -1335,6 +1597,7 @@ async def run_agent_execution_smoke(
             model_name=args.model_name,
             template_name=args.template_name,
             package_dir=str(package_dir),
+            execution_context=execution_context,
             allow_verified_fallback=not args.require_free_generated_code,
         )
         execute_summary = await _run_prompt(agent, execute_prompt, tool_events)
@@ -1436,6 +1699,13 @@ def _run_verified_runtime_fallback_after_agent_failure(
         "repaired_code_excerpt": _code_excerpt(VERIFIED_3D_FULL_BEARING_CODE),
     })
     close_existing = comsol_close_model(args.model_name, save=False)
+    execution_context = _build_3d_execution_context(
+        workflow="bearing_3d_runtime_verified_fallback",
+        draft_quality={"success": True, "quality_level": "verified_fallback"},
+        repair_history=repair_history,
+        require_free_generated_code=False,
+        allow_verified_fallback=True,
+    )
     run = simulation_run_template(
         name=args.template_name,
         java_code=VERIFIED_3D_FULL_BEARING_CODE,
@@ -1446,6 +1716,7 @@ def _run_verified_runtime_fallback_after_agent_failure(
             "radial_load": "3000[N]",
             "fallback_reason": "agent_runtime_repair_failed",
         },
+        execution_context=execution_context,
         create_model_name=args.model_name,
         close_model=False,
         artifact_dir=str(artifact_dir),
@@ -1464,6 +1735,7 @@ def _run_verified_runtime_fallback_after_agent_failure(
     solve = comsol_solve(model_name)
     stress = comsol_evaluate(model_name, "solid.mises") if solve.get("success") else {}
     pressure = comsol_evaluate(model_name, "contact_pressure_est") if solve.get("success") else {}
+    displacement = comsol_evaluate(model_name, "solid.disp") if solve.get("success") else {}
     per_roller_probe_results = _evaluate_per_roller_probe_results(model_name) if solve.get("success") else []
     plot_path = artifact_root / "bearing_3d_von_mises.png"
     plot = comsol_plot(
@@ -1499,7 +1771,11 @@ def _run_verified_runtime_fallback_after_agent_failure(
             )
     summary.update({
         "solve": _compact_runtime_result(solve),
-        "evaluations": [_compact_runtime_result(stress), _compact_runtime_result(pressure)],
+        "evaluations": [
+            _compact_runtime_result(stress),
+            _compact_runtime_result(pressure),
+            _compact_runtime_result(displacement),
+        ],
         "plot": _compact_runtime_result(plot),
         "stress_projection_plot": _compact_runtime_result(stress_projection_plot),
         "package": package,
@@ -1534,6 +1810,10 @@ def run_direct_fixture_smoke(
         "repaired_code_source": "VERIFIED_3D_FULL_BEARING_CODE",
         "repaired_code_excerpt": _code_excerpt(VERIFIED_3D_FULL_BEARING_CODE),
     }]
+    is_segmented_generated_direct = any(
+        str(item.get("stage", "")).startswith("segmented_generation")
+        for item in repair_history
+    )
     summary: dict[str, Any] = {
         "fixture_quality": validate_3d_bearing_code_draft(generated_code),
         "repair_history": repair_history,
@@ -1544,6 +1824,17 @@ def run_direct_fixture_smoke(
             version=config.comsol.version,
             executable_path=config.comsol.executable_path,
         )
+        execution_context = _build_3d_execution_context(
+            workflow=(
+                "bearing_3d_direct_segmented_generated"
+                if is_segmented_generated_direct
+                else "bearing_3d_direct_fixture"
+            ),
+            draft_quality=summary["fixture_quality"],
+            repair_history=repair_history,
+            require_free_generated_code=is_segmented_generated_direct,
+            allow_verified_fallback=not is_segmented_generated_direct,
+        )
         run = simulation_run_template(
             name=args.template_name,
             java_code=generated_code,
@@ -1553,10 +1844,15 @@ def run_direct_fixture_smoke(
                 "cage_included": "true",
                 "radial_load": "3000[N]",
             },
+            execution_context=execution_context,
             create_model_name=args.model_name,
             close_model=False,
             artifact_dir=str(artifact_dir),
-            artifact_name="direct_3d_bearing_fixture",
+            artifact_name=(
+                "direct_3d_bearing_segmented_generated"
+                if is_segmented_generated_direct
+                else "direct_3d_bearing_fixture"
+            ),
             archive_path=str(archive_path),
         )
         summary["template_run"] = _compact_runtime_result(run)
@@ -1583,8 +1879,24 @@ def run_direct_fixture_smoke(
             })
             print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
             return 1
+        selection_probe = simulation_probe_3d_selection_binding(
+            model_name=model_name,
+            java_code=generated_code,
+        )
+        summary["selection_binding_probe"] = _compact_runtime_result(selection_probe)
+        selection_binding_audit = selection_probe.get("selection_binding_audit")
+        if selection_probe.get("success") is False:
+            repair_history.append({
+                "attempt": 1,
+                "stage": "simulation_probe_3d_selection_binding",
+                "strategy": "record_runtime_selection_binding_probe_for_next_agent_repair",
+                "success": False,
+                "error": selection_probe.get("error"),
+                "audit_success": (selection_binding_audit or {}).get("success"),
+            })
         stress = comsol_evaluate(model_name, "solid.mises")
         pressure = comsol_evaluate(model_name, "contact_pressure_est")
+        displacement = comsol_evaluate(model_name, "solid.disp")
         per_roller_probe_results = _evaluate_per_roller_probe_results(model_name)
         plot_path = artifact_root / "bearing_3d_von_mises.png"
         plot = comsol_plot(
@@ -1594,7 +1906,11 @@ def run_direct_fixture_smoke(
             filename=str(plot_path),
         )
         stress_projection_plot = _render_stress_projection_from_open_model(model_name, plot_path)
-        summary["evaluations"] = [_compact_runtime_result(stress), _compact_runtime_result(pressure)]
+        summary["evaluations"] = [
+            _compact_runtime_result(stress),
+            _compact_runtime_result(pressure),
+            _compact_runtime_result(displacement),
+        ]
         summary["per_roller_probe_results"] = per_roller_probe_results
         summary["plot"] = _compact_runtime_result(plot)
         summary["stress_projection_plot"] = _compact_runtime_result(stress_projection_plot)
@@ -1617,6 +1933,8 @@ def run_direct_fixture_smoke(
                 cage_model=f"cage ring with {VERIFIED_ROLLER_COUNT} real Boolean pocket cutouts",
                 per_roller_probe_results=per_roller_probe_results,
                 stress_plot_evidence=stress_projection_plot,
+                selection_binding_audit=selection_binding_audit,
+                solve_result=solve,
             )
             summary["artifact_answer"] = simulation_answer_artifact_question(
                 "最大应力是多少，最大应力位置在哪里，哪个滚子附近风险最高，保持架是否建模，滚子和外圈有没有接触？",
@@ -2199,6 +2517,8 @@ def _inject_3d_package_metadata(
     cage_model: str,
     per_roller_probe_results: list[dict[str, Any]] | None = None,
     stress_plot_evidence: dict[str, Any] | None = None,
+    selection_binding_audit: dict[str, Any] | None = None,
+    solve_result: dict[str, Any] | None = None,
 ) -> None:
     """Add 3D-specific evidence to package JSON/Markdown after generic export."""
     json_path = package.get("json_path")
@@ -2226,6 +2546,30 @@ def _inject_3d_package_metadata(
             )
             summary["per_roller_probe_results"] = per_roller_probe_results or []
             summary["stress_plot_evidence"] = stress_plot_evidence or {}
+            summary["selection_binding_contract"] = selection_binding_contract()
+            summary["selection_binding_audit"] = selection_binding_audit or audit_3d_selection_binding(
+                java_code=VERIFIED_3D_FULL_BEARING_CODE,
+            )
+            summary["physical_result_audit"] = audit_3d_physical_results(
+                evaluations=summary.get("evaluations") or [],
+                metrics=metrics,
+                require_displacement=True,
+                require_contact_pressure=True,
+            )
+            summary["contact_convergence_report"] = build_contact_convergence_report(
+                solve_result=solve_result,
+                metrics={
+                    **metrics,
+                    "contact_pressure_estimate_pa": (
+                        metrics.get("contact_pressure_guess")
+                        or metrics.get("max_contact_pressure")
+                        or metrics.get("contact_pressure_est")
+                    ),
+                },
+                selection_binding_audit=summary["selection_binding_audit"],
+                physical_result_audit=summary["physical_result_audit"],
+                contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+            )
             if stress_plot_evidence and stress_plot_evidence.get("success"):
                 summary["stress_plot_method"] = stress_plot_evidence.get("method")
                 stress_plot_path = Path(str(stress_plot_evidence.get("filepath", "")))
@@ -2252,8 +2596,11 @@ def _inject_3d_package_metadata(
             summary["mean_von_mises_pa"] = metrics.get("von_mises_mean")
             summary["min_von_mises_pa"] = metrics.get("von_mises_min")
             summary["contact_pressure_estimate_pa"] = (
-                metrics.get("contact_pressure_guess") or metrics.get("contact_pressure_expression")
+                metrics.get("contact_pressure_guess")
+                or metrics.get("max_contact_pressure")
+                or metrics.get("contact_pressure_est")
             )
+            summary["max_displacement_m"] = metrics.get("displacement_max")
             summary["assumptions"] = [
                 f"3D full cylindrical-roller bearing smoke with inner ring, outer ring, {VERIFIED_ROLLER_COUNT} rollers, and Boolean-cut cage geometry.",
                 f"Cage is included as a ring with {VERIFIED_ROLLER_COUNT} real cylindrical Boolean pocket cutouts.",
@@ -2280,6 +2627,31 @@ def _inject_3d_package_metadata(
     if markdown_path:
         path = Path(markdown_path)
         if path.exists():
+            report_text = path.read_text(encoding="utf-8")
+            if summary is not None:
+                assumptions_block = "\n".join(
+                    [
+                        "## Assumptions",
+                        "",
+                        *[f"- {item}" for item in summary.get("assumptions", [])],
+                        "",
+                    ]
+                )
+                report_text = _replace_markdown_section(
+                    report_text,
+                    "## Assumptions",
+                    "## Reuse Notes",
+                    assumptions_block,
+                )
+            execution_audit = (
+                ((summary or {}).get("artifacts") or {}).get("execution_audit")
+                or ((summary or {}).get("template_artifact") or {}).get("execution_audit")
+                or (((summary or {}).get("template_artifact") or {}).get("metadata") or {})
+                or ((summary or {}).get("template_execution") or {}).get("execution_audit")
+                or (((summary or {}).get("template_execution") or {}).get("metadata") or {})
+                or (summary or {}).get("execution_audit")
+                or {}
+            )
             extra = [
                 "",
                 "## 3D Full-Bearing Notes",
@@ -2289,8 +2661,15 @@ def _inject_3d_package_metadata(
                 f"- Highest-risk roller estimate: `{roller_risk[0]['roller']}`.",
                 "- Selection status: named Box region, roller body, and contact-surface selections are present.",
                 "- Probe scope status: component Maximum coupling operators are bound to per-roller body selections.",
+                f"- Selection binding audit: `{((summary or {}).get('selection_binding_audit') or {}).get('success')}`.",
+                f"- Physical result audit: `{((summary or {}).get('physical_result_audit') or {}).get('success')}`.",
+                f"- Contact convergence report: `{((summary or {}).get('contact_convergence_report') or {}).get('quality_level')}`.",
                 f"- Stress plot method: `{(stress_plot_evidence or {}).get('method', 'comsol_plot')}`.",
                 f"- Repair history: `{json.dumps(repair_history, ensure_ascii=False, default=str)}`",
+                f"- Execution workflow: `{execution_audit.get('workflow')}`",
+                f"- Quality gate: `{execution_audit.get('quality_gate_success')}` / `{execution_audit.get('quality_gate_level')}`",
+                f"- Repair history count: `{execution_audit.get('repair_history_count')}`",
+                f"- Require free-generated code: `{execution_audit.get('require_free_generated_code')}`",
                 "- Remaining production task: upgrade approximate Box contact regions to exact geometry-entity selections and perform contact convergence checks.",
                 "",
                 "## Artifact Q&A Smoke",
@@ -2304,7 +2683,7 @@ def _inject_3d_package_metadata(
                         item.get("answer") or "",
                         "",
                     ])
-            path.write_text(path.read_text(encoding="utf-8") + "\n".join(extra), encoding="utf-8")
+            path.write_text(report_text + "\n".join(extra), encoding="utf-8")
             html_path = path.with_suffix(".html")
             html_path.write_text(_render_3d_package_html_report(path.read_text(encoding="utf-8")), encoding="utf-8")
             package["html_path"] = str(html_path)
@@ -2314,6 +2693,15 @@ def _inject_3d_package_metadata(
                     "html_path": str(html_path),
                 }
                 Path(json_path).write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
+def _replace_markdown_section(text: str, start_heading: str, end_heading: str, replacement: str) -> str:
+    """Replace a top-level Markdown section while preserving the following section."""
+    start = text.find(start_heading)
+    end = text.find(end_heading, start + len(start_heading)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return text
+    return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
 
 
 def _default_3d_artifact_qa(summary: dict[str, Any]) -> list[dict[str, str]]:
@@ -2386,6 +2774,30 @@ def _render_3d_package_html_report(markdown: str) -> str:
     ])
 
 
+# Re-export the project-level reusable 3D bearing contracts for compatibility
+# with older tests and scripts that imported these names from the demo module.
+VERIFIED_ROLLER_COUNT = bearing_3d_contracts.VERIFIED_ROLLER_COUNT
+Segmented3DCodeSpec = bearing_3d_contracts.Segmented3DCodeSpec
+SEGMENT_MARKER_MANIFEST_START = bearing_3d_contracts.SEGMENT_MARKER_MANIFEST_START
+SEGMENT_MARKER_MANIFEST_END = bearing_3d_contracts.SEGMENT_MARKER_MANIFEST_END
+SEGMENTED_3D_CODE_SPECS = bearing_3d_contracts.SEGMENTED_3D_CODE_SPECS
+build_segmented_3d_generation_prompt = bearing_3d_contracts.build_segmented_3d_generation_prompt
+extract_generated_code = bearing_3d_contracts.extract_generated_code
+extract_segment_manifest = bearing_3d_contracts.extract_segment_manifest
+extract_segment_generated_code = bearing_3d_contracts.extract_segment_generated_code
+normalize_generated_mph_code = bearing_3d_contracts.normalize_generated_mph_code
+validate_segmented_3d_segment = bearing_3d_contracts.validate_segmented_3d_segment
+assemble_segmented_3d_code = bearing_3d_contracts.assemble_segmented_3d_code
+validate_3d_bearing_code_draft = bearing_3d_contracts.validate_3d_bearing_code_draft
+selection_binding_contract = bearing_3d_contracts.selection_binding_contract
+audit_3d_selection_binding = bearing_3d_contracts.audit_3d_selection_binding
+audit_3d_physical_results = bearing_3d_contracts.audit_3d_physical_results
+build_contact_convergence_report = bearing_3d_contracts.build_contact_convergence_report
+_build_3d_execution_context = bearing_3d_contracts.build_3d_execution_context
+_selection_plan = bearing_3d_contracts.selection_plan
+_default_3d_artifact_qa = bearing_3d_contracts.default_3d_artifact_qa
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a generated 3D full roller bearing demo.")
     parser.add_argument("--cores", type=int, default=1)
@@ -2396,6 +2808,34 @@ def main() -> None:
     parser.add_argument("--max-tool-iterations", type=int, default=36)
     parser.add_argument("--llm-max-tokens", type=int, default=16000)
     parser.add_argument("--llm-repair-max-tokens", type=int, default=20000)
+    parser.add_argument(
+        "--segmented-generation",
+        action="store_true",
+        help="Generate the 3D bearing setup in manifest-checked DeepSeek segments before local assembly.",
+    )
+    parser.add_argument(
+        "--segment-llm-max-tokens",
+        type=int,
+        default=5000,
+        help="Maximum tokens for each segmented generation call.",
+    )
+    parser.add_argument(
+        "--segment-max-retries",
+        type=int,
+        default=3,
+        help="Maximum generation/validation retries for each segmented generation call.",
+    )
+    parser.add_argument(
+        "--segment-timeout-seconds",
+        type=float,
+        default=90.0,
+        help="Wall-clock timeout for each segmented generation call before retrying that segment.",
+    )
+    parser.add_argument(
+        "--segmented-code-path",
+        default="",
+        help="Reuse a manifest-assembled segmented code artifact instead of calling the LLM again.",
+    )
     parser.add_argument(
         "--require-free-generated-code",
         action="store_true",
@@ -2420,10 +2860,60 @@ def main() -> None:
             package_dir=str(Path(args.artifact_root) / "result_packages"),
             allow_verified_fallback=not args.require_free_generated_code,
         )
-        print(json.dumps([draft.to_dict(), execute.to_dict()], ensure_ascii=False, indent=2))
+        payload: list[dict[str, Any]] = [draft.to_dict(), execute.to_dict()]
+        if args.segmented_generation:
+            prompts = []
+            manifests: list[dict[str, Any]] = []
+            for spec in SEGMENTED_3D_CODE_SPECS:
+                prompts.append({
+                    "segment_id": spec.segment_id,
+                    "title": spec.title,
+                    "prompt": build_segmented_3d_generation_prompt(
+                        spec,
+                        completed_manifests=manifests,
+                        previous_code_tail="",
+                    ),
+                })
+                manifests.append({
+                    "segment_id": spec.segment_id,
+                    "depends_on": list(spec.depends_on),
+                    "creates": list(spec.required_creates),
+                })
+            payload.append({
+                "name": "bearing_3d_segmented_code_draft",
+                "segments": prompts,
+            })
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.direct_fixture_run:
+        if args.segmented_code_path:
+            code_path = Path(args.segmented_code_path)
+            generated_code = code_path.read_text(encoding="utf-8")
+            draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
+            generated_code, preflight_history, draft_quality = apply_runtime_preflight_3d_repairs(
+                generated_code,
+                draft_quality,
+            )
+            repair_history = [{
+                "attempt": 0,
+                "stage": "segmented_generation_reuse",
+                "strategy": "direct_reuse_manifest_checked_segmented_assembled_code",
+                "success": True,
+                "assembled_code_path": str(code_path),
+                "generated_code_excerpt": _code_excerpt(generated_code),
+            }]
+            for report in preflight_history:
+                report["attempt"] = len(repair_history)
+                repair_history.append(report)
+            if not draft_quality["success"]:
+                print(json.dumps({
+                    "success": False,
+                    "draft_quality": draft_quality,
+                    "repair_history": repair_history,
+                }, ensure_ascii=False, indent=2, default=str))
+                raise SystemExit(1)
+            raise SystemExit(run_direct_fixture_smoke(args, generated_code=generated_code, repair_history=repair_history))
         raise SystemExit(run_direct_fixture_smoke(args))
 
     raise SystemExit(asyncio.run(run_3d_bearing_demo(args)))
