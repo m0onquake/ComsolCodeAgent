@@ -15,6 +15,12 @@ from comsol_agent.memory.retrieval import (
     build_memory_context_message,
     retrieve_memories,
 )
+from comsol_agent.memory.requirements import (
+    ModelingRequest,
+    RequirementSlot,
+    RequirementState,
+    extract_requirement_updates,
+)
 from comsol_agent.memory.session_store import SessionStore
 from comsol_agent.memory.session_timeline import build_session_timeline, summarize_timeline
 
@@ -23,7 +29,10 @@ __all__ = [
     "ArchiveSession",
     "ArchiveStore",
     "CompactionResult",
+    "ModelingRequest",
     "RetrievedMemory",
+    "RequirementSlot",
+    "RequirementState",
     "SessionStore",
     "SimulationArtifact",
     "SimulationTemplate",
@@ -31,6 +40,7 @@ __all__ = [
     "build_session_timeline",
     "compact_messages",
     "cleanup_missing_artifact_indexes",
+    "extract_requirement_updates",
     "export_archive_bundle",
     "retrieve_memories",
     "summarize_timeline",

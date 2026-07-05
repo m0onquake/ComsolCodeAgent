@@ -24,6 +24,7 @@ from comsol_agent.llm.base import LLMProvider, LLMResponse, ToolCall, ToolResult
 from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.memory.compaction import compact_messages
 from comsol_agent.memory.retrieval import build_memory_context_message, retrieve_memories
+from comsol_agent.memory.requirements import RequirementState
 from comsol_agent.memory.session_store import SessionStore
 from comsol_agent.repair.analyzer import build_diagnosis_prompt, suggest_diagnosis
 from comsol_agent.repair.detector import detect_tool_error, format_repair_notice
@@ -70,6 +71,7 @@ class AgentState:
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     turns: list[ConversationTurn] = field(default_factory=list)
+    requirement_state: RequirementState = field(default_factory=RequirementState)
     repair_reports: list[dict[str, Any]] = field(default_factory=list)
     total_tokens_used: int = 0
     tool_iterations_this_turn: int = 0
@@ -151,6 +153,7 @@ class AgentLoop:
         """
         # Add user message
         self._append_message({"role": "user", "content": user_input})
+        self.state.requirement_state.observe_user_message(user_input)
         self._inject_retrieved_memory(user_input)
         self._inject_skill_context(user_input)
         self.state.tool_iterations_this_turn = 0
@@ -258,6 +261,7 @@ class AgentLoop:
 
     async def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool call and return the result."""
+        tool_call = self._prepare_tool_call(tool_call)
         handler = get_tool_handler(tool_call.name)
 
         if handler is None:
@@ -300,6 +304,30 @@ class AgentLoop:
                 output=json.dumps({"success": False, "error": str(e)}),
                 is_error=True,
             )
+
+    def _prepare_tool_call(self, tool_call: ToolCall) -> ToolCall:
+        """Inject deterministic requirement memory into selected tool calls."""
+        if tool_call.name not in {"simulation_plan_generated_code", "simulation_plan_modeling_request"}:
+            return tool_call
+
+        arguments = dict(tool_call.arguments or {})
+        known_params = arguments.get("known_params")
+        if known_params is not None and not isinstance(known_params, dict):
+            return tool_call
+
+        if tool_call.name == "simulation_plan_modeling_request":
+            memory_params = self.state.requirement_state.to_modeling_request().executable_params
+            merged_params = dict(memory_params)
+            for key, value in (known_params or {}).items():
+                if value in (None, ""):
+                    continue
+                merged_params[str(key).strip()] = str(value).strip()
+        else:
+            merged_params = self.state.requirement_state.merge_known_params(known_params)
+        if merged_params:
+            arguments["known_params"] = merged_params
+
+        return ToolCall(id=tool_call.id, name=tool_call.name, arguments=arguments)
 
     async def _maybe_compact(self) -> None:
         """Check if context compaction is needed and perform it."""

@@ -598,13 +598,20 @@ template candidates, missing-decision questions, local COMSOL API snippets, a
 strict code-output prompt block, validation parameter hints, and the next
 tool-chain instructions.
 
+Before that tool is executed, AgentLoop merges the deterministic
+`RequirementState` into `known_params`. This state accumulates stable
+multi-turn simulation slots such as geometry, physics, material, boundary
+conditions, contact requirements, load conditions, entity binding, calibration,
+and expected outputs. Explicit tool arguments still take precedence, so the
+state fills gaps without overriding a more specific current turn.
+
 总体策略是 **模板优先，生成补足**:
 
 ```
 用户自然语言需求
       │
       ▼
-需求解析: 几何 / 材料 / 物理场 / 边界条件 / 网格 / study / 输出
+RequirementState 需求槽位累计: 几何 / 材料 / 物理场 / 边界条件 / 接触 / 载荷 / study / 输出
       │
       ▼
 检索模板库 ────────────── 有合适模板 ─────────────▶ 读模板 / 校验 / 执行

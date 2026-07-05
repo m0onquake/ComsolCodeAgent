@@ -26,6 +26,10 @@ from comsol_agent.simulation.bearing_contact import (
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
+from comsol_agent.simulation.model_families import (
+    ModelFamilySpec,
+    infer_model_family,
+)
 from comsol_agent.simulation.replay import build_replay_request, build_template_replay_request
 from comsol_agent.simulation.reporting import (
     write_comparison_report,
@@ -454,6 +458,75 @@ def simulation_plan_generated_code(
         }
     except Exception as exc:
         return {"success": False, "error": str(exc), "mode": "generated_code_fallback"}
+
+
+def simulation_plan_modeling_request(
+    user_request: str,
+    known_params: dict | None = None,
+    allow_defaults: bool = False,
+    preferred_model_name: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Plan a model-family-neutral COMSOL modeling request."""
+    try:
+        raw_known = known_params or {}
+        normalized_known = _normalize_generated_code_params(raw_known)
+        executable_known = _normalize_modeling_known_params(raw_known)
+        family = infer_model_family(user_request, preferred_model_name)
+        missing_decisions = _missing_model_family_decisions(
+            family=family,
+            user_request=user_request,
+            known_params=normalized_known,
+        )
+        ready_to_generate = allow_defaults or not missing_decisions
+
+        generated_plan = simulation_plan_generated_code(
+            user_request=user_request,
+            known_params=executable_known,
+            domain=family.domain,
+            allow_defaults=allow_defaults,
+            preferred_model_name=preferred_model_name,
+            max_doc_results=3,
+            archive_path=archive_path,
+        )
+        template_policy = _modeling_template_policy(
+            family=family,
+            generated_template_policy=(generated_plan.get("template_policy") or {}),
+        )
+
+        if not ready_to_generate:
+            generated_plan["ready_to_generate"] = False
+
+        return {
+            "success": True,
+            "model_family": family.name,
+            "domain": family.domain,
+            "ready_to_generate": ready_to_generate,
+            "missing_decisions": [] if ready_to_generate else missing_decisions,
+            "follow_up_questions": [] if ready_to_generate else _model_family_followups(missing_decisions),
+            "template_policy": template_policy,
+            "recommended_workflow": _modeling_recommended_workflow(
+                family=family,
+                ready_to_generate=ready_to_generate,
+                allow_defaults=allow_defaults,
+            ),
+            "quality_contract": {
+                "quality_gate": family.quality_gate,
+                "required_slots": list(family.required_slots),
+                "default_assumptions": dict(family.default_assumptions),
+                "output_expressions": list(family.output_expressions),
+                "preserve_family_specific_checks": family.name == "bearing_contact",
+            },
+            "next_tool_chain": _modeling_next_tool_chain(
+                family=family,
+                ready_to_generate=ready_to_generate,
+                generated_plan=generated_plan,
+            ),
+            "generated_code_plan": generated_plan,
+            "known_params": executable_known,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "model_family": "general"}
 
 
 def simulation_list_example_models(domain: str | None = None) -> dict:
@@ -1806,9 +1879,312 @@ def _generated_code_validation_params(params: dict[str, str]) -> dict[str, str]:
         "boundary_conditions",
         "study_type",
         "outputs",
+        "contact_requirements",
+        "load_conditions",
+        "entity_binding",
+        "calibration",
+        "user_preferences",
         "assumptions",
     }
     return {key: value for key, value in params.items() if key not in decision_keys}
+
+
+def _normalize_modeling_known_params(params: dict) -> dict[str, str]:
+    normalized = _normalize_generated_code_params(
+        {key: value for key, value in params.items() if not isinstance(value, dict)}
+    )
+    decision_params = _generated_code_validation_params(normalized)
+    executable_markers = ("[", "]")
+    whitelisted = {
+        "E",
+        "nu",
+        "rho",
+        "power",
+        "T_ambient",
+        "voltage",
+        "current",
+        "torque",
+        "rpm",
+        "shaft_length",
+        "shaft_diameter",
+        "eccentricity",
+        "board_length",
+        "board_width",
+        "board_thickness",
+        "chip_power",
+        "convection_h",
+        "gear_module",
+        "tooth_count",
+        "pressure_angle",
+        "face_width",
+        "radial_load",
+        "ball_count",
+        "ball_diameter",
+        "inner_diameter",
+        "outer_diameter",
+        "bearing_width",
+        "material_name",
+    }
+    executable = {
+        key: value
+        for key, value in decision_params.items()
+        if key in whitelisted or any(marker in value for marker in executable_markers)
+    }
+    nested = params.get("executable_params") if isinstance(params, dict) else None
+    if isinstance(nested, dict):
+        executable.update(_normalize_generated_code_params(nested))
+    return executable
+
+
+def _missing_model_family_decisions(
+    *,
+    family: ModelFamilySpec,
+    user_request: str,
+    known_params: dict[str, str],
+) -> list[str]:
+    missing = []
+    for slot in family.required_slots:
+        if _modeling_slot_present(slot, user_request, known_params):
+            continue
+        missing.append(slot)
+    return missing
+
+
+def _modeling_slot_present(slot: str, user_request: str, known_params: dict[str, str]) -> bool:
+    if slot in known_params and known_params[slot].strip():
+        return True
+    haystack = f"{user_request} {' '.join(known_params.values())}".lower()
+    markers = {
+        "geometry": (
+            "geometry",
+            "2d",
+            "3d",
+            "shaft",
+            "gear",
+            "pcb",
+            "board",
+            "bearing",
+            "cylinder",
+            "plate",
+            "几何",
+            "二维",
+            "三维",
+            "偏心轴",
+            "转轴",
+            "齿轮",
+            "齿轮副",
+            "pcb",
+            "电路板",
+            "线路板",
+            "轴承",
+        ),
+        "physics": (
+            "solid mechanics",
+            "heat transfer",
+            "electric currents",
+            "thermal",
+            "structural",
+            "contact",
+            "物理",
+            "固体力学",
+            "传热",
+            "热仿真",
+            "结构",
+            "接触",
+        ),
+        "material": (
+            "material",
+            "steel",
+            "fr4",
+            "copper",
+            "aluminum",
+            "材料",
+            "钢",
+            "钢材",
+            "铜",
+            "铝",
+            "基材",
+        ),
+        "boundary_conditions": (
+            "boundary",
+            "fixed",
+            "support",
+            "constraint",
+            "convection",
+            "cooling",
+            "底面",
+            "边界",
+            "固定",
+            "约束",
+            "支撑",
+            "对流",
+            "散热",
+        ),
+        "study_type": (
+            "stationary",
+            "steady",
+            "time",
+            "frequency",
+            "eigen",
+            "study",
+            "稳态",
+            "瞬态",
+            "频域",
+            "模态",
+            "研究",
+        ),
+        "outputs": (
+            "output",
+            "plot",
+            "evaluate",
+            "stress",
+            "displacement",
+            "temperature",
+            "pressure",
+            "结果",
+            "输出",
+            "云图",
+            "应力",
+            "位移",
+            "温度",
+            "温升",
+            "接触压力",
+            "齿根应力",
+        ),
+        "contact_requirements": (
+            "contact",
+            "contact pair",
+            "contact pressure",
+            "hertz",
+            "meshing",
+            "接触",
+            "接触对",
+            "接触压力",
+            "啮合",
+            "赫兹",
+        ),
+        "load_conditions": (
+            "load",
+            "force",
+            "torque",
+            "rpm",
+            "power",
+            "w",
+            "5w",
+            "载荷",
+            "力",
+            "扭矩",
+            "转速",
+            "功率",
+            "芯片",
+        ),
+    }
+    return any(marker in haystack for marker in markers.get(slot, ()))
+
+
+def _modeling_template_policy(
+    *,
+    family: ModelFamilySpec,
+    generated_template_policy: dict,
+) -> dict:
+    raw_candidates = generated_template_policy.get("candidates") or []
+    allowed_templates = set(family.starter_templates)
+    if family.name == "bearing_contact":
+        candidates = [
+            candidate
+            for candidate in raw_candidates
+            if candidate.get("name") in allowed_templates or "bearing" in str(candidate.get("name", ""))
+        ]
+        starter_templates = list(family.starter_templates)
+    else:
+        candidates = [
+            candidate
+            for candidate in raw_candidates
+            if candidate.get("name") in allowed_templates
+            and "bearing" not in str(candidate.get("name", "")).lower()
+        ]
+        starter_templates = list(family.starter_templates)
+    return {
+        "strategy": "model_family_registry_then_template_first_generated_code_fallback",
+        "family_starter_templates": starter_templates,
+        "use_template_if_fit": bool(candidates),
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "generated_code_fallback_allowed": True,
+        "reject_unrelated_bearing_templates": family.name != "bearing_contact",
+        "note": (
+            "For non-bearing families, do not use bearing starter templates even when the domain is structural."
+            if family.name != "bearing_contact"
+            else "For bearing_contact, keep the existing bearing planner and contact templates as the preferred path."
+        ),
+    }
+
+
+def _model_family_followups(missing_decisions: list[str]) -> list[str]:
+    questions = {
+        "geometry": "请补充几何对象、维度和关键尺寸。",
+        "physics": "请确认物理场接口或主要耦合关系。",
+        "material": "请说明材料或允许使用默认材料假设。",
+        "boundary_conditions": "请补充固定/支撑/散热/电气等边界条件。",
+        "study_type": "请确认研究类型，例如稳态、瞬态、模态或频域。",
+        "outputs": "请说明需要输出哪些物理量和图/指标。",
+        "contact_requirements": "请说明接触/啮合简化、接触对象和是否需要接触压力。",
+        "load_conditions": "请补充载荷、转速、扭矩、功率或电气/热激励。",
+    }
+    return [questions[item] for item in missing_decisions if item in questions]
+
+
+def _modeling_recommended_workflow(
+    *,
+    family: ModelFamilySpec,
+    ready_to_generate: bool,
+    allow_defaults: bool,
+) -> dict:
+    if not ready_to_generate:
+        return {
+            "action": "ask_follow_up_questions",
+            "default_policy": "do_not_generate_until_missing_decisions_are_resolved",
+        }
+    if family.name == "bearing_contact":
+        return {
+            "action": "use_existing_bearing_planner_then_template_or_generated_code",
+            "default_policy": "existing_bearing_defaults_allowed" if allow_defaults else "respect_user_params",
+        }
+    return {
+        "action": "use_generated_code_fallback_with_family_quality_contract",
+        "default_policy": "explicit_family_defaults_allowed" if allow_defaults else "use_only_user_supplied_values",
+    }
+
+
+def _modeling_next_tool_chain(
+    *,
+    family: ModelFamilySpec,
+    ready_to_generate: bool,
+    generated_plan: dict,
+) -> list[str]:
+    if not ready_to_generate:
+        return ["ask_follow_up_questions", "simulation_plan_modeling_request"]
+    if family.name == "bearing_contact":
+        return [
+            "simulation_plan_bearing_contact",
+            "simulation_search_templates",
+            "simulation_read_template if bearing_contact_pair_seed or bearing_contact_hertz_seed fits",
+            "simulation_run_template(validate_first=true)",
+            "simulation_probe_3d_selection_binding for 3D bearing workflows",
+            "comsol_solve",
+            "comsol_evaluate / comsol_plot",
+            "simulation_export_bearing_contact_package",
+        ]
+    return [
+        "simulation_search_templates",
+        "simulation_retrieve_api_docs",
+        "LLM returns raw COMSOL Java/API code using generated_code_plan.controlled_prompt_block",
+        "simulation_validate_template(java_code=generated_code, params=known_params)",
+        "simulation_run_template(java_code=generated_code, params=known_params, create_model_name=... or model_name=..., validate_first=true)",
+        "comsol_solve",
+        "comsol_evaluate / comsol_plot",
+        "simulation_export_artifact_report or future simulation_export_model_package",
+    ]
 
 
 def _infer_simulation_domain(user_request: str, domain: str | None) -> str:

@@ -1198,10 +1198,14 @@ def _has_segmented_loop_tag_evidence(java_code: str, prefix: str, suffix: str = 
     patterns = (
         rf"f['\"]{escaped_prefix}\{{\s*i\s*\+\s*1\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*index\s*\+\s*1\s*\}}{escaped_suffix}['\"]",
+        rf"f['\"]{escaped_prefix}\{{\s*idx\s*\}}{escaped_suffix}['\"]",
+        rf"f['\"]{escaped_prefix}\{{\s*roller_index\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*i\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*index\s*\}}{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*i\s*\+\s*1\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*index\s*\+\s*1\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
+        rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*idx\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
+        rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*roller_index\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*i\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*index\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
     )

@@ -35,6 +35,7 @@ from comsol_agent.tools.simulation import (
     simulation_list_artifacts,
     simulation_list_example_models,
     simulation_list_templates,
+    simulation_plan_modeling_request,
     simulation_plan_generated_code,
     simulation_plan_bearing_contact,
     simulation_plan_multiroller_bearing,
@@ -413,6 +414,47 @@ def register_all_tools() -> None:
     )
 
     # --- Simulation Planning ---
+
+    register_sync(
+        name="simulation_plan_modeling_request",
+        description=(
+            "Plan a model-family-neutral COMSOL modeling request before choosing templates or generated code. "
+            "Classifies bearing_contact, eccentric_shaft, gear_pair, pcb_thermal_electric, or general; "
+            "returns missing decisions, follow-up questions, template policy, quality contract, and next tool chain. "
+            "Use this first for non-bearing or uncertain modeling requests so gear/PCB/shaft requests are not routed "
+            "to bearing templates."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's modeling request in natural language.",
+                },
+                "known_params": {
+                    "type": "object",
+                    "description": (
+                        "Executable or directly verifiable parameters only, e.g. {'rpm': '3000[1/min]', "
+                        "'power': '5[W]', 'torque': '20[N*m]'}. Do not put broad natural-language intent here."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "Whether family defaults may be used for low-risk missing decisions.",
+                },
+                "preferred_model_name": {
+                    "type": "string",
+                    "description": "Optional model name hint for the generated workflow.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path for template lookup.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_modeling_request,
+    )
 
     register_sync(
         name="simulation_plan_bearing_contact",

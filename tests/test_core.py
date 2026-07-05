@@ -318,6 +318,7 @@ class TestToolRegistry:
         assert "simulation_plan_bearing_contact" in names
         assert "simulation_plan_multiroller_bearing" in names
         assert "simulation_probe_3d_selection_binding" in names
+        assert "simulation_plan_modeling_request" in names
         assert "simulation_plan_generated_code" in names
         assert "simulation_plan_parameter_sweep" in names
         assert "simulation_search_local_docs" in names
@@ -410,6 +411,76 @@ class TestSystemPrompt:
 
 class TestAgentLoop:
     """Tests for the agent state machine without calling real APIs."""
+
+    @pytest.mark.asyncio
+    async def test_requirement_state_enriches_generated_code_known_params(self):
+        from collections.abc import AsyncIterator
+        from typing import Any
+
+        from comsol_agent.agent.loop import AgentLoop
+        from comsol_agent.agent.tools_bootstrap import register_all_tools
+        from comsol_agent.cli.config import Config
+        from comsol_agent.llm.base import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+
+        register_all_tools()
+
+        class GeneratedCodeProvider(LLMProvider):
+            def __init__(self):
+                super().__init__(model="fake")
+                self.calls = 0
+
+            async def generate(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> LLMResponse:
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="call_plan",
+                                name="simulation_plan_generated_code",
+                                arguments={
+                                    "user_request": "继续生成代码",
+                                    "allow_defaults": False,
+                                    "max_doc_results": 1,
+                                },
+                            )
+                        ]
+                    )
+                return LLMResponse(text="Planned with remembered requirements.")
+
+            async def generate_stream(
+                self,
+                messages: list[dict[str, Any]],
+                tools: list[ToolDefinition] | None = None,
+                **kwargs: Any,
+            ) -> AsyncIterator[str]:
+                if False:
+                    yield ""
+
+            def count_tokens(self, messages: list[dict[str, Any]]) -> int:
+                return 1
+
+        agent = AgentLoop(GeneratedCodeProvider(), Config())
+        response = await agent.run(
+            "做一个3D圆柱滚子轴承结构仿真，材料用钢，固定内圈，外圈加1000[N]载荷，输出von Mises应力"
+        )
+
+        tool_messages = [msg for msg in agent.state.messages if msg["role"] == "tool"]
+        payload = json.loads(tool_messages[0]["content"])
+        remembered = payload["known_params"]
+
+        assert response == "Planned with remembered requirements."
+        assert remembered["geometry"]
+        assert remembered["physics"]
+        assert remembered["material"]
+        assert remembered["boundary_conditions"]
+        assert remembered["load_conditions"]
+        assert remembered["outputs"]
+        assert payload["validation_params"] == {}
 
     @pytest.mark.asyncio
     async def test_uses_configured_tool_iteration_limit(self):
@@ -629,6 +700,7 @@ class TestAgentLoop:
         assert payload["llm"] == {"provider": "openai", "model": "gpt-4o"}
         assert payload["stats"]["total_tokens_used"] == 3
         assert payload["stats"]["turn_count"] == 1
+        assert "requirement_state" in payload
         assert payload["messages"][-1]["content"] == "Stored response."
         assert [turn["role"] for turn in payload["turns"]] == ["user", "assistant"]
 
@@ -640,6 +712,37 @@ class TestAgentLoop:
 
 class TestCompaction:
     """Tests for deterministic context compaction."""
+
+    def test_requirement_state_accumulates_cross_turn_slots(self):
+        from comsol_agent.memory.requirements import RequirementState
+
+        state = RequirementState()
+        state.observe_user_message("先做3D圆柱滚子轴承结构仿真，材料用钢，固定内圈，输出应力")
+        state.observe_user_message("下一阶段要做真实几何实体绑定、接触收敛和非零应力校准")
+
+        params = state.to_known_params()
+
+        assert "3D" in params["geometry"]
+        assert "钢" in params["material"]
+        assert "固定内圈" in params["boundary_conditions"]
+        assert "应力" in params["outputs"]
+        assert "接触" in params["contact_requirements"]
+        assert "实体绑定" in params["entity_binding"]
+        assert "非零应力" in params["calibration"]
+
+    def test_requirement_state_separates_modeling_request_params(self):
+        from comsol_agent.memory.requirements import RequirementState
+
+        state = RequirementState()
+        state.observe_user_message("做一个PCB热仿真，chip_power=5[W]，对流系数convection_h=10[W/m^2/K]，输出最高温度")
+
+        request = state.to_modeling_request()
+
+        assert request.intent_slots["geometry"]
+        assert request.intent_slots["load_conditions"]
+        assert request.executable_params["chip_power"] == "5[W]"
+        assert request.executable_params["convection_h"] == "10[W/m^2/K]"
+        assert request.turn_count == 1
 
     def test_compact_messages_preserves_user_text_and_summarizes_tools(self):
         from comsol_agent.memory.compaction import compact_messages
@@ -2562,6 +2665,31 @@ class TestSimulationSkills:
         assert not any("sel_roller_1_outer_contact" in error for error in production_quality["errors"])
         assert production_quality["errors"] == []
 
+        loop_family_code = VERIFIED_3D_FULL_BEARING_CODE + """
+num_rollers = 12
+for i in range(num_rollers):
+    idx = i + 1
+    sel_roller_body_tag = f'sel_roller_{idx}_body'
+    sel_roller_inner_tag = f'sel_roller_{idx}_inner_contact'
+    sel_roller_outer_tag = f'sel_roller_{idx}_outer_contact'
+    sel_inner_raceway_tag = f'sel_inner_raceway_{idx}_contact'
+    sel_outer_raceway_tag = f'sel_outer_raceway_{idx}_contact'
+    probe_tag = f'probe_roller_{idx}_max_mises'
+"""
+        loop_family_quality = validate_3d_bearing_code_draft(
+            loop_family_code,
+            require_named_selections=True,
+        )
+        assert not any("sel_roller_1_body" in error for error in loop_family_quality["errors"])
+        assert not any("probe_roller_1_max_mises" in error for error in loop_family_quality["errors"])
+        from comsol_agent.simulation.bearing_3d import _has_segmented_loop_tag_evidence
+
+        assert _has_segmented_loop_tag_evidence(
+            "num_rollers = 12\nfor i in range(num_rollers):\n    idx = i + 1\n    tag = f'sel_roller_{idx}_body'\n",
+            "sel_roller_",
+            "_body",
+        )
+
         binding_contract = selection_binding_contract()
         assert binding_contract["kind"] == "bearing_3d_selection_binding_contract"
         assert binding_contract["roller_count"] == VERIFIED_ROLLER_COUNT
@@ -2792,12 +2920,15 @@ model.component("comp1").geom("geom1").feature("roller_1").set("ax", ["0", "0", 
 model.component("comp1").pair().create("pair1", "contact")
 model.component("comp1").pair("pair1").source().set(["geom1"])
 model.component("comp1").pair("pair1").destination().set(["geom1"])
+model.component("comp1").pair("pair1").set("manualSelection", True)
 model.component("comp1").physics("solid").feature().create("cp_extra", "Contact", 1)
 model.component("comp1").physics("solid").feature("cp_extra").set("contact_pair", "pair1")
 model.component("comp1").geom("geom1").run()
 model.component("comp1").geom("geom1").finalize("assembly")
 model.component("comp1").geom("geom1").selection().create("sel_r1_inner", "Explicit")
 model.component("comp1").geom("geom1").selection("sel_r1_inner").set("entitydim", 2)
+model.component("comp1").mesh().create("mesh1", "mesh1")
+model.result("pg_stress3d").set("data", "dset1")
 model.output().write("Cage included: Boolean cage ring with twelve pockets.")
 """
         )
@@ -2814,9 +2945,21 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "model.study().create" in preflight_repaired
         assert "model.result().create" in preflight_repaired
         assert "cp_roller_inner_raceway" in preflight_repaired
+        cross_segment_repaired, cross_segment_reports, _ = apply_runtime_preflight_3d_repairs(
+            "model.param().set('radial_load', '1000[N]')\n"
+            "roller_radius = model.param().evaluate('roller_dia')/2\n"
+            "model.param().set('contact_pressure_est', 'radial_load/(roller_length*roller_dia*num_rollers)')\n"
+        )
+        assert cross_segment_reports
+        assert "model.param().set('roller_dia', '8[mm]')" in cross_segment_repaired
+        assert "model.param().set('roller_length', '16[mm]')" in cross_segment_repaired
+        assert "model.param().set('num_rollers', '12')" in cross_segment_repaired
         assert "FixedConstraint" not in preflight_repaired
         assert '"contact_pair"' not in preflight_repaired
+        assert '.pair("cp_roller_inner_raceway").manualSelection(True)' in preflight_repaired
         assert "model.output().write" not in preflight_repaired
+        assert ".mesh().create('mesh1')" in preflight_repaired
+        assert '.set("data", "dset1")' not in preflight_repaired
         assert '.set("ax"' not in preflight_repaired
         assert ".finalize(" not in preflight_repaired
         assert ".feature('fin').set('action', 'assembly')" in preflight_repaired
@@ -2826,6 +2969,8 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "remove_unsupported_cylinder_axis_property" in " ".join(preflight_reports[0]["changes"])
         assert "geom_finalize_assembly_to_verified_fin_action" in " ".join(preflight_reports[0]["changes"])
         assert "geom_scoped_selection_create_to_component_selection" in " ".join(preflight_reports[0]["changes"])
+        assert "mesh_create_self_geometry_to_plain_mesh" in " ".join(preflight_reports[0]["changes"])
+        assert "remove_setup_stage_result_dataset_binding" in " ".join(preflight_reports[0]["changes"])
         assert preflight_quality["success"] is True, preflight_quality
 
         unsupported_runtime_api = runtime_risky_generated + """
@@ -4792,6 +4937,38 @@ class TestLocalDocsSearch:
         assert defaulted["ready_to_generate"] is True
         assert defaulted["missing_decisions"] == []
         assert "You may fill missing low-risk values" in defaulted["controlled_prompt_block"]
+
+    def test_model_family_registry_infers_non_bearing_families(self):
+        from comsol_agent.simulation.model_families import infer_model_family
+
+        assert infer_model_family("偏心轴转速3000rpm，输出应力和位移").name == "eccentric_shaft"
+        assert infer_model_family("齿轮副啮合接触压力和齿根应力").name == "gear_pair"
+        assert infer_model_family("PCB FR4板和芯片功率热仿真").name == "pcb_thermal_electric"
+
+    def test_simulation_plan_modeling_request_routes_pcb_without_bearing_templates(self):
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        result = simulation_plan_modeling_request(
+            user_request="做一个PCB热仿真，FR4板上有芯片功率，底面对流散热，输出最高温度云图",
+            known_params={
+                "geometry": "PCB rectangular FR4 board",
+                "material": "FR4 and copper",
+                "boundary_conditions": "bottom convection",
+                "load_conditions": "chip power",
+                "outputs": "maximum temperature and temperature plot",
+                "executable_params": {"chip_power": "5[W]", "convection_h": "10[W/m^2/K]"},
+            },
+            allow_defaults=True,
+        )
+
+        assert result["success"] is True
+        assert result["model_family"] == "pcb_thermal_electric"
+        assert result["domain"] == "thermal"
+        assert result["ready_to_generate"] is True
+        assert result["known_params"] == {"chip_power": "5[W]", "convection_h": "10[W/m^2/K]"}
+        assert result["template_policy"]["reject_unrelated_bearing_templates"] is True
+        assert result["quality_contract"]["quality_gate"] == "validate_pcb_thermal_electric_code_draft"
+        assert "simulation_plan_bearing_contact" not in result["next_tool_chain"]
 
     def test_local_docs_search_rejects_outside_workspace_directory(self):
         from comsol_agent.tools.simulation import simulation_search_local_docs

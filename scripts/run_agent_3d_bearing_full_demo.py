@@ -786,6 +786,9 @@ def _repair_generated_set_list_literals(java_code: str) -> tuple[str, list[str]]
 def _repair_generated_missing_cross_segment_parameters(java_code: str) -> tuple[str, list[str]]:
     changes: list[str] = []
     defaults = {
+        "num_rollers": "12",
+        "roller_dia": "8[mm]",
+        "roller_length": "16[mm]",
         "pitch_dia": "(inner_ring_outer_dia+outer_ring_inner_dia)/2",
         "pocket_dia": "roller_dia+1[mm]",
         "radial_load": "3000[N]",
@@ -796,7 +799,14 @@ def _repair_generated_missing_cross_segment_parameters(java_code: str) -> tuple[
     }
     insertions = []
     for name, value in defaults.items():
-        required_for_package = name in {"radial_load", "contact_pressure_est", "max_contact_pressure"}
+        required_for_package = name in {
+            "radial_load",
+            "num_rollers",
+            "roller_dia",
+            "roller_length",
+            "contact_pressure_est",
+            "max_contact_pressure",
+        }
         if (required_for_package or name in java_code) and f"param().set('{name}'" not in java_code and f'param().set("{name}"' not in java_code:
             insertions.append(f"model.param().set('{name}', '{value}')")
             changes.append(f"add_missing_cross_segment_parameter_{name}")
@@ -892,6 +902,13 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
     )
     if endpoint_count or endpoint_count_2:
         changes.append(f"contact_pair_set_endpoint_to_named:{endpoint_count + endpoint_count_2}")
+    repaired, manual_count = re.subn(
+        r"\.pair\((?P<pair>[^)]*)\)\.set\(\s*['\"]manualSelection['\"]\s*,\s*(?P<flag>True|False|true|false)\s*\)",
+        lambda match: f".pair({match.group('pair')}).manualSelection({match.group('flag')})",
+        repaired,
+    )
+    if manual_count:
+        changes.append(f"contact_pair_set_manualselection_to_method:{manual_count}")
     repaired, count = re.subn(
         r"feature\(\)\.create\((['\"][^'\"]+['\"])\s*,\s*(['\"]Contact['\"])\s*,\s*1\s*\)",
         r"feature().create(\1, \2, 2)",
@@ -990,6 +1007,13 @@ def _repair_generated_geometry_api_fragments(java_code: str) -> tuple[str, list[
     )
     if count:
         changes.append(f"finish_feature_create_to_verified_assembly_fin:{count}")
+    repaired, count = re.subn(
+        r"\.mesh\(\)\.create\(\s*(['\"])(?P<tag>mesh\d*)\1\s*,\s*(['\"])(?P=tag)\3\s*\)",
+        r".mesh().create('\g<tag>')",
+        repaired,
+    )
+    if count:
+        changes.append(f"mesh_create_self_geometry_to_plain_mesh:{count}")
     return repaired, changes
 
 
@@ -1092,6 +1116,14 @@ def _repair_component_scoped_numerical_results(java_code: str) -> tuple[str, lis
         )
         if ref_count:
             changes.append(f"result_tag_to_numerical_tag:{tag}:{ref_count}")
+    repaired, data_count = re.subn(
+        r"^.*model\.result\([^)]*\)\.set\(\s*['\"]data['\"]\s*,\s*['\"]dset\d+['\"]\s*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if data_count:
+        changes.append(f"remove_setup_stage_result_dataset_binding:{data_count}")
     return repaired, changes
 
 

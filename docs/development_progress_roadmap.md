@@ -101,6 +101,11 @@ the syntax failure seen when executing multi-line templates.
   `scripts/run_generated_code_fallback_smoke.py` verifies raw Java/API code can
   flow through validation, execution, solve/evaluate/plot, archive, and template
   promotion without relying on a pre-existing template.
+- A lightweight deterministic `RequirementState` now accumulates multi-turn
+  user requirements and fills missing `simulation_plan_generated_code`
+  `known_params` slots before planning, covering geometry, physics, material,
+  boundary/load conditions, contact requirements, entity binding, calibration,
+  outputs, and user preferences.
 - The bearing-contact agent demo path now supports two built-in bearing
   templates: `bearing_contact_hertz_seed` for the lighter Hertz-style pressure
   workflow, and `bearing_contact_pair_seed` for a more realistic 2D COMSOL
@@ -974,9 +979,34 @@ Current implementation direction on branch `codex/segmented-3d-generation`:
 
 ## Resume Checklist
 
+### P11: General-Purpose Modeling Expansion
+
+Goal: evolve the agent beyond bearing-specific modeling into a general COMSOL
+modeling assistant for multiple engineering objects, including but not limited
+to bearings, eccentric shafts, gears, and circuit boards.
+
+The detailed plan is maintained in
+`docs/general_modeling_expansion_plan.md`. In short, the next pass should:
+
+1. generalize requirement decomposition into model-family-neutral slots;
+2. add a high-level `simulation_plan_modeling_request` gateway;
+3. introduce a model-family registry for bearing, eccentric shaft, gear pair,
+   PCB, and future object types;
+4. add starter templates and quality gates for eccentric shaft, PCB thermal,
+   and simplified gear contact cases;
+5. generalize result packaging from `bearing_contact_package` to a reusable
+   modeling result package with domain-specific metrics.
+
+Acceptance criteria: the agent can handle at least one eccentric-shaft request,
+one PCB thermal/electrothermal request, and one simplified gear-contact request
+without substituting a bearing template, while still preserving the existing
+bearing quality path.
+
 When continuing development:
 
 1. Read this file and `docs/comsol_runtime.md`.
+   Also read `docs/general_modeling_expansion_plan.md` before changing the
+   requirement-decomposition or generated-code planning path.
 2. Run:
 
 ```bash
