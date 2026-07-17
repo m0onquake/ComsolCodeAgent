@@ -73,6 +73,7 @@ def _build_verified_3d_full_bearing_code(
         "roller1_cylinder_seam_shift15",
         "roller1_outer_retained_conformal_patch",
         "roller1_outer_retained_conformal_source_closure3um",
+        "roller1_outer_retained_conformal_narrow_source_closure3um",
         "roller1_outer_retained_conformal_equal_height_source_closure3um",
         "roller1_outer_retained_conformal_sector_source_closure3um",
         "roller1_outer_construction_partition_patch",
@@ -88,6 +89,9 @@ def _build_verified_3d_full_bearing_code(
     use_roller1_outer_retained_conformal_source_closure3um = (
         local_contact_patch_mode == "roller1_outer_retained_conformal_source_closure3um"
     )
+    use_roller1_outer_retained_conformal_narrow_source_closure3um = (
+        local_contact_patch_mode == "roller1_outer_retained_conformal_narrow_source_closure3um"
+    )
     use_roller1_outer_retained_conformal_equal_height_source_closure3um = (
         local_contact_patch_mode == "roller1_outer_retained_conformal_equal_height_source_closure3um"
     )
@@ -97,6 +101,7 @@ def _build_verified_3d_full_bearing_code(
     use_roller1_outer_retained_conformal_any = (
         use_roller1_outer_retained_conformal_patch
         or use_roller1_outer_retained_conformal_source_closure3um
+        or use_roller1_outer_retained_conformal_narrow_source_closure3um
         or use_roller1_outer_retained_conformal_equal_height_source_closure3um
         or use_roller1_outer_retained_conformal_sector_source_closure3um
     )
@@ -120,6 +125,7 @@ def _build_verified_3d_full_bearing_code(
     use_roller1_source_closure3um = (
         use_roller1_outer_construction_partition_source_closure3um
         or use_roller1_outer_retained_conformal_source_closure3um
+        or use_roller1_outer_retained_conformal_narrow_source_closure3um
         or use_roller1_outer_retained_conformal_equal_height_source_closure3um
         or use_roller1_outer_retained_conformal_sector_source_closure3um
         or use_roller1_outer_raceway_partition_source_closure3um
@@ -253,7 +259,7 @@ def _build_verified_3d_full_bearing_code(
         lines.extend([
             "model.component('comp1').geom('geom1').feature('roller1_outer_retained_conformal_patch').set('selresult', 'on');",
             "model.component('comp1').geom('geom1').feature('roller1_outer_retained_conformal_patch').set('selresultshow', 'all');",
-            f"output.write('ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_GEOM|outer_r=31.05[mm]|inner_r=30.72[mm]|outer_h=16.4[mm]|inner_h={conformal_inner_height}|sector={str(bool(use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}|source_closure3um={str(bool(use_roller1_outer_retained_conformal_source_closure3um or use_roller1_outer_retained_conformal_equal_height_source_closure3um or use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}\\n');",
+            f"output.write('ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_GEOM|outer_r=31.05[mm]|inner_r=30.72[mm]|outer_h=16.4[mm]|inner_h={conformal_inner_height}|sector={str(bool(use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}|source_closure3um={str(bool(use_roller1_outer_retained_conformal_source_closure3um or use_roller1_outer_retained_conformal_narrow_source_closure3um or use_roller1_outer_retained_conformal_equal_height_source_closure3um or use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}|outer_box_tangential_half_width={('0.9' if use_roller1_outer_retained_conformal_narrow_source_closure3um else '1.8')}[mm]\\n');",
         ])
     pocket_tags = []
     roller_centres = []
@@ -506,7 +512,7 @@ def _build_verified_3d_full_bearing_code(
                 and side_name == "outer"
             ):
                 half_radial = 0.55
-                half_tangent = 1.8
+                half_tangent = 0.9 if use_roller1_outer_retained_conformal_narrow_source_closure3um else 1.8
             corners = []
             for sr in (-1, 1):
                 for st in (-1, 1):
@@ -558,7 +564,7 @@ def _build_verified_3d_full_bearing_code(
             ])
             if use_roller1_outer_retained_conformal_any and index == 1 and side_name == "outer":
                 lines.append(
-                    f"output.write('ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND|source=sel_roller_1_outer_contact|destination=sel_outer_raceway_1_contact|pair=cp_roller_1_outer_raceway|box=box_roller_1_outer_contact_patch|source_closure3um={str(bool(use_roller1_outer_retained_conformal_source_closure3um or use_roller1_outer_retained_conformal_equal_height_source_closure3um or use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}\\n');"
+                    f"output.write('ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND|source=sel_roller_1_outer_contact|destination=sel_outer_raceway_1_contact|pair=cp_roller_1_outer_raceway|box=box_roller_1_outer_contact_patch|source_closure3um={str(bool(use_roller1_outer_retained_conformal_source_closure3um or use_roller1_outer_retained_conformal_narrow_source_closure3um or use_roller1_outer_retained_conformal_equal_height_source_closure3um or use_roller1_outer_retained_conformal_sector_source_closure3um)).lower()}|outer_box_tangential_half_width={('0.9' if use_roller1_outer_retained_conformal_narrow_source_closure3um else '1.8')}[mm]\\n');"
                 )
             if use_roller1_outer_construction_partition_any and index == 1 and side_name == "outer":
                 lines.append(
@@ -6249,6 +6255,9 @@ def run_direct_fixture_smoke(
         "roller1_outer_retained_conformal_patch": "roller1_outer_retained_conformal_target_patch_diagnostic",
         "roller1_outer_retained_conformal_source_closure3um": (
             "roller1_outer_retained_conformal_target_with_3um_source_closure_diagnostic"
+        ),
+        "roller1_outer_retained_conformal_narrow_source_closure3um": (
+            "roller1_outer_retained_conformal_target_with_3um_source_closure_and_0p9mm_tangential_box_diagnostic"
         ),
         "roller1_outer_retained_conformal_equal_height_source_closure3um": (
             "roller1_outer_retained_conformal_equal_height_target_with_3um_source_closure_diagnostic"
@@ -13723,6 +13732,7 @@ def main() -> None:
             "roller1_cylinder_seam_shift15",
             "roller1_outer_retained_conformal_patch",
             "roller1_outer_retained_conformal_source_closure3um",
+            "roller1_outer_retained_conformal_narrow_source_closure3um",
             "roller1_outer_retained_conformal_equal_height_source_closure3um",
             "roller1_outer_retained_conformal_sector_source_closure3um",
             "roller1_outer_construction_partition_patch",
@@ -13741,6 +13751,9 @@ def main() -> None:
             "only the roller_1 outer source/destination patch; roller1_outer_construction_partition_patch "
             "roller1_outer_retained_conformal_source_closure3um keeps that retained conformal target and adds "
             "the successful 3[um] +X roller_1 source-side closure; "
+            "roller1_outer_retained_conformal_narrow_source_closure3um keeps the same retained target and "
+            "source closure but changes only the roller_1 outer contact-box tangential half-width from 1.8[mm] "
+            "to 0.9[mm]; "
             "roller1_outer_retained_conformal_equal_height_source_closure3um uses equal axial heights for the "
             "retained conformal cylinders while keeping the same 3[um] source closure; "
             "roller1_outer_retained_conformal_sector_source_closure3um intersects the retained conformal annulus "

@@ -2705,6 +2705,30 @@ class TestSimulationSkills:
         assert "cp_roller_1_outer_raceway" in retained_conformal_closure_fixture
         assert "local_contact_patch_mode=roller1_outer_retained_conformal_source_closure3um" in retained_conformal_closure_fixture
         assert "roller1_outer_retained_conformal_target_with_3um_source_closure_diagnostic" in demo_source
+        retained_conformal_narrow_closure_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_retained_conformal_narrow_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in retained_conformal_narrow_closure_fixture
+        assert "combined_with=roller1_outer_retained_conformal_narrow_source_closure3um" in retained_conformal_narrow_closure_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_GEOM" in retained_conformal_narrow_closure_fixture
+        assert "source_closure3um=true" in retained_conformal_narrow_closure_fixture
+        assert "outer_box_tangential_half_width=0.9[mm]" in retained_conformal_narrow_closure_fixture
+        assert "outer_box_tangential_half_width=1.8[mm]" not in retained_conformal_narrow_closure_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND" in retained_conformal_narrow_closure_fixture
+        assert (
+            "source=sel_roller_1_outer_contact|destination=sel_outer_raceway_1_contact|"
+            "pair=cp_roller_1_outer_raceway"
+        ) in retained_conformal_narrow_closure_fixture
+        assert "geom1_roller1_outer_retained_conformal_patch_bnd" in retained_conformal_narrow_closure_fixture
+        assert "fix_roller1_outer_retained_conformal_patch" in retained_conformal_narrow_closure_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in retained_conformal_narrow_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in retained_conformal_narrow_closure_fixture
+        assert "local_contact_patch_mode=roller1_outer_retained_conformal_narrow_source_closure3um" in retained_conformal_narrow_closure_fixture
+        assert (
+            "roller1_outer_retained_conformal_target_with_3um_source_closure_and_0p9mm_tangential_box_diagnostic"
+            in demo_source
+        )
         retained_conformal_equal_height_fixture = _build_verified_3d_full_bearing_code(
             roller_count=12,
             local_contact_patch_mode="roller1_outer_retained_conformal_equal_height_source_closure3um",

@@ -1,14 +1,14 @@
 # Bearing 3D Stage Evidence Matrix
 
 - Search root: `runtime_smoke`
-- Summaries scanned: `150`
-- Stage rows: `302`
-- Converged native stages: `205`
+- Summaries scanned: `151`
+- Stage rows: `303`
+- Converged native stages: `206`
 - Reaction-verified stages: `0`
 - Production-ready stages: `0`
-- Saved-MPH reaction probe reports: `1`
-- Saved-MPH reaction probe verified reports: `0`
-- Saved-MPH contact probe reports: `51`
+- Saved-MPH reaction probe reports: `2`
+- Saved-MPH reaction probe verified reports: `1`
+- Saved-MPH contact probe reports: `52`
 - Saved-MPH contact source/destination imbalance reports: `19`
 
 ## Highest Trust Stage
@@ -158,6 +158,7 @@
 | single_solve_3_roller_boundary_load_0p101n_roller1_outer_entity_override | yes | yes | yes | yes | yes | no | 3 | 3/3 | 1.0 |  | 6043681.063166839 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_raceway_partition_source_closure3um_radial_clean_entity_override/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_roller1_outer_entity_override | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1285361647.0195835 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1260598628.8747087 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_equal_height_source_closure3um/direct_3d_bearing_summary.json` |
+| single_solve_3_roller_boundary_load_0p101n_parametric | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1260595284.8760736 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_patch/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_sector_source_closure3um/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1260595284.8760736 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_source_closure3um/direct_3d_bearing_summary.json` |
@@ -521,7 +522,7 @@
 
 ## BoundaryLoad Distribution Diagnostics
 
-- BoundaryLoad rows: `119`
+- BoundaryLoad rows: `120`
 - Zero-carry active-roller rows: `15`
 - Missing-probe BoundaryLoad rows: `98`
 - Stress-plateau BoundaryLoad rows: `0`
@@ -551,6 +552,7 @@ Recommended next diagnostics:
 
 | Report | Verified | Candidate count | Nonzero candidates | Unknown operator | Zero result | Selection error | MPH |
 |---|---:|---:|---:|---:|---:|---:|---|
+| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json` | yes | 40 | 3 | 23 | 6 | 8 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/reaction_probe_post_mph/reaction_probe_summary.json` | no | 40 | 0 | 23 | 9 | 8 | `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/stage_models/raceway_contact_high_preload_reaction_equivalent_post_reaction_probe_configured.mph` |
 
 ## Saved-MPH Contact Probe Reports
@@ -579,6 +581,7 @@ Recommended next diagnostics:
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/contact_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_entity_override_source_closure3um_20260716_230028_615615/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_entity_override_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/source_entity_transfer_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_entity_override_source_closure3um_20260716_230028_615615/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_entity_override_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_equal_height_source_closure3um/contact_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_equal_height_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_equal_height_source_closure3um_20260716_193405_924257/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_equal_height_source_closure3um.mph` |
+| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/contact_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_source_closure3um/contact_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_source_closure3um_20260716_171750_712903/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_source_closure3um/entity_transfer_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 104 |  | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_source_closure3um_20260716_171750_712903/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_source_offset/bearing3d_load_side_boundaryload_0p101_roller1_source_offset_minus3um/contact_probe_solved_mph/contact_probe_summary.json` | yes | 972 | 90 | roller_1 | `runtime_smoke/bearing_family_p12_boundaryload_source_offset/bearing3d_load_side_boundaryload_0p101_roller1_source_offset_minus3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_source_offset_minus3um_20260714_024434_814014/bearing3d_load_side_boundaryload_0p101_roller1_source_offset_minus3um.mph` |
