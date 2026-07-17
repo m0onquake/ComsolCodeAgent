@@ -35,6 +35,7 @@ from comsol_agent.tools.simulation import (
     simulation_list_artifacts,
     simulation_list_example_models,
     simulation_list_templates,
+    simulation_plan_bearing_modeling_request,
     simulation_plan_modeling_request,
     simulation_plan_generated_code,
     simulation_plan_bearing_contact,
@@ -414,6 +415,56 @@ def register_all_tools() -> None:
     )
 
     # --- Simulation Planning ---
+
+    register_sync(
+        name="simulation_plan_bearing_modeling_request",
+        description=(
+            "Plan a topology-specific bearing modeling request before choosing COMSOL templates or generated code. "
+            "Classifies deep_groove_ball, angular_contact_ball, cylindrical_roller, tapered_roller, "
+            "needle_roller, thrust_bearing, or general_bearing; separates natural-language intent from "
+            "COMSOL executable parameters; returns contact policy, quality contract, template policy, and next tool chain. "
+            "Use this for bearing-family requests so tapered/thrust/roller bearings are not silently routed "
+            "to deep-groove ball smoke templates."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's bearing modeling request in natural language.",
+                },
+                "known_params": {
+                    "type": "object",
+                    "description": (
+                        "Executable COMSOL parameters only, e.g. radial_load='1000[N]', "
+                        "contact_interference='2[um]', ball_diameter='7.94[mm]', roller_count='12'."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "Whether low-risk bearing defaults may be used while recording assumptions.",
+                },
+                "preferred_bearing_type": {
+                    "type": "string",
+                    "description": "Optional bearing-family hint such as tapered_roller or thrust_bearing.",
+                },
+                "contact_policy": {
+                    "type": "string",
+                    "description": (
+                        "Optional explicit contact policy: frictionless, frictional, interference_fit, "
+                        "radial_preload, axial_preload, clearance, staged_contact_activation, "
+                        "or cage_pocket_contact_load_transfer."
+                    ),
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path for downstream template lookup.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_bearing_modeling_request,
+    )
 
     register_sync(
         name="simulation_plan_modeling_request",

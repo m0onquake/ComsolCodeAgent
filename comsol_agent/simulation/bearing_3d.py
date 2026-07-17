@@ -89,31 +89,42 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
     ),
     Segmented3DCodeSpec(
         segment_id="C_selections_contacts_physics",
-        title="named selections, materials, Solid Mechanics, and 24 Contact Pairs",
+        title="named selections, materials, Solid Mechanics, inner-bore preload, and 36 Contact Pairs",
         goal=(
             "Continue from segments A and B. Create named Box/Intersection selections, materials, "
-            "SolidMechanics, radial load/support, 24 explicit roller/raceway Contact Pair features, "
-            "Contact physics features, and per-roller Maximum coupling operators using component cpl() API. Do not create mesh/study/result."
+            "SolidMechanics, fixed support, inner-bore BoundaryLoad audit plus displacement-controlled preload, 24 explicit roller/raceway Contact Pair features, "
+            "12 explicit roller/cage-pocket Contact Pair features, Contact physics features, per-roller Maximum coupling operators, "
+            "and a cage Maximum coupling operator using component cpl() API. "
+            "Do not create mesh/study/result."
         ),
         depends_on=("A_base_geometry", "B_cage_pockets_and_rollers"),
         required_creates=(
             "sel_inner_raceway_contact",
             "sel_outer_raceway_contact",
             "sel_outer_support_surface",
-            "sel_inner_load_region",
+            "sel_inner_bore_load_surface",
             "sel_cage_body",
             "sel_roller_1_body",
             "sel_roller_12_body",
             "sel_roller_1_inner_contact",
             "sel_roller_12_outer_contact",
+            "sel_roller_1_cage_contact",
+            "sel_roller_12_cage_contact",
             "sel_inner_raceway_1_contact",
             "sel_outer_raceway_12_contact",
+            "sel_cage_pocket_1_contact",
+            "sel_cage_pocket_12_contact",
             "cp_roller_1_inner_raceway",
             "cp_roller_12_outer_raceway",
+            "cp_roller_1_cage_pocket",
+            "cp_roller_12_cage_pocket",
             "contact_roller_1_inner",
             "contact_roller_12_outer",
+            "contact_roller_1_cage",
+            "contact_roller_12_cage",
             "maxop_roller_1",
             "maxop_roller_12",
+            "maxop_cage",
         ),
         allowed_prefixes=("sel_", "box_", "cp_", "contact_", "solid", "mat_", "maxop_", "load_", "fix_"),
         forbidden_snippets=(
@@ -144,6 +155,8 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             "std1",
             "pg_stress3d",
             "max_von_mises",
+            "probe_cage_max_mises",
+            "probe_cage_max_displacement",
             "probe_roller_1_max_mises",
             "probe_roller_12_max_mises",
             "probe_scope_verified",
@@ -181,22 +194,31 @@ def build_segmented_3d_generation_prompt(
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
             "- Create global named selections exactly: sel_inner_raceway_contact, sel_outer_raceway_contact, "
-            "sel_outer_support_surface, sel_inner_load_region, sel_cage_body.\n"
+            "sel_outer_support_surface, sel_inner_bore_load_surface, sel_cage_body.\n"
+            "- Apply loading on sel_inner_bore_load_surface, not as a domain BodyLoad/FperVol on the whole inner ring: "
+            "create a BoundaryLoad/FperArea audit feature and a displacement-controlled preload feature type 'Displacement2' with U0.\n"
             "- In a 12-iteration loop, create/use literal f-string families exactly: "
             "sel_roller_{i+1}_body, sel_roller_{i+1}_inner_contact, sel_roller_{i+1}_outer_contact, "
-            "sel_inner_raceway_{i+1}_contact, sel_outer_raceway_{i+1}_contact.\n"
+            "sel_roller_{i+1}_cage_contact, sel_inner_raceway_{i+1}_contact, "
+            "sel_outer_raceway_{i+1}_contact, sel_cage_pocket_{i+1}_contact.\n"
             "- Create Contact Pair tags exactly cp_roller_{i+1}_inner_raceway and "
             "cp_roller_{i+1}_outer_raceway, with source/destination named to the corresponding contact patch selections.\n"
-            "- Create Solid Mechanics Contact features contact_roller_{i+1}_inner and contact_roller_{i+1}_outer, "
+            "- Also create Contact Pair tags cp_roller_{i+1}_cage_pocket from "
+            "sel_roller_{i+1}_cage_contact to sel_cage_pocket_{i+1}_contact so cage pocket walls can transfer contact load.\n"
+            "- Create Solid Mechanics Contact features contact_roller_{i+1}_inner, contact_roller_{i+1}_outer, "
+            "and contact_roller_{i+1}_cage, "
             "and set('pairs', [pair_tag]) on each Contact feature.\n"
+            "- Create maxop_cage as a component Maximum coupling operator scoped to sel_cage_body.\n"
             "- Use Solid Mechanics fixed support feature type 'Fixed', not 'FixedConstraint'.\n"
         )
     elif spec.segment_id == "D_mesh_study_results":
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
             "- Use model.component('comp1').cpl().create(maxop_tag, 'Maximum') for Maximum operators; do not use coupling().\n"
+            "- After creating std1/stat, call model.study('std1').feature('stat').set('activate', ['solid', 'on']).\n"
             "- Create probe_roller_{i+1}_max_mises in a 12-iteration loop and scope it through "
             "maxop_roller_{i+1}(solid.mises).\n"
+            "- Create probe_cage_max_mises and probe_cage_max_displacement scoped through maxop_cage.\n"
             "- Add model.param().set('probe_scope_verified', 'true') or equivalent model parameter evidence.\n"
         )
     return (
@@ -488,6 +510,70 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
             errors.append(message)
         else:
             warnings.append(message)
+    legacy_inner_domain_load_hits = [
+        token
+        for token in ("bodyload", "fpervol", "sel_inner_load_region")
+        if token in compact
+    ]
+    if legacy_inner_domain_load_hits:
+        errors.append(
+            "3D bearing radial load must be applied as an inner-bore BoundaryLoad/FperArea "
+            "on sel_inner_bore_load_surface, not as a domain BodyLoad/FperVol on sel_inner_load_region: "
+            + ", ".join(legacy_inner_domain_load_hits)
+        )
+    for token, label in (
+        ("boundaryload", "inner-bore BoundaryLoad feature"),
+        ("fperarea", "FperArea boundary traction vector"),
+        ("sel_inner_bore_load_surface", "named inner-bore load boundary selection"),
+        ("displacement2", "inner-bore displacement preload feature"),
+        ("inner_radial_displacement", "inner-bore radial displacement preload parameter"),
+    ):
+        if token not in compact:
+            errors.append(f"Generated 3D bearing code is missing expected {label}: {token}")
+    if "set('activate',['solid','on'])" not in compact and 'set("activate",["solid","on"])' not in compact:
+        errors.append("Generated 3D bearing code must explicitly activate Solid Mechanics in the stationary study.")
+    for token, label in (
+        ("maxop_cage", "cage-scoped Maximum coupling operator"),
+        ("probe_cage_max_mises", "cage maximum von Mises result probe"),
+        ("probe_cage_max_displacement", "cage maximum displacement result probe"),
+    ):
+        if token not in lowered:
+            errors.append(f"Generated 3D bearing code is missing expected cage participation audit: {label} ({token})")
+    cage_contact_pair_count = _count_3d_cage_contact_pair_tags(compact)
+    cage_contact_feature_count = _count_3d_cage_contact_feature_tags(compact)
+    roller_cage_selection_count = _count_3d_roller_cage_contact_selection_tags(compact)
+    cage_pocket_selection_count = _count_3d_cage_pocket_contact_selection_tags(compact)
+    has_loop_cage_pair_evidence = _has_segmented_loop_tag_evidence(code_for_validation, "cp_roller_", "_cage_pocket")
+    has_loop_cage_feature_evidence = _has_segmented_loop_tag_evidence(code_for_validation, "contact_roller_", "_cage")
+    has_loop_cage_selection_evidence = (
+        _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_cage_contact")
+        and _has_segmented_loop_tag_evidence(code_for_validation, "sel_cage_pocket_", "_contact")
+    )
+    if cage_contact_pair_count < VERIFIED_ROLLER_COUNT and not has_loop_cage_pair_evidence:
+        errors.append(
+            f"3D full-bearing code must create or loop-create at least {VERIFIED_ROLLER_COUNT} "
+            "roller-to-cage-pocket Contact Pair features."
+        )
+    if cage_contact_feature_count < VERIFIED_ROLLER_COUNT and not has_loop_cage_feature_evidence:
+        errors.append(
+            f"3D full-bearing code must create or loop-create at least {VERIFIED_ROLLER_COUNT} "
+            "Solid Mechanics Contact features for roller-to-cage-pocket load transfer."
+        )
+    if (
+        (
+            roller_cage_selection_count < VERIFIED_ROLLER_COUNT
+            or cage_pocket_selection_count < VERIFIED_ROLLER_COUNT
+        )
+        and not has_loop_cage_selection_evidence
+    ):
+        for token in (
+            "sel_roller_1_cage_contact",
+            "sel_roller_12_cage_contact",
+            "sel_cage_pocket_1_contact",
+            "sel_cage_pocket_12_contact",
+        ):
+            if token not in lowered:
+                errors.append(f"Generated 3D bearing code is missing cage contact selection evidence: {token}")
     if require_named_selections and not any(marker in compact for marker in ("selection().create", ".selection('", '.selection("')):
         errors.append("Production 3D bearing code must create/use named selections for contact, load, support, and cage entities.")
     if require_named_selections:
@@ -495,7 +581,7 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
             "sel_inner_raceway_contact",
             "sel_outer_raceway_contact",
             "sel_outer_support_surface",
-            "sel_inner_load_region",
+            "sel_inner_bore_load_surface",
             "sel_cage_body",
         ):
             if token not in lowered:
@@ -507,12 +593,19 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
                 errors.append(f"Production 3D bearing code is missing per-roller inner contact selection: sel_roller_{index}_inner_contact")
             if f"sel_roller_{index}_outer_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_outer_contact"):
                 errors.append(f"Production 3D bearing code is missing per-roller outer contact selection: sel_roller_{index}_outer_contact")
+            if f"sel_roller_{index}_cage_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_cage_contact"):
+                errors.append(f"Production 3D bearing code is missing per-roller cage contact selection: sel_roller_{index}_cage_contact")
             if f"sel_inner_raceway_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_inner_raceway_", "_contact"):
                 errors.append(f"Production 3D bearing code is missing per-roller inner raceway contact patch: sel_inner_raceway_{index}_contact")
             if f"sel_outer_raceway_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_outer_raceway_", "_contact"):
                 errors.append(f"Production 3D bearing code is missing per-roller outer raceway contact patch: sel_outer_raceway_{index}_contact")
+            if f"sel_cage_pocket_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_cage_pocket_", "_contact"):
+                errors.append(f"Production 3D bearing code is missing per-roller cage pocket contact patch: sel_cage_pocket_{index}_contact")
             if f"probe_roller_{index}_max_mises" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "probe_roller_", "_max_mises"):
                 errors.append(f"Production 3D bearing code is missing per-roller max-stress probe: probe_roller_{index}_max_mises")
+        for token in ("probe_cage_max_mises", "probe_cage_max_displacement"):
+            if token not in lowered:
+                errors.append(f"Production 3D bearing code is missing cage participation probe: {token}")
         if "probe_scope_verified" not in lowered:
             errors.append("Production 3D bearing code is missing verified selection-scoped per-roller probe evaluation evidence: probe_scope_verified")
     return {
@@ -535,6 +628,8 @@ def selection_plan(*, roller_count: int = VERIFIED_ROLLER_COUNT) -> dict[str, An
             "body_selection": f"sel_roller_{index}_body",
             "inner_contact_selection": f"sel_roller_{index}_inner_contact",
             "outer_contact_selection": f"sel_roller_{index}_outer_contact",
+            "cage_contact_selection": f"sel_roller_{index}_cage_contact",
+            "cage_pocket_contact_selection": f"sel_cage_pocket_{index}_contact",
             "risk_probe": f"probe_roller_{index}_max_mises",
         })
     return {
@@ -547,13 +642,15 @@ def selection_plan(*, roller_count: int = VERIFIED_ROLLER_COUNT) -> dict[str, An
             "outer_ring_body": "sel_outer_ring_body",
             "cage_body": "sel_cage_body",
             "outer_support_surface": "sel_outer_support_surface",
-            "inner_load_region": "sel_inner_load_region",
+            "inner_bore_load_surface": "sel_inner_bore_load_surface",
         },
         "roller_contact_sets": roller_contact_sets,
         "required_probes": [
             "probe_max_mises_global",
             "probe_max_contact_pressure_inner",
             "probe_max_contact_pressure_outer",
+            "probe_cage_max_mises",
+            "probe_cage_max_displacement",
             *[f"probe_roller_{index}_max_mises" for index in range(1, roller_count + 1)],
         ],
         "production_gate": "validate_3d_bearing_code_draft(require_named_selections=True)",
@@ -625,12 +722,12 @@ def selection_binding_contract(*, roller_count: int = VERIFIED_ROLLER_COUNT) -> 
             "binding_method": "named support boundary selection",
         },
         {
-            "tag": "sel_inner_load_region",
-            "role": "inner_ring_load_region",
-            "entitydim": 3,
+            "tag": "sel_inner_bore_load_surface",
+            "role": "inner_bore_radial_load_surface",
+            "entitydim": 2,
             "required": True,
             "expected_min_entities": 1,
-            "binding_method": "named load domain selection",
+            "binding_method": "named inner-bore boundary load selection",
         },
         {
             "tag": "sel_cage_body",
@@ -671,6 +768,15 @@ def selection_binding_contract(*, roller_count: int = VERIFIED_ROLLER_COUNT) -> 
                 "binding_method": "Intersection of roller boundary selection and local contact patch",
             },
             {
+                "tag": f"sel_roller_{index}_cage_contact",
+                "role": "roller_cage_pocket_contact_surface",
+                "roller": f"roller_{index}",
+                "entitydim": 2,
+                "required": True,
+                "expected_min_entities": 1,
+                "binding_method": "Intersection of roller boundary selection and cage-pocket contact patch",
+            },
+            {
                 "tag": f"sel_inner_raceway_{index}_contact",
                 "role": "inner_raceway_local_contact_surface",
                 "roller": f"roller_{index}",
@@ -687,6 +793,15 @@ def selection_binding_contract(*, roller_count: int = VERIFIED_ROLLER_COUNT) -> 
                 "required": True,
                 "expected_min_entities": 1,
                 "binding_method": "Intersection of outer-ring boundary selection and local contact patch",
+            },
+            {
+                "tag": f"sel_cage_pocket_{index}_contact",
+                "role": "cage_pocket_local_contact_surface",
+                "roller": f"roller_{index}",
+                "entitydim": 2,
+                "required": True,
+                "expected_min_entities": 1,
+                "binding_method": "Intersection of cage boundary selection and local cage-pocket contact patch",
             },
         ])
     return {
@@ -766,6 +881,12 @@ def audit_3d_selection_binding(
             "Generated code contains generic selection().all(); this is acceptable for materials, "
             "but load/contact/support selections should stay named and auditable."
         )
+    contact_source_overlap_audit = _audit_roller_contact_source_overlaps(
+        report_by_tag,
+        roller_count=roller_count,
+    )
+    errors.extend(contact_source_overlap_audit["errors"])
+    warnings.extend(contact_source_overlap_audit["warnings"])
     runtime_checked = selection_report is not None
     declared_count = sum(1 for item in items if item["present_in_code"] is True)
     bound_count = sum(1 for item in items if item["status"] == "runtime_bound")
@@ -779,6 +900,7 @@ def audit_3d_selection_binding(
         "runtime_bound_count": bound_count,
         "errors": errors,
         "warnings": warnings,
+        "contact_source_overlap_audit": contact_source_overlap_audit,
         "items": items,
         "contract": contract,
     }
@@ -814,7 +936,7 @@ def build_selection_binding_probe_code(
         "    except Exception as selection_probe_lookup_error:",
         "        selection_probe_error = str(selection_probe_lookup_error)",
         "    selection_probe_count = len(selection_probe_entities) if not selection_probe_error else -1",
-        "    selection_probe_entity_sample = ','.join(str(item) for item in selection_probe_entities[:20])",
+    "    selection_probe_entity_sample = ','.join(str(item) for item in selection_probe_entities)",
         "    output.write(",
         "        'SEL|'",
         "        + selection_probe_tag",
@@ -993,7 +1115,7 @@ def build_contact_convergence_report(
     selection_binding_audit: dict[str, Any] | None = None,
     physical_result_audit: dict[str, Any] | None = None,
     contact_pair_count: int | None = None,
-    expected_contact_pair_count: int = VERIFIED_ROLLER_COUNT * 2,
+    expected_contact_pair_count: int = VERIFIED_ROLLER_COUNT * 3,
 ) -> dict[str, Any]:
     """Build an auditable contact-convergence report for 3D bearing runs."""
     solve_result = solve_result or {}
@@ -1113,6 +1235,79 @@ def _normalize_selection_report(selection_report: dict[str, Any] | None) -> dict
     }
 
 
+def _audit_roller_contact_source_overlaps(
+    report_by_tag: dict[str, dict[str, Any]],
+    *,
+    roller_count: int = VERIFIED_ROLLER_COUNT,
+) -> dict[str, Any]:
+    """Detect one roller boundary being reused by competing contact source selections."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    overlaps: list[dict[str, Any]] = []
+    checked = bool(report_by_tag)
+    for index in range(1, roller_count + 1):
+        contact_tags = [
+            f"sel_roller_{index}_inner_contact",
+            f"sel_roller_{index}_outer_contact",
+            f"sel_roller_{index}_cage_contact",
+        ]
+        entity_sets = {
+            tag: _selection_entities_set(report_by_tag.get(tag, {}))
+            for tag in contact_tags
+        }
+        if not any(entity_sets.values()):
+            continue
+        for left_index, left_tag in enumerate(contact_tags):
+            for right_tag in contact_tags[left_index + 1:]:
+                shared = sorted(entity_sets[left_tag] & entity_sets[right_tag])
+                if not shared:
+                    continue
+                overlap = {
+                    "roller": f"roller_{index}",
+                    "left_selection": left_tag,
+                    "right_selection": right_tag,
+                    "shared_entities": shared,
+                    "shared_entity_count": len(shared),
+                }
+                overlaps.append(overlap)
+                errors.append(
+                    f"Roller {index} contact source selections overlap: "
+                    f"{left_tag} and {right_tag} share {len(shared)} boundary entities "
+                    f"({', '.join(str(item) for item in shared[:12])})."
+                )
+        for tag in contact_tags:
+            evidence = report_by_tag.get(tag, {})
+            entities = evidence.get("entities")
+            entity_count = _selection_entity_count(evidence)
+            if entity_count and isinstance(entities, list) and len(entities) < entity_count:
+                warnings.append(
+                    f"Selection {tag} overlap audit used a partial entity sample "
+                    f"({len(entities)}/{entity_count}); increase probe entity output for full coverage."
+                )
+    return {
+        "success": not errors,
+        "runtime_checked": checked,
+        "checked_contact_source_sets": roller_count * 3 if checked else 0,
+        "overlap_count": len(overlaps),
+        "overlaps": overlaps,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def _selection_entities_set(evidence: dict[str, Any]) -> set[int]:
+    entities = evidence.get("entities")
+    if not isinstance(entities, list | tuple | set):
+        return set()
+    output: set[int] = set()
+    for entity in entities:
+        try:
+            output.add(int(entity))
+        except (TypeError, ValueError):
+            continue
+    return output
+
+
 def _selection_entity_count(evidence: dict[str, Any]) -> int | None:
     if "entity_count" in evidence:
         return int(evidence["entity_count"])
@@ -1188,6 +1383,22 @@ def _count_3d_roller_feature_tags(compact_code: str) -> int:
 
 def _count_3d_cage_pocket_feature_tags(compact_code: str) -> int:
     return len(set(re.findall(r"(?:cage_pocket_|pocket_|pocket|pkt_?|cpocket_?)\d+", compact_code)))
+
+
+def _count_3d_cage_contact_pair_tags(compact_code: str) -> int:
+    return len(set(re.findall(r"cp_[a-z0-9_]*cage_pocket[a-z0-9_]*", compact_code)))
+
+
+def _count_3d_cage_contact_feature_tags(compact_code: str) -> int:
+    return len(set(re.findall(r"contact_[a-z0-9_]*cage[a-z0-9_]*", compact_code)))
+
+
+def _count_3d_roller_cage_contact_selection_tags(compact_code: str) -> int:
+    return len(set(re.findall(r"sel_[a-z0-9_]*cage_contact", compact_code)))
+
+
+def _count_3d_cage_pocket_contact_selection_tags(compact_code: str) -> int:
+    return len(set(re.findall(r"sel_[a-z0-9_]*(?:pocket|pkt)[a-z0-9_]*contact", compact_code)))
 
 
 def _has_segmented_loop_tag_evidence(java_code: str, prefix: str, suffix: str = "") -> bool:

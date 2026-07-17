@@ -172,13 +172,13 @@ MODEL_FAMILIES: tuple[ModelFamilySpec, ...] = (
             "outputs",
         ),
         default_assumptions={
-            "geometry": "rectangular FR4 board with simplified copper regions and chip heat sources",
-            "physics": "Heat Transfer in Solids for MVP; Electric Currents/Joule heating as follow-up",
+            "geometry": "engineering pure-thermal PCB: FR4 substrate, equivalent top/bottom copper layers, and two chip package heat-source regions",
+            "physics": "Heat Transfer in Solids only for P12; Electric Currents/Joule heating is a follow-up coupled model",
             "study_type": "stationary thermal",
             "cooling": "convection boundary where specified",
         },
-        starter_templates=(),
-        output_expressions=("T", "maxop1(T)", "ec.normJ"),
+        starter_templates=("pcb_thermal_plate_seed",),
+        output_expressions=("T", "maxop1(T)", "chip_hotspot_indicator"),
         quality_gate="validate_pcb_thermal_electric_code_draft",
     ),
     ModelFamilySpec(

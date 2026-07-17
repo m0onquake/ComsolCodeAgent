@@ -23,6 +23,7 @@ from comsol_agent.simulation.bearing_contact import (
     plan_bearing_contact_setup,
     plan_multiroller_bearing_setup,
 )
+from comsol_agent.simulation.bearing_families import plan_bearing_modeling_request
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
@@ -117,6 +118,37 @@ def simulation_plan_multiroller_bearing(
         }
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+
+def simulation_plan_bearing_modeling_request(
+    user_request: str,
+    known_params: dict | None = None,
+    allow_defaults: bool = False,
+    preferred_bearing_type: str | None = None,
+    contact_policy: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Plan topology-specific bearing modeling without template substitution."""
+    try:
+        plan = plan_bearing_modeling_request(
+            user_request=user_request,
+            known_params=known_params or {},
+            allow_defaults=allow_defaults,
+            preferred_bearing_type=preferred_bearing_type,
+            contact_policy=contact_policy,
+            archive_path=archive_path,
+        )
+        return {
+            "success": True,
+            **plan,
+            "note": (
+                "Natural-language bearing intent is kept out of resolved_executable_params. "
+                "Deep-groove 2D contact cells are labeled smoke fidelity and are rejected for "
+                "tapered/thrust/needle/angular-contact topologies unless a matching topology template exists."
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "bearing_family": "general_bearing"}
 
 
 def simulation_probe_3d_selection_binding(
@@ -470,7 +502,7 @@ def simulation_plan_modeling_request(
     """Plan a model-family-neutral COMSOL modeling request."""
     try:
         raw_known = known_params or {}
-        normalized_known = _normalize_generated_code_params(raw_known)
+        normalized_known = _normalize_modeling_intent_params(raw_known)
         executable_known = _normalize_modeling_known_params(raw_known)
         family = infer_model_family(user_request, preferred_model_name)
         missing_decisions = _missing_model_family_decisions(
@@ -868,13 +900,22 @@ def simulation_run_template(
             active_model_name = model_name
 
         execution = comsol_execute_java(effective_code, active_model_name)
+        parameter_override = None
+        parameter_override_details = _template_parameter_override_details(effective_params)
+        if execution.get("success") and effective_params:
+            parameter_override = comsol_execute_java(
+                parameter_override_details["java_code"],
+                active_model_name,
+            )
         close_result = _close_after_template_run(
             active_model_name,
             close_model=close_model,
             created_by_tool=created_by_tool,
         )
         result = {
-            "success": bool(execution.get("success")),
+            "success": bool(execution.get("success")) and (
+                parameter_override is None or bool(parameter_override.get("success"))
+            ),
             "executed": True,
             "template_name": name or (template.name if template else None),
             "model_name": active_model_name,
@@ -885,11 +926,14 @@ def simulation_run_template(
             "validation": validation,
             "create": create_result,
             "execution": execution,
+            "parameter_override": parameter_override,
+            "parameter_override_details": parameter_override_details,
             "close": close_result,
             "tool_sequence": [
                 *(["comsol_create_model"] if create_result else []),
                 "simulation_validate_template" if validate_first else "template_validation_inline",
                 "comsol_execute_java",
+                *(["comsol_execute_java(parameter_override)"] if parameter_override else []),
                 *(["comsol_close_model"] if close_result else []),
             ],
         }
@@ -912,6 +956,61 @@ def simulation_run_template(
             "template_name": name,
             "model_name": active_model_name or model_name or create_model_name,
         }
+
+
+def _template_parameter_override_code(params: dict) -> str:
+    """Build safe COMSOL parameter override code for executable template params."""
+    return _template_parameter_override_details(params)["java_code"]
+
+
+def _template_parameter_override_details(params: dict) -> dict:
+    """Build safe override code and an audit record of applied/skipped params."""
+    lines: list[str] = []
+    applied: dict[str, str] = {}
+    skipped: dict[str, str] = {}
+    for raw_name, raw_value in sorted(params.items()):
+        name = str(raw_name)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            skipped[name] = "invalid_parameter_name"
+            continue
+        if isinstance(raw_value, (dict, list, tuple, set)):
+            skipped[name] = "non_scalar_value"
+            continue
+        value = str(raw_value)
+        if not _looks_like_executable_comsol_parameter_value(value):
+            skipped[name] = "not_unit_numeric_dimensionless_or_expression"
+            continue
+        lines.append(f"model.param().set({name!r}, {value!r});")
+        applied[name] = value
+    lines.extend([
+        "try:",
+        "    model.component('comp1').geom('geom1').run();",
+        "except Exception:",
+        "    pass",
+        "try:",
+        "    model.component('comp1').mesh('mesh1').run();",
+        "except Exception:",
+        "    pass",
+    ])
+    return {
+        "java_code": "\n".join(lines),
+        "applied_params": applied,
+        "skipped_params": skipped,
+        "rebuild_attempts": ["comp1/geom1", "comp1/mesh1"],
+    }
+
+
+def _looks_like_executable_comsol_parameter_value(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped or stripped.lower() in {"true", "false", "yes", "no"}:
+        return False
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", stripped):
+        return True
+    if "[" in stripped and "]" in stripped:
+        return True
+    if re.search(r"[+\-*/()]", stripped) and re.search(r"[A-Za-z0-9_]", stripped):
+        return True
+    return False
 
 
 def simulation_list_artifacts(
@@ -1911,8 +2010,18 @@ def _normalize_modeling_known_params(params: dict) -> dict[str, str]:
         "board_length",
         "board_width",
         "board_thickness",
+        "copper_thickness",
         "chip_power",
+        "chip1_power",
+        "chip2_power",
+        "chip_size",
+        "chip_spacing",
         "convection_h",
+        "k_fr4",
+        "k_copper",
+        "k_chip",
+        "rho_fr4",
+        "Cp_fr4",
         "gear_module",
         "tooth_count",
         "pressure_angle",
@@ -1934,6 +2043,12 @@ def _normalize_modeling_known_params(params: dict) -> dict[str, str]:
     if isinstance(nested, dict):
         executable.update(_normalize_generated_code_params(nested))
     return executable
+
+
+def _normalize_modeling_intent_params(params: dict) -> dict[str, str]:
+    return _normalize_generated_code_params(
+        {key: value for key, value in params.items() if not isinstance(value, dict)}
+    )
 
 
 def _missing_model_family_decisions(
@@ -2147,7 +2262,7 @@ def _modeling_recommended_workflow(
         }
     if family.name == "bearing_contact":
         return {
-            "action": "use_existing_bearing_planner_then_template_or_generated_code",
+            "action": "use_bearing_family_planner_then_existing_contact_or_3d_workflow",
             "default_policy": "existing_bearing_defaults_allowed" if allow_defaults else "respect_user_params",
         }
     return {
@@ -2166,6 +2281,7 @@ def _modeling_next_tool_chain(
         return ["ask_follow_up_questions", "simulation_plan_modeling_request"]
     if family.name == "bearing_contact":
         return [
+            "simulation_plan_bearing_modeling_request",
             "simulation_plan_bearing_contact",
             "simulation_search_templates",
             "simulation_read_template if bearing_contact_pair_seed or bearing_contact_hertz_seed fits",

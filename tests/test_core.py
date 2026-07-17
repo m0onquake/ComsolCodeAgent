@@ -7,6 +7,7 @@ COMSOL-specific tests require a local COMSOL installation and are marked accordi
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,7 @@ class TestToolRegistry:
         assert "comsol_solve" in names
         assert "comsol_evaluate" in names
         assert "comsol_set_parameter" in names
+        assert "simulation_plan_bearing_modeling_request" in names
         assert "simulation_plan_bearing_contact" in names
         assert "simulation_plan_multiroller_bearing" in names
         assert "simulation_probe_3d_selection_binding" in names
@@ -391,6 +393,7 @@ class TestSystemPrompt:
         assert "tool" in prompt.lower()
         assert "Missing Parameters and Defaults" in prompt
         assert "bearing_contact_hertz_seed" in prompt
+        assert "simulation_plan_bearing_modeling_request" in prompt
         assert "simulation_plan_generated_code" in prompt
         assert "template-first but not template-only" in prompt
         assert "simulation_probe_3d_selection_binding" in prompt
@@ -2191,6 +2194,33 @@ class TestSimulationSkills:
         assert pair_result["validation"]["errors"] == []
         assert "contact_interference" in pair_result["validation"]["params_checked"]
 
+    def test_template_parameter_override_filters_intent_and_rebuilds_geometry_mesh(self):
+        from comsol_agent.tools.simulation import _template_parameter_override_details
+
+        details = _template_parameter_override_details(
+            {
+                "radial_load": "2000[N]",
+                "contact_interference": "8[um]",
+                "ball_diameter": "9[mm]",
+                "bearing_type": "圆锥滚子轴承",
+                "contact_policy": "真实接触",
+                "cage_included": "true",
+            }
+        )
+        code = details["java_code"]
+
+        assert details["applied_params"] == {
+            "ball_diameter": "9[mm]",
+            "contact_interference": "8[um]",
+            "radial_load": "2000[N]",
+        }
+        assert details["skipped_params"]["bearing_type"] == "not_unit_numeric_dimensionless_or_expression"
+        assert "model.param().set('radial_load', '2000[N]');" in code
+        assert "model.param().set('contact_interference', '8[um]');" in code
+        assert "model.param().set('ball_diameter', '9[mm]');" in code
+        assert "geom('geom1').run()" in code
+        assert "mesh('mesh1').run()" in code
+
     def test_bearing_contact_planner_asks_for_required_missing_params(self):
         from comsol_agent.tools.simulation import simulation_plan_bearing_contact
 
@@ -2520,10 +2550,12 @@ class TestSimulationSkills:
             VERIFIED_3D_FULL_BEARING_CODE,
             __file__ as demo_script_file,
             SEGMENTED_3D_CODE_SPECS as SCRIPT_SEGMENTED_3D_CODE_SPECS,
+            _build_verified_3d_full_bearing_code,
             build_3d_bearing_code_generation_prompt,
             build_3d_bearing_execution_prompt,
             apply_bounded_3d_generated_code_repairs,
             apply_runtime_preflight_3d_repairs,
+            _build_local_two_body_contact_smoke_code,
         )
 
         assert SCRIPT_SEGMENTED_3D_CODE_SPECS is SEGMENTED_3D_CODE_SPECS
@@ -2532,6 +2564,7 @@ class TestSimulationSkills:
         assert "class Segmented3DCodeSpec" not in demo_source
         assert "def validate_3d_bearing_code_draft(" not in demo_source
         assert "def _build_3d_execution_context(" not in demo_source
+        assert "roller1_outer_raceway_partition_with_3um_source_closure_diagnostic" in demo_source
 
         execution_context = build_3d_execution_context(
             workflow="bearing_3d_generated_code_agent_execution",
@@ -2590,6 +2623,245 @@ class TestSimulationSkills:
         assert "selection().create('sel_inner_raceway_12_contact', 'Intersection')" in VERIFIED_3D_FULL_BEARING_CODE
         assert "selection('sel_inner_raceway_12_contact').set('input', ['box_roller_12_inner_contact_patch', 'geom1_inner_ring_bnd'])" in VERIFIED_3D_FULL_BEARING_CODE
         assert ".destination().named('sel_outer_raceway_12_contact')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_inner_bore_load_surface" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_outer_support_xpos" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "selection().create('sel_outer_support_surface', 'Union')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "selection('sel_outer_support_surface').set('xmin', '-41[mm]')" not in VERIFIED_3D_FULL_BEARING_CODE
+        assert "'BoundaryLoad', 2" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "FperArea" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "inner_radial_displacement" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "'Displacement2', 2" in VERIFIED_3D_FULL_BEARING_CODE
+        assert ".set('U0', ['inner_radial_displacement', '0', '0'])" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_inner_ring_body" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "maxop_inner_ring" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "cpl('maxop_inner_ring').selection().named('sel_inner_ring_body')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "probe_inner_ring_max_mises" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "BodyLoad" not in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_inner_load_region" not in VERIFIED_3D_FULL_BEARING_CODE
+        assert "maxop_cage" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "probe_cage_max_mises" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "probe_cage_max_displacement" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_roller_12_cage_contact" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "sel_cage_pocket_12_contact" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "cp_roller_12_cage_pocket" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "contact_roller_12_cage" in VERIFIED_3D_FULL_BEARING_CODE
+        phase_shifted_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            roller_angular_offset_deg=15.0,
+        )
+        assert "feature('roller_1').set('pos', ['26.080[mm]', '6.988[mm]', '-roller_length/2'])" in phase_shifted_fixture
+        assert "feature('roller_1').set('pos', ['27.000[mm]', '0.000[mm]', '-roller_length/2'])" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "roller1_outer_aux_raceway_patch" not in VERIFIED_3D_FULL_BEARING_CODE
+        aux_patch_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_aux_patch",
+        )
+        assert "roller1_outer_aux_raceway_patch" in aux_patch_fixture
+        assert "geom1_roller1_outer_aux_raceway_patch_bnd" in aux_patch_fixture
+        assert "fix_roller1_outer_aux_raceway_patch" in aux_patch_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller1_outer_aux_raceway_patch_bnd'])" in aux_patch_fixture
+        assert "local_contact_patch_mode=roller1_outer_aux_patch" in aux_patch_fixture
+        seam_shift_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_cylinder_seam_shift15",
+        )
+        assert "feature('roller_1').set('axis', ['0', '0', '1'])" in seam_shift_fixture
+        assert "feature('roller_1').set('rot', '15[deg]')" in seam_shift_fixture
+        assert "ROLLER1_CYLINDER_SEAM_SHIFT|roller=1|axis=0,0,1|rot=15[deg]" in seam_shift_fixture
+        assert "feature('roller_2').set('rot', '15[deg]')" not in seam_shift_fixture
+        assert "local_contact_patch_mode=roller1_cylinder_seam_shift15" in seam_shift_fixture
+        retained_conformal_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_retained_conformal_patch",
+        )
+        assert "roller1_outer_retained_conformal_patch" in retained_conformal_fixture
+        assert "roller1_outer_conformal_patch_outer" in retained_conformal_fixture
+        assert "roller1_outer_conformal_patch_inner" in retained_conformal_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_GEOM" in retained_conformal_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND" in retained_conformal_fixture
+        assert "geom1_roller1_outer_retained_conformal_patch_bnd" in retained_conformal_fixture
+        assert "fix_roller1_outer_retained_conformal_patch" in retained_conformal_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" in retained_conformal_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" not in retained_conformal_fixture
+        assert "local_contact_patch_mode=roller1_outer_retained_conformal_patch" in retained_conformal_fixture
+        assert "roller1_outer_retained_conformal_patch" not in VERIFIED_3D_FULL_BEARING_CODE
+        retained_conformal_closure_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_retained_conformal_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in retained_conformal_closure_fixture
+        assert "combined_with=roller1_outer_retained_conformal_source_closure3um" in retained_conformal_closure_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_GEOM" in retained_conformal_closure_fixture
+        assert "source_closure3um=true" in retained_conformal_closure_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND" in retained_conformal_closure_fixture
+        assert "geom1_roller1_outer_retained_conformal_patch_bnd" in retained_conformal_closure_fixture
+        assert "fix_roller1_outer_retained_conformal_patch" in retained_conformal_closure_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in retained_conformal_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in retained_conformal_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.386[mm]', '13.500[mm]', '-roller_length/2'])" not in retained_conformal_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in retained_conformal_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" in retained_conformal_closure_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" not in retained_conformal_closure_fixture
+        assert "cp_roller_1_outer_raceway" in retained_conformal_closure_fixture
+        assert "local_contact_patch_mode=roller1_outer_retained_conformal_source_closure3um" in retained_conformal_closure_fixture
+        assert "roller1_outer_retained_conformal_target_with_3um_source_closure_diagnostic" in demo_source
+        retained_conformal_equal_height_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_retained_conformal_equal_height_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in retained_conformal_equal_height_fixture
+        assert "combined_with=roller1_outer_retained_conformal_equal_height_source_closure3um" in retained_conformal_equal_height_fixture
+        assert "roller1_outer_conformal_patch_outer').set('h', '16.4[mm]')" in retained_conformal_equal_height_fixture
+        assert "roller1_outer_conformal_patch_inner').set('h', '16.4[mm]')" in retained_conformal_equal_height_fixture
+        assert "roller1_outer_conformal_patch_inner').set('pos', ['0', '0', '-8.2[mm]'])" in retained_conformal_equal_height_fixture
+        assert "source_closure3um=true" in retained_conformal_equal_height_fixture
+        assert "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND" in retained_conformal_equal_height_fixture
+        assert "geom1_roller1_outer_retained_conformal_patch_bnd" in retained_conformal_equal_height_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in retained_conformal_equal_height_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" in retained_conformal_equal_height_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" not in retained_conformal_equal_height_fixture
+        assert "cp_roller_1_outer_raceway" in retained_conformal_equal_height_fixture
+        assert "local_contact_patch_mode=roller1_outer_retained_conformal_equal_height_source_closure3um" in retained_conformal_equal_height_fixture
+        assert "roller1_outer_retained_conformal_equal_height_target_with_3um_source_closure_diagnostic" in demo_source
+        retained_conformal_sector_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_retained_conformal_sector_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in retained_conformal_sector_fixture
+        assert "combined_with=roller1_outer_retained_conformal_sector_source_closure3um" in retained_conformal_sector_fixture
+        assert "roller1_outer_conformal_patch_annulus" in retained_conformal_sector_fixture
+        assert "roller1_outer_conformal_patch_window" in retained_conformal_sector_fixture
+        assert "roller1_outer_retained_conformal_patch', 'Intersection'" in retained_conformal_sector_fixture
+        assert "sector=true" in retained_conformal_sector_fixture
+        assert "source_closure3um=true" in retained_conformal_sector_fixture
+        assert (
+            "ROLLER1_OUTER_RETAINED_CONFORMAL_PATCH_BIND|source=sel_roller_1_outer_contact|"
+            "destination=sel_outer_raceway_1_contact|pair=cp_roller_1_outer_raceway|"
+            "box=box_roller_1_outer_contact_patch|source_closure3um=true"
+        ) in retained_conformal_sector_fixture
+        assert "geom1_roller1_outer_retained_conformal_patch_bnd" in retained_conformal_sector_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in retained_conformal_sector_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in retained_conformal_sector_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in retained_conformal_sector_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" in retained_conformal_sector_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_roller1_outer_retained_conformal_patch_bnd'])" not in retained_conformal_sector_fixture
+        assert "cp_roller_1_outer_raceway" in retained_conformal_sector_fixture
+        assert "local_contact_patch_mode=roller1_outer_retained_conformal_sector_source_closure3um" in retained_conformal_sector_fixture
+        assert "roller1_outer_retained_conformal_sector_target_with_3um_source_closure_diagnostic" in demo_source
+        construction_partition_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_construction_partition_patch",
+        )
+        assert "partition_tool_roller1_outer_raceway_patch" in construction_partition_fixture
+        assert "partition_tool_roller1_outer_source_patch" in construction_partition_fixture
+        assert "partition_roller1_outer_raceway_construction_patch" in construction_partition_fixture
+        assert "partition_roller1_outer_source_construction_patch" in construction_partition_fixture
+        assert "ROLLER1_OUTER_CONSTRUCTION_PARTITION_PATCH_GEOM" in construction_partition_fixture
+        assert "ROLLER1_OUTER_CONSTRUCTION_PARTITION_PATCH_BIND" in construction_partition_fixture
+        assert "geom1_partition_roller1_outer_raceway_construction_patch_bnd" in construction_partition_fixture
+        assert "geom1_partition_roller1_outer_source_construction_patch_bnd" in construction_partition_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_source_construction_patch_bnd'])" in construction_partition_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_construction_patch_bnd'])" in construction_partition_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_construction_patch_bnd'])" not in construction_partition_fixture
+        assert "local_contact_patch_mode=roller1_outer_construction_partition_patch" in construction_partition_fixture
+        assert "partition_roller1_outer_raceway_construction_patch" not in VERIFIED_3D_FULL_BEARING_CODE
+        construction_partition_closure_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_construction_partition_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in construction_partition_closure_fixture
+        assert "combined_with=roller1_outer_construction_partition_source_closure3um" in construction_partition_closure_fixture
+        assert "source_closure3um=true" in construction_partition_closure_fixture
+        assert "partition_tool_roller1_outer_raceway_patch" in construction_partition_closure_fixture
+        assert "partition_tool_roller1_outer_source_patch" in construction_partition_closure_fixture
+        assert "partition_roller1_outer_raceway_construction_patch" in construction_partition_closure_fixture
+        assert "partition_roller1_outer_source_construction_patch" in construction_partition_closure_fixture
+        assert "ROLLER1_OUTER_CONSTRUCTION_PARTITION_PATCH_GEOM" in construction_partition_closure_fixture
+        assert "ROLLER1_OUTER_CONSTRUCTION_PARTITION_PATCH_BIND" in construction_partition_closure_fixture
+        assert "geom1_partition_roller1_outer_raceway_construction_patch_bnd" in construction_partition_closure_fixture
+        assert "geom1_partition_roller1_outer_source_construction_patch_bnd" in construction_partition_closure_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in construction_partition_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in construction_partition_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.386[mm]', '13.500[mm]', '-roller_length/2'])" not in construction_partition_closure_fixture
+        assert "cp_roller_1_outer_raceway" in construction_partition_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_source_construction_patch_bnd'])" in construction_partition_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_construction_patch_bnd'])" in construction_partition_closure_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_construction_patch_bnd'])" not in construction_partition_closure_fixture
+        assert "local_contact_patch_mode=roller1_outer_construction_partition_source_closure3um" in construction_partition_closure_fixture
+        assert "roller1_outer_source_destination_construction_partition_with_3um_source_closure_diagnostic" in demo_source
+        raceway_partition_only_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_raceway_partition_only",
+        )
+        assert "partition_tool_roller1_outer_raceway_only_patch" in raceway_partition_only_fixture
+        assert "partition_roller1_outer_raceway_only_patch" in raceway_partition_only_fixture
+        assert "ROLLER1_OUTER_RACEWAY_PARTITION_ONLY_GEOM" in raceway_partition_only_fixture
+        assert "ROLLER1_OUTER_RACEWAY_PARTITION_ONLY_BIND" in raceway_partition_only_fixture
+        assert "geom1_partition_roller1_outer_raceway_only_patch_bnd" in raceway_partition_only_fixture
+        assert "geom1_partition_roller1_outer_source_construction_patch_bnd" not in raceway_partition_only_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in raceway_partition_only_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_only_patch_bnd'])" in raceway_partition_only_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_only_patch_bnd'])" not in raceway_partition_only_fixture
+        assert "local_contact_patch_mode=roller1_outer_raceway_partition_only" in raceway_partition_only_fixture
+        assert "partition_roller1_outer_raceway_only_patch" not in VERIFIED_3D_FULL_BEARING_CODE
+        source_closure_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_raceway_partition_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in source_closure_fixture
+        assert "source_closure3um=true" in source_closure_fixture
+        assert "partition_tool_roller1_outer_raceway_only_patch" in source_closure_fixture
+        assert "partition_roller1_outer_raceway_only_patch" in source_closure_fixture
+        assert "ROLLER1_OUTER_RACEWAY_PARTITION_ONLY_BIND" in source_closure_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in source_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in source_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.386[mm]', '13.500[mm]', '-roller_length/2'])" not in source_closure_fixture
+        assert "cp_roller_1_outer_raceway" in source_closure_fixture
+        assert "geom1_partition_roller1_outer_source_construction_patch_bnd" not in source_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in source_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_only_patch_bnd'])" in source_closure_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_only_patch_bnd'])" not in source_closure_fixture
+        assert "local_contact_patch_mode=roller1_outer_raceway_partition_source_closure3um" in source_closure_fixture
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" not in VERIFIED_3D_FULL_BEARING_CODE
+        narrow_destination_closure_fixture = _build_verified_3d_full_bearing_code(
+            roller_count=12,
+            local_contact_patch_mode="roller1_outer_raceway_narrow_partition_source_closure3um",
+        )
+        assert "ROLLER1_OUTER_SOURCE_CLOSURE" in narrow_destination_closure_fixture
+        assert "combined_with=roller1_outer_raceway_narrow_partition_source_closure3um" in narrow_destination_closure_fixture
+        assert "partition_tool_roller1_outer_raceway_narrow_closure_patch" in narrow_destination_closure_fixture
+        assert "partition_roller1_outer_raceway_narrow_closure_patch" in narrow_destination_closure_fixture
+        assert "ROLLER1_OUTER_RACEWAY_NARROW_PARTITION_SOURCE_CLOSURE_GEOM" in narrow_destination_closure_fixture
+        assert "ROLLER1_OUTER_RACEWAY_NARROW_PARTITION_SOURCE_CLOSURE_BIND" in narrow_destination_closure_fixture
+        assert "tool_size=0.35x1.2x16.4[mm]" in narrow_destination_closure_fixture
+        assert "feature('roller_1').set('pos', ['27.003[mm]', '0.000[mm]', '-roller_length/2'])" in narrow_destination_closure_fixture
+        assert "feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in narrow_destination_closure_fixture
+        assert "cp_roller_1_outer_raceway" in narrow_destination_closure_fixture
+        assert "geom1_partition_roller1_outer_source_construction_patch_bnd" not in narrow_destination_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_roller_1_bnd'])" in narrow_destination_closure_fixture
+        assert "set('input', ['box_roller_1_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_narrow_closure_patch_bnd'])" in narrow_destination_closure_fixture
+        assert "set('input', ['box_roller_2_outer_contact_patch', 'geom1_partition_roller1_outer_raceway_narrow_closure_patch_bnd'])" not in narrow_destination_closure_fixture
+        assert "local_contact_patch_mode=roller1_outer_raceway_narrow_partition_source_closure3um" in narrow_destination_closure_fixture
+        assert "roller1_outer_raceway_narrow_partition_with_3um_source_closure_diagnostic" in demo_source
+        assert "partition_roller1_outer_raceway_narrow_closure_patch" not in VERIFIED_3D_FULL_BEARING_CODE
+        local_two_body_code = _build_local_two_body_contact_smoke_code(contact_interference="7[um]")
+        assert "LOCAL_TWO_BODY_CONTACT_SMOKE_BUILT" in local_two_body_code
+        assert "roller_radius_local', '4[mm] + 7[um]'" in local_two_body_code
+        assert "sel_roller_1_outer_contact" in local_two_body_code
+        assert "sel_outer_raceway_1_contact" in local_two_body_code
+        assert "cp_roller_1_outer_raceway" in local_two_body_code
+        assert "solid').feature('contact_roller_1_outer').set('pairs', ['cp_roller_1_outer_raceway'])" in local_two_body_code
+        assert "set('useRelaxation', 'Always')" in local_two_body_code
+        local_two_body_roller2_code = _build_local_two_body_contact_smoke_code(
+            contact_interference="7[um]",
+            roller_id=2,
+        )
+        assert "LOCAL_TWO_BODY_CONTACT_SMOKE_BUILT|roller=2" in local_two_body_roller2_code
+        assert "geom1').feature('roller_2').set('pos', ['23.383[mm]', '13.500[mm]', '-roller_length/2'])" in local_two_body_roller2_code
+        assert "sel_roller_2_outer_contact" in local_two_body_roller2_code
+        assert "sel_outer_raceway_2_contact" in local_two_body_roller2_code
+        assert "cp_roller_2_outer_raceway" in local_two_body_roller2_code
+        assert "['0.866025403784*local_body_load', '0.5*local_body_load', '0']" in local_two_body_roller2_code
 
         segment_b = SEGMENTED_3D_CODE_SPECS[1]
         segment_prompt = build_segmented_3d_generation_prompt(
@@ -2664,6 +2936,16 @@ class TestSimulationSkills:
         assert not any("sel_roller_1_inner_contact" in error for error in production_quality["errors"])
         assert not any("sel_roller_1_outer_contact" in error for error in production_quality["errors"])
         assert production_quality["errors"] == []
+        old_inner_domain_load_code = (
+            VERIFIED_3D_FULL_BEARING_CODE
+            + "\nmodel.component('comp1').selection().create('sel_inner_load_region', 'Box');"
+            + "\nmodel.component('comp1').physics('solid').create('legacy_load_inner', 'BodyLoad', 3);"
+            + "\nmodel.component('comp1').physics('solid').feature('legacy_load_inner').selection().named('sel_inner_load_region');"
+            + "\nmodel.component('comp1').physics('solid').feature('legacy_load_inner').set('FperVol', ['radial_load', '0', '0']);"
+        )
+        old_inner_domain_load_quality = validate_3d_bearing_code_draft(old_inner_domain_load_code)
+        assert old_inner_domain_load_quality["success"] is False
+        assert any("inner-bore BoundaryLoad" in error for error in old_inner_domain_load_quality["errors"])
 
         loop_family_code = VERIFIED_3D_FULL_BEARING_CODE + """
 num_rollers = 12
@@ -2693,7 +2975,15 @@ for i in range(num_rollers):
         binding_contract = selection_binding_contract()
         assert binding_contract["kind"] == "bearing_3d_selection_binding_contract"
         assert binding_contract["roller_count"] == VERIFIED_ROLLER_COUNT
-        assert len(binding_contract["entries"]) == 5 + 5 * VERIFIED_ROLLER_COUNT
+        assert len(binding_contract["entries"]) == 5 + 7 * VERIFIED_ROLLER_COUNT
+        assert any(
+            entry["tag"] == "sel_inner_bore_load_surface" and entry["entitydim"] == 2
+            for entry in binding_contract["entries"]
+        )
+        assert any(
+            entry["tag"] == "sel_cage_pocket_12_contact" and entry["entitydim"] == 2
+            for entry in binding_contract["entries"]
+        )
         code_binding_audit = audit_3d_selection_binding(
             java_code=VERIFIED_3D_FULL_BEARING_CODE,
         )
@@ -2714,6 +3004,19 @@ for i in range(num_rollers):
         )
         assert runtime_binding_audit["success"] is True
         assert runtime_binding_audit["runtime_bound_count"] == runtime_binding_audit["required_selection_count"]
+        runtime_selection_report["sel_roller_1_inner_contact"]["entities"] = [183, 184, 185, 186]
+        runtime_selection_report["sel_roller_1_outer_contact"]["entities"] = [185, 186, 187, 188]
+        runtime_selection_report["sel_roller_1_cage_contact"]["entities"] = [183, 184, 187, 188]
+        overlap_binding_audit = audit_3d_selection_binding(
+            java_code=VERIFIED_3D_FULL_BEARING_CODE,
+            selection_report=runtime_selection_report,
+        )
+        assert overlap_binding_audit["success"] is False
+        assert overlap_binding_audit["contact_source_overlap_audit"]["overlap_count"] == 3
+        assert any("Roller 1 contact source selections overlap" in error for error in overlap_binding_audit["errors"])
+        runtime_selection_report["sel_roller_1_inner_contact"].pop("entities")
+        runtime_selection_report["sel_roller_1_outer_contact"].pop("entities")
+        runtime_selection_report["sel_roller_1_cage_contact"].pop("entities")
         runtime_selection_report["sel_roller_1_inner_contact"]["entity_count"] = 0
         failed_binding_audit = audit_3d_selection_binding(
             java_code=VERIFIED_3D_FULL_BEARING_CODE,
@@ -2783,7 +3086,7 @@ for i in range(num_rollers):
             metrics={"contact_pressure_guess": 1.95e6},
             selection_binding_audit=runtime_binding_audit,
             physical_result_audit=production_physical_audit,
-            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 3,
         )
         assert contact_report["success"] is True
         assert contact_report["runtime_verified"] is True
@@ -2792,7 +3095,7 @@ for i in range(num_rollers):
             metrics={"contact_pressure_guess": 1.95e6},
             selection_binding_audit=code_binding_audit,
             physical_result_audit=production_physical_audit,
-            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 3,
         )
         assert unverified_contact_report["success"] is True
         assert unverified_contact_report["runtime_verified"] is False
@@ -2802,7 +3105,7 @@ for i in range(num_rollers):
             metrics={"contact_pressure_guess": 1.95e6},
             selection_binding_audit=code_binding_audit,
             physical_result_audit=production_physical_audit,
-            contact_pair_count=VERIFIED_ROLLER_COUNT * 2,
+            contact_pair_count=VERIFIED_ROLLER_COUNT * 3,
         )
         assert code_only_contact_report["success"] is True
         assert code_only_contact_report["runtime_verified"] is False
@@ -3026,6 +3329,3467 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             assert any("twelfth roller" in error for error in historical_repaired_quality["errors"])
             assert any("Boolean pocket cutouts" in error for error in historical_repaired_quality["errors"])
 
+    def test_3d_staged_contact_solve_orders_raceway_before_cage(self, monkeypatch, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        setup_codes: list[str] = []
+        solve_calls: list[str] = []
+
+        def fake_execute_java(code: str, *, model_name: str):
+            setup_codes.append(code)
+            return {"success": True, "model_name": model_name, "status": "configured"}
+
+        def fake_solve(model_name: str):
+            solve_calls.append(model_name)
+            return {"success": True, "model_name": model_name, "status": "solved"}
+
+        def fake_evaluate(model_name: str, expression: str):
+            return {
+                "success": True,
+                "model_name": model_name,
+                "expression": expression,
+                "statistics": {"max": 10.0, "mean": 1.0},
+            }
+
+        def fake_stage_plot(model_name: str, *, stage_name: str, output_dir):
+            return {
+                "success": True,
+                "model_name": model_name,
+                "stage": stage_name,
+                "plot_type": "native_comsol_volume",
+                "filepath": str(output_dir / f"{stage_name}.png"),
+                "export_method": "java:Image2D:Volume",
+                "dataset": "dset1",
+            }
+
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_solve", fake_solve)
+        monkeypatch.setattr(demo, "comsol_evaluate", fake_evaluate)
+        monkeypatch.setattr(demo, "_export_native_3d_stage_volume_plot", fake_stage_plot)
+
+        raceway_only = demo._run_3d_staged_contact_solve("staged_model")
+        assert raceway_only["success"] is True
+        assert raceway_only["run_full_cage_stage"] is False
+        assert raceway_only["contact_stage_mode"] == "all_raceway"
+        assert len(raceway_only["stages"]) == 3
+        assert raceway_only["stages"][0]["contact_scope"] == "roller_inner_outer_raceway_only"
+        assert raceway_only["stages"][1]["name"] == "raceway_contact_refined_preload"
+        assert raceway_only["stages"][2]["name"] == "raceway_contact_radial_load_transfer"
+        assert raceway_only["stages"][2]["inner_bore_load_active"] is True
+        assert raceway_only["stages"][2]["displacement_preload_active"] is False
+        assert raceway_only["stages"][0]["temporary_cage_stabilization_active"] is True
+        assert "raceway_contact_active=True" in setup_codes[0]
+        assert "staged_cage.active(False and staged_active)" in setup_codes[0]
+        assert "staged_cage.active(False and staged_active)" in setup_codes[1]
+        assert "fix_cage_stage_stabilization" in setup_codes[0]
+        assert "temporary_cage_stabilization_active=" in setup_codes[0]
+        assert "fix_cage_stage_stabilization').active(True)" in setup_codes[0]
+        assert "feature('load_inner_bore').active(False)" in setup_codes[0]
+        assert "feature('disp_inner_bore_preload').active(True)" in setup_codes[0]
+        assert "feature('disp_inner_bore_preload').active(False)" in setup_codes[2]
+        assert "inner_bore_load_active=" in setup_codes[0]
+        assert "displacement_preload_active=" in setup_codes[0]
+        assert "str(False)" in setup_codes[0]
+        assert "plistarr" in setup_codes[0]
+        assert "0.0001 0.0005 0.002" in setup_codes[0]
+        assert "mesh_contact_size', '2.4[mm]'" in setup_codes[0]
+        assert "('pn_penalty', '0.02*E_steel')" in setup_codes[0]
+        assert "('zeroInitGap', 'on')" in setup_codes[0]
+        assert "('tolcontact', '0.2[um]')" in setup_codes[0]
+        assert raceway_only["stages"][0]["inner_ring_stress"]["success"] is True
+
+        stage_plotted = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_preload_only",
+            stage_plot_dir=tmp_path / "stage_plots",
+        )
+        assert stage_plotted["stage_plot_policy"] == "native_comsol_volume_plot_per_successful_stage"
+        assert len(stage_plotted["stages"]) == 2
+        assert all(stage["native_volume_plot"]["success"] for stage in stage_plotted["stages"])
+        assert stage_plotted["stages"][0]["native_volume_plot"]["plot_type"] == "native_comsol_volume"
+
+        high_visual = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_high_preload_visual",
+            stage_plot_dir=tmp_path / "high_stage_plots",
+        )
+        assert high_visual["success"] is True
+        assert high_visual["stages"][-1]["name"] == "raceway_contact_high_preload_visual"
+        assert high_visual["stages"][-1]["inner_radial_displacement"] == "3[um]"
+        assert high_visual["stages"][-1]["inner_bore_load_active"] is False
+        assert high_visual["stages"][-1]["contact_penalty"] == "0.02*E_steel"
+        assert high_visual["stages"][-1]["contact_tolerance"] == "0.2[um]"
+        assert "not_radial_force_transfer" in high_visual["stages"][-1]["physical_acceptance"]
+        assert not any("radial_load_transfer" in stage["name"] for stage in high_visual["stages"])
+
+        reaction_codes: list[str] = []
+
+        def fake_reaction_probe(model_name: str, *, selection_name: str):
+            reaction_codes.append(f"{model_name}:{selection_name}")
+            return {
+                "success": True,
+                "kind": "displacement_controlled_reaction_equivalent_probe",
+                "selection": selection_name,
+                "best_expression": "intop_displacement_reaction_probe(solid.RFx)",
+                "best_reaction_force_n": 3000.0,
+                "best_reaction_force_abs_n": 3000.0,
+                "equivalent_pressure_pa": 1.3e6,
+            }
+
+        monkeypatch.setattr(demo, "_evaluate_displacement_reaction_equivalent", fake_reaction_probe)
+        high_reaction = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_high_preload_reaction_equivalent",
+            stage_plot_dir=tmp_path / "high_reaction_stage_plots",
+        )
+        assert high_reaction["success"] is True
+        assert high_reaction["stages"][-1]["name"] == "raceway_contact_high_preload_reaction_equivalent"
+        assert high_reaction["stages"][-1]["reaction_equivalent_requested"] is True
+        assert high_reaction["stages"][-1]["reaction_probe_selection"] == "sel_inner_bore_load_surface"
+        assert high_reaction["stages"][-1]["reaction_equivalent"]["success"] is True
+        assert high_reaction["stages"][-1]["reaction_equivalent"]["best_reaction_force_abs_n"] == 3000.0
+        assert reaction_codes[-1] == "staged_model:sel_inner_bore_load_surface"
+        assert "reaction_equivalent" in high_reaction["stages"][-1]["physical_acceptance"]
+
+        high_load_visual = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_high_load_visual",
+            stage_plot_dir=tmp_path / "high_load_stage_plots",
+        )
+        assert high_load_visual["success"] is True
+        assert high_load_visual["stages"][-1]["name"] == "raceway_contact_high_radial_load_visual"
+        assert high_load_visual["stages"][-1]["sweep_parameter"] == "radial_load"
+        assert high_load_visual["stages"][-1]["sweep_unit"] == "N"
+        assert high_load_visual["stages"][-1]["inner_bore_load_active"] is True
+        assert high_load_visual["stages"][-1]["displacement_preload_active"] is False
+        assert "true_12_roller_raceway_contact" in high_load_visual["stages"][-1]["physical_acceptance"]
+
+        guided_low_load = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_guided_low_load_transfer",
+            stage_plot_dir=tmp_path / "guided_low_load_stage_plots",
+        )
+        assert guided_low_load["success"] is True
+        assert guided_low_load["stages"][-1]["name"] == "raceway_contact_guided_low_radial_load_transfer"
+        assert guided_low_load["stages"][-1]["inner_bore_load_active"] is True
+        assert guided_low_load["stages"][-1]["weak_inner_guidance_active"] is True
+        assert guided_low_load["stages"][-1]["weak_inner_guidance_k"] == "1e5[N/m^3]"
+        assert "weak_inner_ring_load_guidance" in setup_codes[-1]
+        assert "inner_bore_boundary_load_with_weak_inner_ring_guidance" in guided_low_load["stages"][-1]["load_application_fidelity"]
+        assert "not_final_design_gate" in guided_low_load["stages"][-1]["load_application_fidelity"]
+
+        guided_probe = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_guided_probe_1n",
+            stage_plot_dir=tmp_path / "guided_probe_stage_plots",
+        )
+        assert guided_probe["success"] is True
+        assert guided_probe["stages"][-1]["name"] == "raceway_contact_guided_probe_1n_boundary_load"
+        assert guided_probe["stages"][-1]["preload_steps"] == "1"
+        assert guided_probe["stages"][-1]["solver_maxsegiter"] == "30"
+
+        setup_codes.clear()
+        continuous = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_continuous_boundary_load",
+            stage_plot_dir=tmp_path / "continuous_boundary_stage_plots",
+        )
+        assert continuous["success"] is True
+        assert len(continuous["stages"]) == 3
+        assert continuous["stages"][0]["name"] == "continuous_boundary_load_contact_closure_1n"
+        assert continuous["stages"][0]["inner_bore_load_active"] is True
+        assert continuous["stages"][0]["displacement_preload_active"] is True
+        assert continuous["stages"][0]["radial_load_value"] == "1[N]"
+        assert continuous["stages"][-1]["name"] == "continuous_boundary_load_high_ramp_retained_preload"
+        assert continuous["stages"][-1]["sweep_parameter"] == "radial_load"
+        assert continuous["stages"][-1]["preload_steps"] == "100 250 500 1000 2000 3000"
+        assert continuous["stages"][-1]["inner_bore_load_active"] is True
+        assert continuous["stages"][-1]["displacement_preload_active"] is True
+        assert continuous["stages"][-1]["weak_inner_guidance_active"] is True
+        assert "retained_displacement_preload" in continuous["stages"][-1]["load_application_fidelity"]
+        assert "model.param().set('radial_load', '1[N]')" in setup_codes[0]
+        assert "model.param().set('radial_load', '3000[N]')" in setup_codes[-1]
+        assert "feature('load_inner_bore').active(True)" in setup_codes[0]
+        assert "feature('disp_inner_bore_preload').active(True)" in setup_codes[-1]
+
+        setup_codes.clear()
+        split_control = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_split_control_boundary_load",
+            stage_plot_dir=tmp_path / "split_control_stage_plots",
+        )
+        assert split_control["success"] is True
+        assert len(split_control["stages"]) == 3
+        assert split_control["stages"][0]["name"] == "split_control_boundary_load_contact_closure_0p1n"
+        assert split_control["stages"][0]["inner_bore_load_active"] is True
+        assert split_control["stages"][0]["displacement_preload_active"] is True
+        assert split_control["stages"][0]["displacement_preload_selection"] == "sel_inner_raceway_contact"
+        assert split_control["stages"][0]["radial_load_value"] == "0.1[N]"
+        assert split_control["stages"][-1]["name"] == "split_control_boundary_load_high_ramp"
+        assert split_control["stages"][-1]["preload_steps"] == "100 250 500 1000 2000 3000"
+        assert split_control["stages"][-1]["inner_bore_load_active"] is True
+        assert split_control["stages"][-1]["weak_inner_guidance_active"] is True
+        assert "split_raceway_displacement_closure" in split_control["stages"][-1]["load_application_fidelity"]
+        assert "selection().named('sel_inner_raceway_contact')" in setup_codes[0]
+        assert "displacement_preload_selection=' + 'sel_inner_raceway_contact'" in setup_codes[0]
+
+        setup_codes.clear()
+        group_boundary = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load",
+            stage_plot_dir=tmp_path / "group_boundary_stage_plots",
+        )
+        assert group_boundary["success"] is True
+        assert len(group_boundary["stages"]) == 13
+        assert group_boundary["stages"][0]["name"] == "load_side_3_roller_boundary_load_0p1n"
+        assert group_boundary["stages"][0]["active_rollers"] == [12, 1, 2]
+        assert group_boundary["stages"][0]["inner_bore_load_active"] is True
+        assert group_boundary["stages"][0]["displacement_preload_active"] is False
+        assert group_boundary["stages"][0]["displacement_preload_selection"] == "sel_inner_raceway_contact"
+        assert group_boundary["stages"][0]["sweep_parameter"] == "radial_load"
+        assert group_boundary["stages"][0]["preload_steps"] == "0.001 0.005 0.01 0.05 0.1"
+        assert group_boundary["stages"][0]["radial_load_value"] == "0.1[N]"
+        assert group_boundary["stages"][0]["temporary_active_roller_stabilization_active"] is True
+        assert group_boundary["stages"][0]["active_roller_stabilization_mode"] == "spring"
+        assert group_boundary["stages"][0]["active_roller_stabilization_k"] == "1e10[N/m^3]"
+        assert group_boundary["stages"][0]["weak_roller_foundation_k"] == "1e8[N/m^3]"
+        assert [stage["radial_load_value"] for stage in group_boundary["stages"][:11]] == [
+            "0.1[N]",
+            "0.101[N]",
+            "0.105[N]",
+            "0.12[N]",
+            "0.15[N]",
+            "0.2[N]",
+            "0.5[N]",
+            "1[N]",
+            "5[N]",
+            "20[N]",
+            "50[N]",
+        ]
+        assert group_boundary["stages"][1]["use_parametric_sweep"] is False
+        assert group_boundary["stages"][1]["reuse_existing_solver"] is False
+        assert group_boundary["stages"][1]["preload_steps"] == "0.101"
+        assert group_boundary["stages"][7]["name"] == "load_side_3_roller_boundary_load_1n"
+        assert group_boundary["stages"][7]["preload_steps"] == "1"
+        assert group_boundary["stages"][11]["active_rollers"] == [11, 12, 1, 2, 3, 4]
+        assert len(group_boundary["stages"][12]["active_rollers"]) == 12
+        assert group_boundary["stages"][12]["name"] == "all_12_roller_boundary_load_50n"
+        assert group_boundary["stages"][-1]["inner_bore_load_active"] is True
+
+        assert group_boundary["stages"][-1]["displacement_preload_active"] is False
+        assert group_boundary["stages"][-1]["weak_inner_guidance_active"] is True
+        assert group_boundary["stages"][-1]["temporary_active_roller_stabilization_active"] is True
+        assert group_boundary["stages"][-1]["weak_roller_foundation_k"] == "5e7[N/m^3]"
+        assert "group_ramped" in group_boundary["stages"][-1]["load_application_fidelity"]
+        assert "not_design_gate" in group_boundary["stages"][-1]["load_application_fidelity"]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[0]
+        assert "('useparam', 'off')" in setup_codes[1]
+        assert "('plistarr', ['0.101'])" in setup_codes[1]
+        assert "else:\n    for staged_key, staged_value in [" in setup_codes[1]
+        assert "model.study('std1').createAutoSequences('sol')" in setup_codes[1]
+        assert "active_roller_ids = set([1, 2, 3, 4, 11, 12])" in setup_codes[11]
+        assert "active_roller_ids = set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])" in setup_codes[12]
+        assert len(setup_codes) == 13
+        assert "model.param().set('radial_load', '50[N]')" in setup_codes[-1]
+        assert "feature('load_inner_bore').active(True)" in setup_codes[0]
+        assert "feature('disp_inner_bore_preload').active(False)" in setup_codes[0]
+        assert "active_roller_stabilization_mode=' + 'spring'" in setup_codes[0]
+        assert "staged_spring_stabilized = staged_active and True and 'spring' == 'spring'" in setup_codes[0]
+
+        setup_codes.clear()
+        soft_guidance = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_soft_guidance",
+            stage_plot_dir=tmp_path / "soft_guidance_stage_plots",
+        )
+        assert soft_guidance["success"] is True
+        assert soft_guidance["contact_stage_mode"] == "load_side_group_boundary_load_soft_guidance"
+        assert len(soft_guidance["stages"]) == 4
+        assert [stage["name"] for stage in soft_guidance["stages"]] == [
+            "soft_guidance_3_roller_boundary_load_0p1n_bootstrap",
+            "soft_guidance_3_roller_boundary_load_0p1n_singlepoint",
+            "soft_guidance_3_roller_boundary_load_0p1n_k1e4",
+            "soft_guidance_3_roller_boundary_load_0p101n_k1e4",
+        ]
+        assert [stage["radial_load_value"] for stage in soft_guidance["stages"]] == [
+            "0.1[N]",
+            "0.1[N]",
+            "0.1[N]",
+            "0.101[N]",
+        ]
+        assert soft_guidance["stages"][0]["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert soft_guidance["stages"][1]["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert soft_guidance["stages"][2]["weak_inner_guidance_k"] == "1e4[N/m^3]"
+        assert soft_guidance["stages"][3]["weak_inner_guidance_k"] == "1e4[N/m^3]"
+        assert soft_guidance["stages"][1]["use_parametric_sweep"] is False
+        assert soft_guidance["stages"][2]["guidance_diagnostic_role"] == "soften_weak_inner_guidance_only"
+        assert soft_guidance["stages"][3]["guidance_diagnostic_role"] == "load_increment_after_soft_guidance"
+        assert "soft_weak_guidance" in soft_guidance["stages"][-1]["load_application_fidelity"]
+        assert "model.param().set('weak_inner_guidance_k', '1e4[N/m^3]')" in setup_codes[2]
+        assert "('plistarr', ['0.101'])" in setup_codes[3]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[-1]
+        assert "if not False:" in setup_codes[1]
+        assert "staged_foundation.set('kPerArea', ['active_roller_stabilization_k'" in setup_codes[0]
+        assert "model.param().set('active_roller_stabilization_k', '1e10[N/m^3]')" in setup_codes[0]
+        assert "feature(fix_tag).active(staged_roller_fixed)" in setup_codes[0]
+
+        setup_codes.clear()
+        contact_relaxation = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_contact_relaxation",
+            stage_plot_dir=tmp_path / "contact_relaxation_stage_plots",
+        )
+        assert contact_relaxation["success"] is True
+        assert contact_relaxation["contact_stage_mode"] == "load_side_group_boundary_load_contact_relaxation"
+        assert [stage["name"] for stage in contact_relaxation["stages"]] == [
+            "contact_relaxation_3_roller_boundary_load_0p1n_bootstrap",
+            "contact_relaxation_3_roller_boundary_load_0p1n_penalty1e5",
+            "contact_relaxation_3_roller_boundary_load_0p101n_penalty1e5",
+        ]
+        assert contact_relaxation["stages"][0]["contact_penalty"] == "5e-5*E_steel"
+        assert contact_relaxation["stages"][1]["contact_penalty"] == "1e-5*E_steel"
+        assert contact_relaxation["stages"][2]["radial_load_value"] == "0.101[N]"
+        assert contact_relaxation["stages"][1]["use_parametric_sweep"] is False
+        assert contact_relaxation["stages"][1]["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert contact_relaxation["stages"][1]["contact_relaxation_diagnostic_role"] == "soften_contact_penalty_only_same_load"
+        assert "contact_penalty_relaxation" in contact_relaxation["stages"][-1]["load_application_fidelity"]
+        assert "('pn_penalty', '1e-5*E_steel')" in setup_codes[1]
+        assert "('plistarr', ['0.101'])" in setup_codes[2]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[-1]
+
+        setup_codes.clear()
+        single_solve = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101",
+            stage_plot_dir=tmp_path / "single_solve_0p101_stage_plots",
+        )
+        assert single_solve["success"] is True
+        assert single_solve["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101"
+        assert len(single_solve["stages"]) == 1
+        stage = single_solve["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_parametric"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["inner_body_load_active"] is False
+        assert stage["displacement_preload_active"] is False
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101"
+        assert stage["radial_load_value"] == "0.101[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["reuse_existing_solver"] is False
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["active_roller_stabilization_mode"] == "spring"
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p101n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('useparam', 'on')" in setup_codes[0]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.101[N]')" in setup_codes[0]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[0]
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        pair_swap = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_pair_swap",
+            stage_plot_dir=tmp_path / "single_solve_0p101_pair_swap_stage_plots",
+        )
+        assert pair_swap["success"] is True
+        assert pair_swap["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_pair_swap"
+        assert len(pair_swap["stages"]) == 1
+        stage = pair_swap["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_pair_swap"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_pair_endpoint_overrides"]
+        assert sorted(overrides) == ["cp_roller_1_inner_raceway", "cp_roller_1_outer_raceway"]
+        assert overrides["cp_roller_1_inner_raceway"] == {
+            "source": "sel_inner_raceway_1_contact",
+            "destination": "sel_roller_1_inner_contact",
+        }
+        assert overrides["cp_roller_1_outer_raceway"] == {
+            "source": "sel_outer_raceway_1_contact",
+            "destination": "sel_roller_1_outer_contact",
+        }
+        assert "roller1_pair_endpoint_swap" in stage["physical_acceptance"]
+        assert "CONTACT_PAIR_ENDPOINT_OVERRIDE" in setup_codes[0]
+        assert "cp_roller_1_inner_raceway" in setup_codes[0]
+        assert "sel_inner_raceway_1_contact" in setup_codes[0]
+        assert "contact_pair_endpoint_overrides=" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        patch_shrink = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_patch_shrink",
+            stage_plot_dir=tmp_path / "single_solve_0p101_patch_shrink_stage_plots",
+        )
+        assert patch_shrink["success"] is True
+        assert patch_shrink["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_patch_shrink"
+        assert len(patch_shrink["stages"]) == 1
+        stage = patch_shrink["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_patch_shrink"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_patch_box_overrides"]
+        assert sorted(overrides) == [
+            "box_roller_1_inner_contact_patch",
+            "box_roller_1_outer_contact_patch",
+        ]
+        assert overrides["box_roller_1_inner_contact_patch"]["xmin"] == "22.6[mm]"
+        assert overrides["box_roller_1_inner_contact_patch"]["xmax"] == "23.4[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["xmin"] == "30.6[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["xmax"] == "31.4[mm]"
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert stage["contact_feature_property_overrides"] == {}
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_patch_box_shrink_only"
+        assert "roller1_patch_shrink" in stage["load_application_fidelity"]
+        assert "CONTACT_PATCH_BOX_OVERRIDE" in setup_codes[0]
+        assert "box_roller_1_inner_contact_patch" in setup_codes[0]
+        assert "22.6[mm]" in setup_codes[0]
+        assert "contact_patch_box_overrides=" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        box_intersection_rebuild = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_box_intersection_rebuild",
+            stage_plot_dir=tmp_path / "single_solve_0p101_box_intersection_rebuild_stage_plots",
+        )
+        assert box_intersection_rebuild["success"] is True
+        assert box_intersection_rebuild["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_box_intersection_rebuild"
+        assert len(box_intersection_rebuild["stages"]) == 1
+        stage = box_intersection_rebuild["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_box_intersection_rebuild"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["raceway_partition_patch_overrides"] == {}
+        assert stage["raceway_selection_entity_overrides"] == {}
+        overrides = stage["contact_patch_box_overrides"]
+        assert overrides["box_roller_1_outer_contact_patch"]["xmin"] == "26.4[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["xmax"] == "27.6[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["zmin"] == "-8.6[mm]"
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_box_intersection_contact_patch_rebuild_only"
+        assert "box_intersection_rebuild" in stage["load_application_fidelity"]
+        assert "CONTACT_PATCH_BOX_OVERRIDE" in setup_codes[0]
+        assert "box_roller_1_outer_contact_patch" in setup_codes[0]
+        assert "26.4[mm]" in setup_codes[0]
+        assert "raceway_partition_patch_overrides={}" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        outer_x31_box_intersection = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_outer_x31_box_intersection",
+            stage_plot_dir=tmp_path / "single_solve_0p101_outer_x31_box_intersection_stage_plots",
+        )
+        assert outer_x31_box_intersection["success"] is True
+        assert outer_x31_box_intersection["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_outer_x31_box_intersection"
+        assert len(outer_x31_box_intersection["stages"]) == 1
+        stage = outer_x31_box_intersection["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_outer_x31_box_intersection"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["raceway_partition_patch_overrides"] == {}
+        assert stage["raceway_selection_entity_overrides"] == {}
+        overrides = stage["contact_patch_box_overrides"]
+        assert overrides["box_roller_1_outer_contact_patch"]["xmin"] == "30.4[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["xmax"] == "31.6[mm]"
+        assert overrides["box_roller_1_outer_contact_patch"]["zmax"] == "8.6[mm]"
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_outer_raceway_x31_box_intersection_only"
+        assert "outer_x31_box_intersection" in stage["load_application_fidelity"]
+        assert "CONTACT_PATCH_BOX_OVERRIDE" in setup_codes[0]
+        assert "box_roller_1_outer_contact_patch" in setup_codes[0]
+        assert "31.6[mm]" in setup_codes[0]
+        assert "raceway_partition_patch_overrides={}" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        partitioned_raceway_patch = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch",
+            stage_plot_dir=tmp_path / "single_solve_0p101_partitioned_raceway_patch_stage_plots",
+        )
+        assert partitioned_raceway_patch["success"] is True
+        assert partitioned_raceway_patch["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch"
+        assert len(partitioned_raceway_patch["stages"]) == 1
+        stage = partitioned_raceway_patch["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_partitioned_raceway_patch"
+        assert stage["active_rollers"] == [12, 1, 2]
+        partition_overrides = stage["raceway_partition_patch_overrides"]
+        assert sorted(partition_overrides) == [
+            "partition_roller_1_inner_raceway_patch",
+            "partition_roller_1_outer_raceway_patch",
+        ]
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["target_object"] == "inner_ring"
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["target_object"] == "outer_ring"
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["selection_tag"] == "sel_inner_raceway_1_contact"
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["selection_tag"] == "sel_outer_raceway_1_contact"
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["tool_pos"] == ["23.0[mm]", "0[mm]", "0[mm]"]
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["tool_pos"] == ["31.0[mm]", "0[mm]", "0[mm]"]
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_geometry_partitioned_raceway_patch_only"
+        assert "partitioned_raceway_patch" in stage["load_application_fidelity"]
+        assert "RACEWAY_PARTITION_PATCH_RUN" in setup_codes[0]
+        assert "model.component('comp1').geom('geom1').create(partition_tag, 'Partition')" in setup_codes[0]
+        assert "partition_tool_roller_1_inner_raceway_patch" in setup_codes[0]
+        assert "raceway_partition_patch_overrides=" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        partitioned_raceway_patch_rebind = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_rebind",
+            stage_plot_dir=tmp_path / "single_solve_0p101_partitioned_raceway_patch_rebind_stage_plots",
+        )
+        assert partitioned_raceway_patch_rebind["success"] is True
+        assert partitioned_raceway_patch_rebind["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_rebind"
+        assert len(partitioned_raceway_patch_rebind["stages"]) == 1
+        stage = partitioned_raceway_patch_rebind["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_partitioned_raceway_patch_rebind"
+        assert stage["active_rollers"] == [12, 1, 2]
+        partition_overrides = stage["raceway_partition_patch_overrides"]
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["pair_tag"] == "cp_roller_1_inner_raceway"
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["pair_tag"] == "cp_roller_1_outer_raceway"
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["explicit_selection_entities"] == [131, 134, 140, 141, 148, 151]
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["explicit_selection_entities"] == [8, 9, 11, 15, 25, 26]
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_geometry_partitioned_raceway_patch_explicit_rebind"
+        assert "partitioned_raceway_patch_explicit_rebind" in stage["load_application_fidelity"]
+        assert "RACEWAY_PARTITION_PATCH_EXPLICIT_SELECTION" in setup_codes[0]
+        assert "RACEWAY_PARTITION_PATCH_PAIR_REBIND" in setup_codes[0]
+        assert "destination().named(selection_tag)" in setup_codes[0]
+        assert "explicit_selection_entities" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        partitioned_raceway_patch_min_entities = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_min_entities",
+            stage_plot_dir=tmp_path / "single_solve_0p101_partitioned_raceway_patch_min_entities_stage_plots",
+        )
+        assert partitioned_raceway_patch_min_entities["success"] is True
+        assert partitioned_raceway_patch_min_entities["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_min_entities"
+        assert len(partitioned_raceway_patch_min_entities["stages"]) == 1
+        stage = partitioned_raceway_patch_min_entities["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_partitioned_raceway_patch_min_entities"
+        assert stage["active_rollers"] == [12, 1, 2]
+        partition_overrides = stage["raceway_partition_patch_overrides"]
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["explicit_selection_entities"] == [140, 141]
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["explicit_selection_entities"] == [25, 26]
+        assert partition_overrides["partition_roller_1_inner_raceway_patch"]["keeptool"] == "off"
+        assert partition_overrides["partition_roller_1_outer_raceway_patch"]["keeptool"] == "off"
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_partitioned_raceway_patch_min_entities_keeptool_off"
+        assert "partitioned_raceway_patch_min_entities" in stage["load_application_fidelity"]
+        assert "RACEWAY_PARTITION_PATCH_EXPLICIT_SELECTION" in setup_codes[0]
+        assert "RACEWAY_PARTITION_PATCH_PAIR_REBIND" in setup_codes[0]
+        assert "'keeptool', raceway_partition_payload.get('keeptool', 'on')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        full_raceway_destination = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_full_raceway_destination",
+            stage_plot_dir=tmp_path / "single_solve_0p101_full_raceway_destination_stage_plots",
+        )
+        assert full_raceway_destination["success"] is True
+        assert full_raceway_destination["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_full_raceway_destination"
+        assert len(full_raceway_destination["stages"]) == 1
+        stage = full_raceway_destination["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_full_raceway_destination"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_pair_endpoint_overrides"]
+        assert sorted(overrides) == [
+            "cp_roller_12_inner_raceway",
+            "cp_roller_12_outer_raceway",
+            "cp_roller_1_inner_raceway",
+            "cp_roller_1_outer_raceway",
+            "cp_roller_2_inner_raceway",
+            "cp_roller_2_outer_raceway",
+        ]
+        assert overrides["cp_roller_1_inner_raceway"] == {"destination": "sel_inner_raceway_contact"}
+        assert overrides["cp_roller_1_outer_raceway"] == {"destination": "sel_outer_raceway_contact"}
+        assert overrides["cp_roller_2_inner_raceway"] == {"destination": "sel_inner_raceway_contact"}
+        assert overrides["cp_roller_12_outer_raceway"] == {"destination": "sel_outer_raceway_contact"}
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_full_raceway_pair_destination_only"
+        assert "full_raceway_destination" in stage["load_application_fidelity"]
+        assert "CONTACT_PAIR_ENDPOINT_OVERRIDE" in setup_codes[0]
+        assert "cp_roller_12_outer_raceway" in setup_codes[0]
+        assert "sel_outer_raceway_contact" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        entity_raceway_override = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_entity_raceway_override",
+            stage_plot_dir=tmp_path / "single_solve_0p101_entity_raceway_override_stage_plots",
+        )
+        assert entity_raceway_override["success"] is True
+        assert entity_raceway_override["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_entity_raceway_override"
+        assert len(entity_raceway_override["stages"]) == 1
+        stage = entity_raceway_override["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_entity_raceway_override"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["raceway_selection_entity_overrides"]
+        assert overrides["sel_inner_raceway_1_contact"] == [132, 133]
+        assert overrides["sel_outer_raceway_2_contact"] == [9]
+        assert overrides["sel_outer_raceway_12_contact"] == [8]
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_explicit_raceway_entity_override_from_saved_mph_geometry_moments"
+        assert "explicit_raceway_entity_override" in stage["load_application_fidelity"]
+        assert "RACEWAY_SELECTION_ENTITY_OVERRIDE" in setup_codes[0]
+        assert "RACEWAY_SELECTION_ENTITY_REBIND" in setup_codes[0]
+        assert "destination().named(raceway_selection_tag)" in setup_codes[0]
+        assert "selection().create(raceway_selection_tag, 'Explicit')" in setup_codes[0]
+        assert "sel_inner_raceway_1_contact" in setup_codes[0]
+        assert "132" in setup_codes[0]
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_outer_entity_override = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_outer_entity_override",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_outer_entity_override_stage_plots",
+        )
+        assert roller1_outer_entity_override["success"] is True
+        assert roller1_outer_entity_override["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_outer_entity_override"
+        assert len(roller1_outer_entity_override["stages"]) == 1
+        stage = roller1_outer_entity_override["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_outer_entity_override"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["raceway_selection_entity_overrides"]
+        assert overrides == {"sel_outer_raceway_1_contact": [8, 9]}
+        assert "sel_inner_raceway_1_contact" not in overrides
+        assert "sel_outer_raceway_2_contact" not in overrides
+        assert "sel_outer_raceway_12_contact" not in overrides
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "single_solve_0p101_roller1_outer_destination_explicit_entity_override_only"
+        )
+        assert "roller1_outer_destination_entity_override" in stage["load_application_fidelity"]
+        assert "RACEWAY_SELECTION_ENTITY_OVERRIDE" in setup_codes[0]
+        assert "RACEWAY_SELECTION_ENTITY_REBIND" in setup_codes[0]
+        assert "destination().named(raceway_selection_tag)" in setup_codes[0]
+        assert "selection().create(raceway_selection_tag, 'Explicit')" in setup_codes[0]
+        assert "sel_outer_raceway_1_contact" in setup_codes[0]
+        assert "sel_inner_raceway_1_contact" not in setup_codes[0]
+        assert "sel_outer_raceway_2_contact" not in setup_codes[0]
+        assert "sel_outer_raceway_12_contact" not in setup_codes[0]
+        assert "8" in setup_codes[0]
+        assert "9" in setup_codes[0]
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        retained_conformal_entity_override = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_outer_entity_override",
+            roller1_outer_entity_override_entities=(13, 14, 18, 19),
+            stage_plot_dir=tmp_path / "single_solve_0p101_retained_conformal_entity_override_stage_plots",
+        )
+        assert retained_conformal_entity_override["success"] is True
+        assert len(retained_conformal_entity_override["stages"]) == 1
+        stage = retained_conformal_entity_override["stages"][0]
+        assert stage["raceway_selection_entity_overrides"] == {
+            "sel_outer_raceway_1_contact": [13, 14, 18, 19]
+        }
+        assert stage["entity_override_source"] == "saved_solved_mph_entity_transfer_probe_nonzero_integrals"
+        assert stage["solver_formulation_diagnostic_role"].endswith("_from_entity_transfer_probe")
+        assert "13" in setup_codes[0]
+        assert "14" in setup_codes[0]
+        assert "18" in setup_codes[0]
+        assert "19" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_gapoffset = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_gapoffset_minus3um",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_gapoffset_stage_plots",
+        )
+        assert roller1_gapoffset["success"] is True
+        assert roller1_gapoffset["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_gapoffset_minus3um"
+        assert len(roller1_gapoffset["stages"]) == 1
+        stage = roller1_gapoffset["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_gapoffset_minus3um"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_feature_property_overrides"]
+        assert overrides == {
+            "contact_roller_1_inner": {"gapoffset": "-3[um]"},
+            "contact_roller_1_outer": {"gapoffset": "-3[um]"},
+        }
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_gapoffset_minus3um_only"
+        assert "roller1_gapoffset_minus3um" in stage["load_application_fidelity"]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[0]
+        assert "contact_roller_1_inner" in setup_codes[0]
+        assert "gapoffset" in setup_codes[0]
+        assert "-3[um]" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_source_offset = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_minus3um",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_source_offset_stage_plots",
+        )
+        assert roller1_source_offset["success"] is True
+        assert roller1_source_offset["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_minus3um"
+        assert len(roller1_source_offset["stages"]) == 1
+        stage = roller1_source_offset["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_source_offset_minus3um"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_feature_property_overrides"]
+        assert overrides == {
+            "contact_roller_1_inner": {"source_offset": "-3[um]"},
+            "contact_roller_1_outer": {"source_offset": "-3[um]"},
+        }
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_source_offset_minus3um_only"
+        assert "roller1_source_offset_minus3um" in stage["load_application_fidelity"]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[0]
+        assert "contact_roller_1_inner" in setup_codes[0]
+        assert "source_offset" in setup_codes[0]
+        assert "-3[um]" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_source_offset_plus = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_plus3um",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_source_offset_plus_stage_plots",
+        )
+        assert roller1_source_offset_plus["success"] is True
+        assert roller1_source_offset_plus["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_plus3um"
+        assert len(roller1_source_offset_plus["stages"]) == 1
+        stage = roller1_source_offset_plus["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_source_offset_plus3um"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_feature_property_overrides"]
+        assert overrides == {
+            "contact_roller_1_inner": {"source_offset": "3[um]"},
+            "contact_roller_1_outer": {"source_offset": "3[um]"},
+        }
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_source_offset_plus3um_only"
+        assert "roller1_source_offset_plus3um" in stage["load_application_fidelity"]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[0]
+        assert "contact_roller_1_inner" in setup_codes[0]
+        assert "source_offset" in setup_codes[0]
+        assert "3[um]" in setup_codes[0]
+        assert "-3[um]" not in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_offset = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_offset_minus3um",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_offset_stage_plots",
+        )
+        assert roller1_offset["success"] is True
+        assert roller1_offset["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_offset_minus3um"
+        assert len(roller1_offset["stages"]) == 1
+        stage = roller1_offset["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_offset_minus3um"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_feature_property_overrides"]
+        assert overrides == {
+            "contact_roller_1_inner": {"offset": "-3[um]"},
+            "contact_roller_1_outer": {"offset": "-3[um]"},
+        }
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_offset_minus3um_only"
+        assert "roller1_offset_minus3um" in stage["load_application_fidelity"]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[0]
+        assert "contact_roller_1_inner" in setup_codes[0]
+        assert "offset" in setup_codes[0]
+        assert "-3[um]" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        roller1_offset_plus = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_offset_plus3um",
+            stage_plot_dir=tmp_path / "single_solve_0p101_roller1_offset_plus_stage_plots",
+        )
+        assert roller1_offset_plus["success"] is True
+        assert roller1_offset_plus["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_roller1_offset_plus3um"
+        assert len(roller1_offset_plus["stages"]) == 1
+        stage = roller1_offset_plus["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_roller1_offset_plus3um"
+        assert stage["active_rollers"] == [12, 1, 2]
+        overrides = stage["contact_feature_property_overrides"]
+        assert overrides == {
+            "contact_roller_1_inner": {"offset": "3[um]"},
+            "contact_roller_1_outer": {"offset": "3[um]"},
+        }
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_roller1_contact_offset_plus3um_only"
+        assert "roller1_offset_plus3um" in stage["load_application_fidelity"]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[0]
+        assert "contact_roller_1_inner" in setup_codes[0]
+        assert "offset" in setup_codes[0]
+        assert "3[um]" in setup_codes[0]
+        assert "-3[um]" not in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        active_spring_softened = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_active_spring1e9",
+            stage_plot_dir=tmp_path / "single_solve_0p101_active_spring1e9_stage_plots",
+        )
+        assert active_spring_softened["success"] is True
+        assert active_spring_softened["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p101_active_spring1e9"
+        assert len(active_spring_softened["stages"]) == 1
+        stage = active_spring_softened["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_active_spring1e9"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["radial_load_value"] == "0.101[N]"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101"
+        assert stage["contact_penalty"] == "5e-5*E_steel"
+        assert stage["active_roller_stabilization_active"] is True
+        assert stage["active_roller_stabilization_mode"] == "spring"
+        assert stage["active_roller_stabilization_k"] == "1e9[N/m^3]"
+        assert stage["weak_roller_foundation_k"] == "1e8[N/m^3]"
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_0p101_active_roller_spring_softened_only"
+        assert "active_spring1e9" in stage["load_application_fidelity"]
+        assert "model.param().set('active_roller_stabilization_k', '1e9[N/m^3]')" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.101[N]')" in setup_codes[0]
+        assert "('pn_penalty', '5e-5*E_steel')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p12 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p12",
+            stage_plot_dir=tmp_path / "single_solve_0p12_stage_plots",
+        )
+        assert single_solve_0p12["success"] is True
+        assert single_solve_0p12["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p12"
+        assert len(single_solve_0p12["stages"]) == 1
+        stage = single_solve_0p12["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p12n_parametric"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12"
+        assert stage["radial_load_value"] == "0.12[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["reuse_existing_solver"] is False
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p12_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p12n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('useparam', 'on')" in setup_codes[0]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.12[N]')" in setup_codes[0]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p13 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p13",
+            stage_plot_dir=tmp_path / "single_solve_0p13_stage_plots",
+        )
+        assert single_solve_0p13["success"] is True
+        assert single_solve_0p13["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p13"
+        assert len(single_solve_0p13["stages"]) == 1
+        stage = single_solve_0p13["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p13n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13"
+        assert stage["radial_load_value"] == "0.13[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p13_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p13n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.13[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p14 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p14",
+            stage_plot_dir=tmp_path / "single_solve_0p14_stage_plots",
+        )
+        assert single_solve_0p14["success"] is True
+        assert single_solve_0p14["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p14"
+        assert len(single_solve_0p14["stages"]) == 1
+        stage = single_solve_0p14["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p14n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14"
+        assert stage["radial_load_value"] == "0.14[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p14_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p14n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.14[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p145 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p145",
+            stage_plot_dir=tmp_path / "single_solve_0p145_stage_plots",
+        )
+        assert single_solve_0p145["success"] is True
+        assert single_solve_0p145["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p145"
+        assert len(single_solve_0p145["stages"]) == 1
+        stage = single_solve_0p145["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p145n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145"
+        assert stage["radial_load_value"] == "0.145[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p145_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p145n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.145[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p1475 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p1475",
+            stage_plot_dir=tmp_path / "single_solve_0p1475_stage_plots",
+        )
+        assert single_solve_0p1475["success"] is True
+        assert single_solve_0p1475["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p1475"
+        assert len(single_solve_0p1475["stages"]) == 1
+        stage = single_solve_0p1475["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p1475n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475"
+        assert stage["radial_load_value"] == "0.1475[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p1475_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p1475n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.1475[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p14875 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p14875",
+            stage_plot_dir=tmp_path / "single_solve_0p14875_stage_plots",
+        )
+        assert single_solve_0p14875["success"] is True
+        assert single_solve_0p14875["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p14875"
+        assert len(single_solve_0p14875["stages"]) == 1
+        stage = single_solve_0p14875["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p14875n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875"
+        assert stage["radial_load_value"] == "0.14875[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p14875_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p14875n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.14875[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p149375 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p149375",
+            stage_plot_dir=tmp_path / "single_solve_0p149375_stage_plots",
+        )
+        assert single_solve_0p149375["success"] is True
+        assert single_solve_0p149375["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p149375"
+        assert len(single_solve_0p149375["stages"]) == 1
+        stage = single_solve_0p149375["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p149375n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375"
+        assert stage["radial_load_value"] == "0.149375[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p149375_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p149375n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.149375[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p15_fine = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p15_fine",
+            stage_plot_dir=tmp_path / "single_solve_0p15_fine_stage_plots",
+        )
+        assert single_solve_0p15_fine["success"] is True
+        assert single_solve_0p15_fine["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p15_fine"
+        assert len(single_solve_0p15_fine["stages"]) == 1
+        stage = single_solve_0p15_fine["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p15n_fine_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15"
+        assert stage["radial_load_value"] == "0.15[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p15_fine_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p15n_fine_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.15[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p1625 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p1625",
+            stage_plot_dir=tmp_path / "single_solve_0p1625_stage_plots",
+        )
+        assert single_solve_0p1625["success"] is True
+        assert single_solve_0p1625["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p1625"
+        assert len(single_solve_0p1625["stages"]) == 1
+        stage = single_solve_0p1625["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p1625n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625"
+        assert stage["radial_load_value"] == "0.1625[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p1625_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p1625n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.1625[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p175 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p175",
+            stage_plot_dir=tmp_path / "single_solve_0p175_stage_plots",
+        )
+        assert single_solve_0p175["success"] is True
+        assert single_solve_0p175["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p175"
+        assert len(single_solve_0p175["stages"]) == 1
+        stage = single_solve_0p175["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p175n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175"
+        assert stage["radial_load_value"] == "0.175[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p175_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p175n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.175[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p1875 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p1875",
+            stage_plot_dir=tmp_path / "single_solve_0p1875_stage_plots",
+        )
+        assert single_solve_0p1875["success"] is True
+        assert single_solve_0p1875["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p1875"
+        assert len(single_solve_0p1875["stages"]) == 1
+        stage = single_solve_0p1875["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p1875n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875"
+        assert stage["radial_load_value"] == "0.1875[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p1875_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p1875n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.1875[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p19375 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p19375",
+            stage_plot_dir=tmp_path / "single_solve_0p19375_stage_plots",
+        )
+        assert single_solve_0p19375["success"] is True
+        assert single_solve_0p19375["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p19375"
+        assert len(single_solve_0p19375["stages"]) == 1
+        stage = single_solve_0p19375["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p19375n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375"
+        assert stage["radial_load_value"] == "0.19375[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p19375_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p19375n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.19375[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p196875 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p196875",
+            stage_plot_dir=tmp_path / "single_solve_0p196875_stage_plots",
+        )
+        assert single_solve_0p196875["success"] is True
+        assert single_solve_0p196875["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p196875"
+        assert len(single_solve_0p196875["stages"]) == 1
+        stage = single_solve_0p196875["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p196875n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875"
+        assert stage["radial_load_value"] == "0.196875[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p196875_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p196875n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.196875[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p1984375 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p1984375",
+            stage_plot_dir=tmp_path / "single_solve_0p1984375_stage_plots",
+        )
+        assert single_solve_0p1984375["success"] is True
+        assert single_solve_0p1984375["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p1984375"
+        assert len(single_solve_0p1984375["stages"]) == 1
+        stage = single_solve_0p1984375["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p1984375n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875 0.1984375"
+        assert stage["radial_load_value"] == "0.1984375[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p1984375_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p1984375n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875 0.1984375'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.1984375[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p2_fine = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p2_fine",
+            stage_plot_dir=tmp_path / "single_solve_0p2_fine_stage_plots",
+        )
+        assert single_solve_0p2_fine["success"] is True
+        assert single_solve_0p2_fine["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p2_fine"
+        assert len(single_solve_0p2_fine["stages"]) == 1
+        stage = single_solve_0p2_fine["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p2n_fine_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875 0.1984375 0.2"
+        assert stage["radial_load_value"] == "0.2[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p2_fine_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p2n_fine_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "not_final" in stage["physical_acceptance"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.13 0.14 0.145 0.1475 0.14875 0.149375 0.15 0.1625 0.175 0.1875 0.19375 0.196875 0.1984375 0.2'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.2[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p15 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p15",
+            stage_plot_dir=tmp_path / "single_solve_0p15_stage_plots",
+        )
+        assert single_solve_0p15["success"] is True
+        assert single_solve_0p15["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p15"
+        assert len(single_solve_0p15["stages"]) == 1
+        stage = single_solve_0p15["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p15n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15"
+        assert stage["radial_load_value"] == "0.15[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p15_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p15n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.15[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_0p2 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p2",
+            stage_plot_dir=tmp_path / "single_solve_0p2_stage_plots",
+        )
+        assert single_solve_0p2["success"] is True
+        assert single_solve_0p2["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_0p2"
+        assert len(single_solve_0p2["stages"]) == 1
+        stage = single_solve_0p2["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p2n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15 0.2"
+        assert stage["radial_load_value"] == "0.2[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_0p2_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_0p2n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15 0.2'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '0.2[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        single_solve_1n = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_1n",
+            stage_plot_dir=tmp_path / "single_solve_1n_stage_plots",
+        )
+        assert single_solve_1n["success"] is True
+        assert single_solve_1n["contact_stage_mode"] == "load_side_group_boundary_load_single_solve_1n"
+        assert len(single_solve_1n["stages"]) == 1
+        stage = single_solve_1n["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_1n_parametric"
+        assert stage["preload_steps"] == "0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15 0.2 0.5 1"
+        assert stage["radial_load_value"] == "1[N]"
+        assert stage["use_parametric_sweep"] is True
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["inner_bore_load_active"] is True
+        assert stage["cage_contact_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == "single_solve_parametric_to_1n_no_prior_bootstrap_or_cross_stage_solver_edit"
+        assert "single_solve_parametric_1n_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "('plistarr', ['0.001 0.005 0.01 0.05 0.1 0.1005 0.101 0.105 0.12 0.15 0.2 0.5 1'])" in setup_codes[0]
+        assert "model.param().set('radial_load', '1[N]')" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
+        micro_continuation = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_micro_continuation",
+            stage_plot_dir=tmp_path / "micro_continuation_stage_plots",
+        )
+        assert micro_continuation["success"] is True
+        assert micro_continuation["contact_stage_mode"] == "load_side_group_boundary_load_micro_continuation"
+        assert [stage["name"] for stage in micro_continuation["stages"]] == [
+            "micro_continuation_3_roller_boundary_load_0p1n_bootstrap",
+            "micro_continuation_3_roller_boundary_load_0p101n_parametric",
+        ]
+        assert micro_continuation["stages"][1]["preload_steps"] == "0.1 0.1005 0.101"
+        assert micro_continuation["stages"][1]["use_parametric_sweep"] is True
+        assert micro_continuation["stages"][1]["contact_penalty"] == "5e-5*E_steel"
+        assert micro_continuation["stages"][1]["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert micro_continuation["stages"][1]["active_roller_stabilization_mode"] == "spring"
+        assert micro_continuation["stages"][1]["solver_formulation_diagnostic_role"] == "micro_parametric_continuation_after_bootstrap_only"
+        assert "micro_parametric_continuation" in micro_continuation["stages"][-1]["load_application_fidelity"]
+        assert "('useparam', 'on')" in setup_codes[1]
+        assert "('plistarr', ['0.1 0.1005 0.101'])" in setup_codes[1]
+        assert "model.study('std1').createAutoSequences('sol')" in setup_codes[1]
+        assert "active_roller_ids = set([1, 2, 12])" in setup_codes[-1]
+
+        setup_codes.clear()
+        fixed_stabilization = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_fixed_stabilization",
+            stage_plot_dir=tmp_path / "fixed_stabilization_stage_plots",
+        )
+        assert fixed_stabilization["success"] is True
+        assert fixed_stabilization["contact_stage_mode"] == "load_side_group_boundary_load_fixed_stabilization"
+        assert [stage["name"] for stage in fixed_stabilization["stages"]] == [
+            "fixed_stabilization_3_roller_boundary_load_0p1n_bootstrap",
+            "fixed_stabilization_3_roller_boundary_load_0p1n_fixed_active",
+            "fixed_stabilization_3_roller_boundary_load_0p101n_fixed_active",
+        ]
+        assert fixed_stabilization["stages"][0]["active_roller_stabilization_mode"] == "spring"
+        assert fixed_stabilization["stages"][1]["active_roller_stabilization_mode"] == "fixed"
+        assert fixed_stabilization["stages"][2]["radial_load_value"] == "0.101[N]"
+        assert fixed_stabilization["stages"][1]["use_parametric_sweep"] is False
+        assert fixed_stabilization["stages"][1]["stabilization_diagnostic_role"] == "switch_active_roller_stabilization_from_spring_to_fixed_only"
+        assert "fixed_active_roller_stabilization" in fixed_stabilization["stages"][-1]["load_application_fidelity"]
+        assert "not_design_gate" in fixed_stabilization["stages"][-1]["physical_acceptance"]
+        assert "staged_roller_fixed = (not staged_active) or (True and 'fixed' == 'fixed' and staged_active)" in setup_codes[1]
+        assert "('useparam', 'off')" in setup_codes[1]
+        assert "('plistarr', ['0.101'])" in setup_codes[2]
+
+        setup_codes.clear()
+        preclosed_boundary = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_preclosed_boundary_load",
+            stage_plot_dir=tmp_path / "preclosed_boundary_stage_plots",
+        )
+        assert preclosed_boundary["success"] is True
+        assert len(preclosed_boundary["stages"]) == 7
+        assert preclosed_boundary["stages"][0]["name"] == "load_side_3_roller_compaction_preload"
+        assert preclosed_boundary["stages"][4]["name"] == "all_12_roller_group_compaction_preload"
+        assert preclosed_boundary["stages"][5]["name"] == "preclosed_boundary_load_probe_0p001n"
+        assert preclosed_boundary["stages"][-1]["name"] == "preclosed_boundary_load_high_ramp"
+        assert preclosed_boundary["stages"][-1]["inner_bore_load_active"] is True
+        assert preclosed_boundary["stages"][-1]["inner_body_load_active"] is False
+        assert preclosed_boundary["stages"][5]["displacement_preload_active"] is True
+        assert preclosed_boundary["stages"][-1]["displacement_preload_active"] is False
+        assert preclosed_boundary["stages"][5]["radial_load_value"] == "0.001[N]"
+        assert preclosed_boundary["stages"][-1]["radial_load_value"] == "3000[N]"
+        assert preclosed_boundary["stages"][-1]["sweep_parameter"] == "radial_load"
+        assert preclosed_boundary["stages"][5]["preload_steps"] == "0.001"
+        assert preclosed_boundary["stages"][-1]["preload_steps"] == "5 10 25 50 100 250 500 1000 2000 3000"
+        assert preclosed_boundary["stages"][5]["active_roller_stabilization_active"] is True
+        assert preclosed_boundary["stages"][5]["active_roller_stabilization_mode"] == "spring"
+        assert preclosed_boundary["stages"][5]["reuse_existing_solver"] is True
+        assert preclosed_boundary["stages"][5]["use_parametric_sweep"] is False
+        assert "if not True:" in setup_codes[5]
+        assert "if False:" in setup_codes[5]
+        assert "if not True:" in setup_codes[-1]
+        assert preclosed_boundary["stages"][-1]["displacement_preload_selection"] == "sel_inner_raceway_contact"
+        assert "release_displacement_preload" in preclosed_boundary["stages"][-1]["load_application_fidelity"]
+        assert "retained_displacement_preload" in preclosed_boundary["stages"][5]["load_application_fidelity"]
+        assert "model.param().set('radial_load', '3000[N]')" in setup_codes[-1]
+        assert "feature('load_inner_bore').active(True)" in setup_codes[-1]
+        assert "feature('load_inner_body_visual').active(False)" in setup_codes[-1]
+
+        high_body_visual = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="all_raceway_high_body_load_visual",
+            stage_plot_dir=tmp_path / "high_body_stage_plots",
+        )
+        assert high_body_visual["success"] is True
+        assert high_body_visual["stages"][-1]["name"] == "raceway_contact_high_body_load_visual"
+        assert high_body_visual["stages"][-1]["inner_body_load_active"] is True
+        assert high_body_visual["stages"][-1]["inner_bore_load_active"] is False
+        assert high_body_visual["stages"][-1]["weak_roller_foundation_active"] is False
+        assert "body_load" in high_body_visual["stages"][-1]["load_application_fidelity"]
+        assert "not_final_design_load" in high_body_visual["stages"][-1]["physical_acceptance"]
+
+        setup_codes.clear()
+        solve_calls.clear()
+        full_cage = demo._run_3d_staged_contact_solve("staged_model", run_full_cage_stage=True)
+        assert full_cage["success"] is True
+        assert len(full_cage["stages"]) == 4
+        assert full_cage["stages"][-1]["contact_scope"] == "roller_inner_outer_raceway_plus_cage_pockets"
+        assert full_cage["stages"][-1]["temporary_cage_stabilization_active"] is False
+        assert "staged_cage.active(False and staged_active)" in setup_codes[0]
+        assert "staged_cage.active(False and staged_active)" in setup_codes[1]
+        assert "staged_cage.active(True and staged_active)" in setup_codes[3]
+        assert "temporary_cage_stabilization_active=" in setup_codes[3]
+
+        assert "fix_cage_stage_stabilization').active(False)" in setup_codes[3]
+        assert "staged_inner.active(staged_active)" in setup_codes[3]
+        assert "staged_outer.active(staged_active)" in setup_codes[3]
+
+        setup_codes.clear()
+        solve_calls.clear()
+        load_side = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_then_all",
+        )
+        assert load_side["success"] is True
+        assert load_side["contact_stage_mode"] == "load_side_then_all"
+        assert load_side["stages"][0]["name"] == "single_load_roller_contact_closure_bootstrap"
+        assert load_side["stages"][0]["active_rollers"] == [1]
+        assert load_side["stages"][0]["sweep_parameter"] == "radial_load"
+        assert load_side["stages"][0]["inner_bore_load_active"] is True
+        assert load_side["stages"][0]["displacement_preload_active"] is False
+        assert load_side["stages"][0]["temporary_active_roller_stabilization_active"] is True
+        assert load_side["stages"][0]["physical_acceptance"] == "bootstrap_only_not_final_physical_contact_validation"
+        assert load_side["stages"][0]["inactive_roller_stabilization_active"] is True
+        assert load_side["stages"][1]["name"] == "single_load_roller_radial_load_ramp"
+        assert load_side["stages"][1]["temporary_active_roller_stabilization_active"] is False
+        assert load_side["stages"][2]["active_rollers"] == [12, 1, 2]
+        assert "active_roller_ids = set([1])" in setup_codes[0]
+        assert "('pname', ['radial_load'])" in setup_codes[0]
+        assert "('punit', ['N'])" in setup_codes[0]
+        assert "temporary_active_roller_stabilization_active=' + str(True)" in setup_codes[0]
+        assert "staged_roller_fixed = (not staged_active) or (True and 'fixed' == 'fixed' and staged_active)" in setup_codes[0]
+        assert "staged_roller_fixed = (not staged_active) or (False and 'fixed' == 'fixed' and staged_active)" in setup_codes[1]
+        assert "fix_roller_' + str(staged_index) + '_stage_stabilization" in setup_codes[0]
+        assert len(solve_calls) == 6
+
+        setup_codes.clear()
+        solve_calls.clear()
+        single_smoke = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="single_roller_displacement_preload",
+        )
+        assert single_smoke["success"] is True
+        assert single_smoke["contact_stage_mode"] == "single_roller_displacement_preload"
+        assert single_smoke["stages"][0]["name"] == "single_roller_physical_displacement_preload"
+        assert single_smoke["stages"][0]["active_rollers"] == [1]
+        assert single_smoke["stages"][0]["inner_bore_load_active"] is False
+        assert single_smoke["stages"][0]["displacement_preload_active"] is True
+        assert single_smoke["stages"][0]["temporary_active_roller_stabilization_active"] is False
+        assert single_smoke["stages"][0]["physical_acceptance"].startswith("candidate_physical_smoke")
+        assert single_smoke["stages"][1]["sweep_parameter"] == "radial_load"
+        assert single_smoke["stages"][2]["active_rollers"] == [1]
+        assert "active_roller_ids = set([1])" in setup_codes[0]
+        assert "('pname', ['inner_radial_displacement'])" in setup_codes[0]
+        assert "staged_roller_fixed = (not staged_active) or (False and 'fixed' == 'fixed' and staged_active)" in setup_codes[0]
+        assert len(solve_calls) == 3
+
+    def test_legacy_raceway_highload_direct_contract(self, monkeypatch, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        def fake_solve(model_name: str):
+            return {"success": True, "model_name": model_name, "status": "solved"}
+
+        def fake_evaluate(model_name: str, expression: str):
+            if expression == "solid.mises":
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "expression": expression,
+                    "statistics": {"max": 3.2e6, "mean": 7.4e5, "min": 0.0},
+                }
+            if expression == "solid.disp":
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "expression": expression,
+                    "statistics": {"max": 3.0e-3, "mean": 7.0e-4, "min": 0.0},
+                }
+            return {"success": True, "model_name": model_name, "expression": expression, "value": 1.95e6}
+
+        def fake_stage_plot(model_name: str, *, stage_name: str, output_dir):
+            return {
+                "success": True,
+                "model_name": model_name,
+                "stage": stage_name,
+                "plot_type": "native_comsol_volume",
+                "filepath": str(output_dir / f"{stage_name}.png"),
+                "export_method": "java:Image2D:Volume",
+                "dataset": "dset1",
+                "png_quality": {"success": True},
+            }
+
+        monkeypatch.setattr(demo, "comsol_solve", fake_solve)
+        monkeypatch.setattr(demo, "comsol_evaluate", fake_evaluate)
+        monkeypatch.setattr(demo, "_export_native_3d_stage_volume_plot", fake_stage_plot)
+        monkeypatch.setattr(demo, "_render_stress_projection_from_open_model", lambda model_name, plot_path: {"success": True, "filepath": str(plot_path)})
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, path: {"success": True, "saved_to": path})
+
+        result = demo._run_legacy_raceway_highload_direct("legacy_model", artifact_root=tmp_path)
+        assert result["success"] is True
+        assert result["contact_scope"] == "all_12_rollers_inner_outer_raceway_only_24_contact_pairs"
+        assert result["cage_contact_active"] is False
+        assert "BodyLoad" in result["physical_contact_validation"]["warnings"][1]
+        assert result["physical_contact_validation"]["global_max_von_mises_pa"] == 3.2e6
+        assert result["native_volume_plot"]["plot_type"] == "native_comsol_volume"
+        assert result["requested_stage_image"]["success"] is True
+        assert result["requested_stage_image"]["request_class"] == "high_load_12roller_native_comsol_stress_image"
+        assert result["requested_stage_image"]["selected_stage"] == "legacy_raceway_highload_direct"
+        assert result["requested_stage_image"]["native_comsol_png"].endswith("legacy_raceway_highload_direct.png")
+        assert result["requested_stage_image"]["max_von_mises_pa"] == 3.2e6
+        assert result["requested_stage_image"]["contact_pressure_est_pa"] == 1.95e6
+        assert result["requested_stage_image"]["production_ready"] is False
+        assert "full boundary-load/cage high-load stage" in result["requested_stage_image"]["stage_selection_reason"]
+
+    def test_requested_stage_image_selects_high_load_and_rejects_low_preload(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        low_only = {
+            "stages": [
+                {
+                    "name": "raceway_contact_refined_preload",
+                    "solve": {"success": True},
+                    "native_volume_plot": {
+                        "success": True,
+                        "filepath": "/tmp/refined.png",
+                        "plot_type": "native_comsol_volume",
+                    },
+                    "stress": {"success": True, "statistics": {"max": 9.0e3}},
+                    "displacement": {"success": True, "statistics": {"max": 2.0e-4}},
+                    "contact_pressure": {"success": True, "value": 1.0e2},
+                    "inner_bore_load_active": False,
+                    "displacement_preload_active": True,
+                    "physical_acceptance": "accepted_all_12_roller_raceway_contact_displacement_preload_smoke",
+                }
+            ]
+        }
+        rejected = demo._select_requested_stage_image_from_staged_solve(low_only)
+        assert rejected["success"] is False
+        assert rejected["image_role"] == "best_available_native_stage_is_not_high_load"
+        assert rejected["native_comsol_png"] is None
+        assert rejected["best_available_native_comsol_png"] == "/tmp/refined.png"
+        assert "must not be presented" in rejected["stage_selection_reason"]
+
+        implausible_singlepoint = {
+            "stages": [
+                low_only["stages"][0],
+                {
+                    "name": "soft_guidance_3_roller_boundary_load_0p1n_singlepoint",
+                    "solve": {"success": True},
+                    "native_volume_plot": {
+                        "success": True,
+                        "filepath": "/tmp/exploded.png",
+                        "plot_type": "native_comsol_volume",
+                    },
+                    "stress": {"success": True, "statistics": {"max": 1.4e13}},
+                    "displacement": {"success": True, "statistics": {"max": 20.0}},
+                    "contact_pressure": {"success": True, "value": 65.0},
+                    "inner_bore_load_active": True,
+                    "displacement_preload_active": False,
+                    "weak_inner_guidance_active": True,
+                    "load_application_fidelity": "inner_bore_boundary_load_load_side_three_roller_soft_weak_guidance_diagnostic_not_design_gate",
+                },
+            ]
+        }
+        plausible_fallback = demo._select_requested_stage_image_from_staged_solve(implausible_singlepoint)
+        assert plausible_fallback["success"] is False
+        assert plausible_fallback["image_role"] == "best_available_native_stage_is_not_high_load"
+        assert plausible_fallback["best_available_stage"] == "raceway_contact_refined_preload"
+        assert plausible_fallback["best_available_native_comsol_png"] == "/tmp/refined.png"
+        assert plausible_fallback["rejected_converged_stage_count"] == 1
+
+        all_implausible = {
+            "stages": [implausible_singlepoint["stages"][1]]
+        }
+        rejected_implausible = demo._select_requested_stage_image_from_staged_solve(all_implausible)
+        assert rejected_implausible["success"] is False
+        assert rejected_implausible["image_role"] == "no_physically_plausible_converged_native_comsol_stage_available"
+        assert rejected_implausible["best_available_rejected_stage"] == "soft_guidance_3_roller_boundary_load_0p1n_singlepoint"
+        assert any("implausibly high" in error for error in rejected_implausible["best_available_rejected_reasons"])
+
+        high_continuation = {
+            "stages": [
+                low_only["stages"][0],
+                {
+                    "name": "continuous_boundary_load_high_ramp_retained_preload",
+                    "solve": {"success": True},
+                    "native_volume_plot": {
+                        "success": True,
+                        "filepath": "/tmp/high.png",
+                        "plot_type": "native_comsol_volume",
+                        "png_quality": {"success": True},
+                    },
+                    "stress": {"success": True, "statistics": {"max": 2.5e6}},
+                    "displacement": {"success": True, "statistics": {"max": 4.0e-4}},
+                    "contact_pressure": {"success": True, "value": 3.1e6},
+                    "contact_scope": "all_12_rollers_inner_outer_raceway_true_contact_inner_bore_boundary_load_high_ramp_retained_preload",
+                    "inner_bore_load_active": True,
+                    "active_rollers": list(range(1, 13)),
+                    "per_roller_probe_results": [
+                        {"roller": f"roller_{index}", "success": True, "value": 2.0e6 + index}
+                        for index in range(1, 13)
+                    ],
+                    "displacement_preload_active": True,
+                    "weak_inner_guidance_active": True,
+                    "load_application_fidelity": "inner_bore_boundary_load_high_ramp_with_retained_displacement_preload_and_weak_inner_guidance_not_design_gate",
+                    "physical_acceptance": "continuous_high_load_boundary_load_diagnostic_requires_mpa_stress_native_png_and_explicit_stabilization_warning",
+                },
+            ]
+        }
+        selected = demo._select_requested_stage_image_from_staged_solve(high_continuation)
+        assert selected["success"] is True
+        assert selected["selected_stage"] == "continuous_boundary_load_high_ramp_retained_preload"
+        assert selected["native_comsol_png"] == "/tmp/high.png"
+        assert selected["max_von_mises_pa"] == 2.5e6
+        assert selected["contact_pressure_est_pa"] == 3.1e6
+        assert selected["production_ready"] is False
+        assert "not a final design-grade" in selected["stage_selection_reason"]
+
+        split_high = {
+            "stages": [
+                {
+                    "name": "split_control_boundary_load_high_ramp",
+                    "solve": {"success": True},
+                    "native_volume_plot": {
+                        "success": True,
+                        "filepath": "/tmp/split-high.png",
+                        "plot_type": "native_comsol_volume",
+                    },
+                    "stress": {"success": True, "statistics": {"max": 3.0e6}},
+                    "displacement": {"success": True, "statistics": {"max": 5.0e-4}},
+                    "contact_pressure": {"success": True, "value": 3.3e6},
+                    "inner_bore_load_active": True,
+                    "active_rollers": list(range(1, 13)),
+                    "per_roller_probe_results": [
+                        {"roller": f"roller_{index}", "success": True, "value": 2.5e6 + index}
+                        for index in range(1, 13)
+                    ],
+                    "displacement_preload_active": True,
+                    "displacement_preload_selection": "sel_inner_raceway_contact",
+                    "weak_inner_guidance_active": True,
+                    "load_application_fidelity": "inner_bore_boundary_load_high_ramp_with_split_raceway_displacement_closure_and_weak_guidance_not_design_gate",
+                    "physical_acceptance": "split_control_high_load_boundary_load_diagnostic_requires_mpa_stress_native_png_and_explicit_stabilization_warning",
+                }
+            ]
+        }
+        split_selected = demo._select_requested_stage_image_from_staged_solve(split_high)
+        assert split_selected["success"] is True
+        assert split_selected["selected_stage"] == "split_control_boundary_load_high_ramp"
+        assert split_selected["native_comsol_png"] == "/tmp/split-high.png"
+        assert split_selected["production_ready"] is False
+
+        reaction_high = {
+            "stages": [
+                {
+                    "name": "raceway_contact_high_preload_reaction_equivalent",
+                    "solve": {"success": True},
+                    "native_volume_plot": {
+                        "success": True,
+                        "filepath": "/tmp/reaction-high.png",
+                        "plot_type": "native_comsol_volume",
+                    },
+                    "stress": {"success": True, "statistics": {"max": 1.2e6}},
+                    "displacement": {"success": True, "statistics": {"max": 3.0e-6}},
+                    "contact_pressure": {"success": True, "value": 1.95e6},
+                    "reaction_equivalent": {
+                        "success": True,
+                        "best_reaction_force_abs_n": 3000.0,
+                        "equivalent_pressure_pa": 1.3e6,
+                    },
+                    "inner_bore_load_active": False,
+                    "displacement_preload_active": True,
+                    "load_application_fidelity": "displacement_controlled_high_preload_with_reaction_probe_not_boundary_load_design_gate",
+                    "physical_acceptance": "high_preload_reaction_equivalent_true_12_roller_raceway_contact_requires_reaction_probe_or_clear_failure",
+                }
+            ]
+        }
+        reaction_selected = demo._select_requested_stage_image_from_staged_solve(reaction_high)
+        assert reaction_selected["success"] is True
+        assert reaction_selected["selected_stage"] == "raceway_contact_high_preload_reaction_equivalent"
+        assert reaction_selected["reaction_equivalent"]["best_reaction_force_abs_n"] == 3000.0
+
+    def test_displacement_reaction_equivalent_probe_records_candidate_failures(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        evaluated: list[str] = []
+
+        def fake_execute_java(code: str, *, model_name: str):
+            assert (
+                "intop_displacement_reaction_probe" in code
+                or "REACTION_EXPR_VALUE" in code
+                or "REACTION_SURFACE_VALUE" in code
+            )
+            if "REACTION_EQUIVALENT_PROBE" in code:
+                assert "sel_inner_bore_load_surface" in code
+            return {"success": True, "model_name": model_name}
+
+        def fake_evaluate(model_name: str, expression: str):
+            evaluated.append(expression)
+            if expression.startswith("abs("):
+                return {"success": True, "model_name": model_name, "expression": expression, "value": 123.0}
+            if "solid.RFx" in expression:
+                return {"success": True, "model_name": model_name, "expression": expression, "value": -42.0}
+            return {"success": False, "error": f"unknown expression: {expression}"}
+
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_evaluate", fake_evaluate)
+
+        result = demo._evaluate_displacement_reaction_equivalent(
+            "reaction_model",
+            selection_name="sel_inner_bore_load_surface",
+        )
+
+        assert result["success"] is True
+        assert result["best_expression"] == "intop_displacement_reaction_probe(solid.RFx)"
+        assert result["best_reaction_force_abs_n"] == 42.0
+        assert result["equivalent_pressure_pa"] == 123.0
+        assert result["candidate_count"] == len(result["evaluations"])
+        assert result["candidate_count"] > len(evaluated) - 1
+        assert any("solid.RFy" in item["expression"] for item in result["evaluations"])
+        assert any("comp1.intop_displacement_reaction_probe" in item["expression"] for item in result["evaluations"])
+        assert any(item.get("method") == "java_intsurface" for item in result["evaluations"])
+        assert any("solid.T_stressx" in item["expression"] for item in result["evaluations"])
+        assert any("solid.sx*nx" in item["expression"] for item in result["evaluations"])
+        assert result["candidate_audit"]["nonzero_success_count"] >= 1
+        assert result["candidate_audit"]["method_counts"]["java_intsurface"] >= 1
+
+    def test_displacement_reaction_equivalent_probe_can_use_surface_integral_fallback(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        def fake_execute_java(code: str, *, model_name: str):
+            if "REACTION_EQUIVALENT_PROBE" in code:
+                return {"success": True, "model_name": model_name}
+            if "REACTION_SURFACE_VALUE|tag=reaction_surface_probe_1|value=" in code:
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "stdout": "REACTION_SURFACE_VALUE|tag=reaction_surface_probe_1|value=-55.0\n",
+                }
+            if "REACTION_EXPR_VALUE|tag=reaction_equivalent_pressure|value=" in code:
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "stdout": "REACTION_EXPR_VALUE|tag=reaction_equivalent_pressure|value=456.0\n",
+                }
+            return {"success": False, "model_name": model_name, "error": "unknown operator"}
+
+        def fake_evaluate(model_name: str, expression: str):
+            return {"success": False, "model_name": model_name, "expression": expression, "error": "unknown operator"}
+
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_evaluate", fake_evaluate)
+
+        result = demo._evaluate_displacement_reaction_equivalent(
+            "reaction_model",
+            selection_name="sel_inner_bore_load_surface",
+        )
+
+        assert result["success"] is True
+        assert result["best_expression"] == "solid.RFx"
+        assert result["best_method"] == "java_intsurface"
+        assert result["best_reaction_force_abs_n"] == 55.0
+        assert result["equivalent_pressure_pa"] == 456.0
+        assert result["candidate_audit"]["nonzero_success_count"] == 1
+        assert result["candidate_audit"]["unknown_operator_count"] >= 1
+
+    def test_displacement_reaction_equivalent_probe_rejects_zero_surface_integral(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        def fake_execute_java(code: str, *, model_name: str):
+            if "REACTION_EQUIVALENT_PROBE" in code:
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "stdout": (
+                        "REACTION_EQUIVALENT_SETUP_JSON_START\n"
+                        "{\"operator_exists\": true, \"selection_bound\": true, "
+                        "\"selection_named\": {\"success\": true, \"value\": \"sel_inner_bore_load_surface\"}}\n"
+                        "REACTION_EQUIVALENT_SETUP_JSON_END\n"
+                    ),
+                }
+            if "REACTION_SURFACE_VALUE" in code:
+                tag_match = re.search(r"REACTION_SURFACE_VALUE\|tag=([^|]+)\|value=", code)
+                tag = tag_match.group(1) if tag_match else "reaction_surface_probe"
+                return {
+                    "success": True,
+                    "model_name": model_name,
+                    "stdout": f"REACTION_SURFACE_VALUE|tag={tag}|value=0.0\n",
+                }
+            return {"success": False, "model_name": model_name, "error": "unknown operator"}
+
+        def fake_evaluate(model_name: str, expression: str):
+            return {"success": False, "model_name": model_name, "expression": expression, "error": "unknown operator"}
+
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_evaluate", fake_evaluate)
+
+        result = demo._evaluate_displacement_reaction_equivalent(
+            "reaction_model",
+            selection_name="sel_inner_bore_load_surface",
+        )
+
+        assert result["success"] is False
+        assert result["evaluated_candidate_success_count"] > 0
+        assert result["successful_candidate_count"] == 0
+        assert result["best_reaction_force_abs_n"] is None
+        assert result["setup_audit"]["success"] is True
+        assert result["candidate_audit"]["zero_result_count"] > 0
+        assert result["candidate_audit"]["nonzero_success_count"] == 0
+        assert "nonzero reaction" in result["warning"]
+
+    def test_stage_evidence_matrix_scans_summaries_and_marks_fidelity(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        run_dir = tmp_path / "runtime_smoke" / "bearing_case"
+        run_dir.mkdir(parents=True)
+        summary = {
+            "model_name": "bearing_case",
+            "contact_stage_mode": "load_side_group_boundary_load",
+            "geometry_overrides": {
+                "contact_interference": "20[um]",
+                "cage_pocket_clearance": None,
+            },
+            "requested_stage_image": {
+                "selected_stage": "all_12_roller_boundary_load_50n",
+                "native_comsol_png": str(run_dir / "stage_plots" / "all_12.png"),
+                "production_ready": False,
+                "load_application_fidelity": "inner_bore_boundary_load_group_ramped_free_closure_single_solve_active_spring_stabilized_not_design_gate",
+            },
+            "physical_contact_validation": {"quality_level": "raceway_contact_physics_smoke"},
+            "staged_contact_solve": {
+                "contact_stage_mode": "load_side_group_boundary_load",
+                "stages": [
+                    {
+                        "name": "load_side_3_roller_boundary_load_0p1n",
+                        "solve": {"success": True},
+                        "native_volume_plot": {
+                            "success": True,
+                            "filepath": str(run_dir / "stage_plots" / "three.png"),
+                            "png_quality": {"success": True},
+                        },
+                        "stress": {"success": True, "statistics": {"max": 1.0e5}},
+                        "inner_ring_stress": {"success": True, "value": 8.0e4},
+                        "displacement": {"success": True, "statistics": {"max": 1.0e-6}},
+                        "contact_pressure": {"success": True, "value": 5.0e4},
+                        "inner_bore_load_active": True,
+                        "inner_body_load_active": False,
+                        "active_rollers": [12, 1, 2],
+                        "cage_contact_active": False,
+                        "weak_inner_guidance_active": True,
+                        "temporary_active_roller_stabilization_active": True,
+                        "active_roller_stabilization_mode": "spring",
+                        "displacement_preload_active": False,
+                        "per_roller_probe_results": [
+                            {"roller": "roller_1", "success": True, "value": 1.1e5},
+                            {"roller": "roller_2", "success": True, "value": 1.2e5},
+                            {"roller": "roller_12", "success": True, "value": 1.3e5},
+                        ],
+                        "load_application_fidelity": "inner_bore_boundary_load_group_ramped_free_closure_single_solve_active_spring_stabilized_not_design_gate",
+                    },
+                    {
+                        "name": "all_12_roller_boundary_load_50n",
+                        "solve": {"success": True},
+                        "native_volume_plot": {
+                            "success": True,
+                            "filepath": str(run_dir / "stage_plots" / "all_12.png"),
+                            "png_quality": {"success": True},
+                        },
+                        "stress": {"success": True, "statistics": {"max": 2.0e6}},
+                        "inner_ring_stress": {"success": True, "value": 1.8e6},
+                        "displacement": {"success": True, "statistics": {"max": 2.0e-5}},
+                        "contact_pressure": {"success": True, "value": 6.0e5},
+                        "reaction_equivalent": {
+                            "success": True,
+                            "candidate_count": 12,
+                            "successful_candidate_count": 1,
+                            "best_expression": "comp1.intop_displacement_reaction_probe(solid.RFx)",
+                            "best_reaction_force_abs_n": 50.0,
+                        },
+                        "inner_bore_load_active": True,
+                        "inner_body_load_active": False,
+                        "active_rollers": list(range(1, 13)),
+                        "cage_contact_active": False,
+                        "weak_inner_guidance_active": True,
+                        "temporary_active_roller_stabilization_active": True,
+                        "active_roller_stabilization_mode": "spring",
+                        "displacement_preload_active": False,
+                        "reaction_equivalent_requested": True,
+                        "load_application_fidelity": "inner_bore_boundary_load_group_ramped_free_closure_single_solve_active_spring_stabilized_not_design_gate",
+                    },
+                    {
+                        "name": "raceway_contact_high_preload_reaction_equivalent",
+                        "solve": {"success": True},
+                        "native_volume_plot": {
+                            "success": True,
+                            "filepath": str(run_dir / "stage_plots" / "preload.png"),
+                            "png_quality": {"success": True},
+                        },
+                        "stress": {"success": True, "statistics": {"max": 3.0e6}},
+                        "inner_ring_stress": {"success": True, "value": 2.8e6},
+                        "displacement": {"success": True, "statistics": {"max": 3.0e-5}},
+                        "contact_pressure": {"success": True, "value": 7.0e5},
+                        "reaction_equivalent": {"success": True, "best_reaction_force_abs_n": 80.0},
+                        "inner_bore_load_active": False,
+                        "inner_body_load_active": False,
+                        "active_rollers": list(range(1, 13)),
+                        "cage_contact_active": False,
+                        "weak_inner_guidance_active": False,
+                        "temporary_active_roller_stabilization_active": False,
+                        "active_roller_stabilization_mode": "fixed",
+                        "displacement_preload_active": True,
+                        "inner_radial_displacement": "3[um]",
+                        "load_application_fidelity": "displacement_controlled_high_preload_with_reaction_probe_not_boundary_load_design_gate",
+                    },
+                    {
+                        "name": "soft_guidance_3_roller_boundary_load_0p1n_singlepoint",
+                        "solve": {"success": True},
+                        "native_volume_plot": {
+                            "success": True,
+                            "filepath": str(run_dir / "stage_plots" / "exploded.png"),
+                            "png_quality": {"success": True},
+                        },
+                        "stress": {"success": True, "statistics": {"max": 1.4e13}},
+                        "inner_ring_stress": {"success": True, "value": 7.5e13},
+                        "displacement": {"success": True, "statistics": {"max": 20.0}},
+                        "contact_pressure": {"success": True, "value": 65.0},
+                        "inner_bore_load_active": True,
+                        "inner_body_load_active": False,
+                        "active_rollers": [12, 1, 2],
+                        "cage_contact_active": False,
+                        "weak_inner_guidance_active": True,
+                        "temporary_active_roller_stabilization_active": True,
+                        "active_roller_stabilization_mode": "spring",
+                        "displacement_preload_active": False,
+                        "load_application_fidelity": "inner_bore_boundary_load_load_side_three_roller_soft_weak_guidance_diagnostic_not_design_gate",
+                    },
+                ],
+            },
+        }
+        (run_dir / "direct_3d_bearing_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        reaction_probe_dir = run_dir / "reaction_probe_post_mph"
+        reaction_probe_dir.mkdir()
+        (reaction_probe_dir / "reaction_probe_summary.json").write_text(json.dumps({
+            "success": True,
+            "kind": "bearing_3d_saved_mph_reaction_probe",
+            "mph_path": str(run_dir / "stage_models" / "post_reaction_probe_configured.mph"),
+            "selection_name": "sel_inner_bore_load_surface",
+            "reaction_verified": True,
+            "reaction_equivalent": {
+                "success": True,
+                "candidate_count": 40,
+                "evaluated_candidate_success_count": 9,
+                "successful_candidate_count": 0,
+                "best_reaction_force_abs_n": 0.0,
+                "setup_audit": {
+                    "success": True,
+                    "operator_exists": True,
+                    "selection_bound": True,
+                },
+                "candidate_audit": {
+                    "diagnostic_class_counts": {
+                        "unknown_operator": 23,
+                        "zero_result": 9,
+                        "selection_error": 8,
+                    },
+                    "nonzero_success_count": 0,
+                },
+                "warning": "No probed COMSOL reaction-force expression evaluated to a nonzero reaction.",
+            },
+        }), encoding="utf-8")
+
+        matrix = demo.build_stage_evidence_matrix(search_root=tmp_path / "runtime_smoke")
+
+        assert matrix["summary_count"] == 1
+        assert matrix["row_count"] == 4
+        assert matrix["production_ready_count"] == 0
+        assert matrix["reaction_verified_stage_count"] == 2
+        assert matrix["saved_reaction_probe_report_count"] == 1
+        assert matrix["saved_reaction_probe_verified_count"] == 0
+        saved_probe = matrix["saved_reaction_probe_reports"][0]
+        assert saved_probe["reaction_verified"] is False
+        assert saved_probe["candidate_audit"]["diagnostic_class_counts"]["unknown_operator"] == 23
+        all_12 = [row for row in matrix["rows"] if row["stage"] == "all_12_roller_boundary_load_50n"][0]
+        assert all_12["boundary_load_active"] is True
+        assert all_12["temporary_spring"] is True
+        assert all_12["active_roller_count"] == 12
+        assert all_12["production_ready"] is False
+        assert all_12["geometry_overrides"]["contact_interference"] == "20[um]"
+        load_side = [row for row in matrix["rows"] if row["stage"] == "load_side_3_roller_boundary_load_0p1n"][0]
+        assert load_side["active_roller_probe_success_count"] == 3
+        assert load_side["active_roller_nonzero_probe_count"] == 3
+        assert load_side["active_roller_max_von_mises_pa"] == 1.3e5
+        exploded = [row for row in matrix["rows"] if row["stage"] == "soft_guidance_3_roller_boundary_load_0p1n_singlepoint"][0]
+        assert exploded["physical_plausibility_success"] is False
+        assert matrix["highest_trust_stage"]["stage"] != "soft_guidance_3_roller_boundary_load_0p1n_singlepoint"
+        assert matrix["preload_calibration"]["point_count"] == 1
+
+        report = demo.write_stage_evidence_matrix_report(
+            search_root=tmp_path / "runtime_smoke",
+            output_dir=tmp_path / "reports",
+        )
+        assert Path(report["json_path"]).exists()
+        assert Path(report["markdown_path"]).exists()
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "all_12_roller_boundary_load_50n" in markdown
+        assert "Saved-MPH Reaction Probe Reports" in markdown
+        assert "unknown_operator" not in markdown
+        assert "reaction_probe_summary.json" in markdown
+
+    def test_stage_evidence_matrix_flags_boundaryload_stress_plateau(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        run_dir = tmp_path / "runtime_smoke" / "bearing_plateau"
+        run_dir.mkdir(parents=True)
+
+        def stage(load: str, displacement: float) -> dict:
+            return {
+                "name": f"single_solve_3_roller_boundary_load_{load.replace('.', 'p')}n_parametric",
+                "solve": {"success": True},
+                "native_volume_plot": {
+                    "success": True,
+                    "filepath": str(run_dir / "stage_plots" / f"{load}.png"),
+                    "png_quality": {"success": True},
+                },
+                "stress": {"success": True, "statistics": {"max": 6.526523284e6}},
+                "inner_ring_stress": {"success": True, "value": 1.100733554e7},
+                "displacement": {"success": True, "statistics": {"max": displacement}},
+                "contact_pressure": {"success": True, "value": 100.0},
+                "inner_bore_load_active": True,
+                "inner_body_load_active": False,
+                "radial_load_value": f"{load}[N]",
+                "active_rollers": [12, 1, 2],
+                "cage_contact_active": False,
+                "weak_inner_guidance_active": True,
+                "temporary_active_roller_stabilization_active": True,
+                "active_roller_stabilization_mode": "spring",
+                "displacement_preload_active": False,
+                "load_application_fidelity": (
+                    f"inner_bore_boundary_load_load_side_three_roller_single_solve_parametric_{load}n_diagnostic_not_design_gate"
+                ),
+            }
+
+        summary = {
+            "model_name": "bearing_plateau",
+            "contact_stage_mode": "load_side_group_boundary_load_single_solve_plateau_test",
+            "requested_stage_image": {"production_ready": False},
+            "physical_contact_validation": {"quality_level": "raceway_contact_physics_smoke"},
+            "staged_contact_solve": {
+                "stages": [
+                    stage("0.1", 2.0e-3),
+                    stage("0.13", 3.1e-3),
+                    stage("0.17", 5.2e-3),
+                    stage("0.2", 6.5e-3),
+                ]
+            },
+        }
+        (run_dir / "direct_3d_bearing_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+        matrix = demo.build_stage_evidence_matrix(search_root=tmp_path / "runtime_smoke")
+
+        assert matrix["converged_native_stage_count"] == 4
+        assert matrix["highest_trust_stage"] is None
+        for row in matrix["rows"]:
+            assert row["physical_plausibility_success"] is False
+            assert row["boundaryload_sequence_stress_plateau"] is True
+            assert any("stress plateau" in error for error in row["physical_plausibility_errors"])
+
+    def test_boundaryload_active_roller_distribution_gate_rejects_zero_active_roller(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        run_dir = tmp_path / "runtime_smoke" / "bearing_probe_distribution"
+        run_dir.mkdir(parents=True)
+        stage = {
+            "name": "single_solve_3_roller_boundary_load_0p101n_probe_gate",
+            "solve": {"success": True},
+            "native_volume_plot": {
+                "success": True,
+                "filepath": str(run_dir / "stage_plots" / "probe_gate.png"),
+                "png_quality": {"success": True},
+            },
+            "stress": {"success": True, "statistics": {"max": 6.526523284e6}},
+            "inner_ring_stress": {"success": True, "value": 1.100733554e7},
+            "displacement": {"success": True, "statistics": {"max": 2.214e-3}},
+            "contact_pressure": {"success": True, "value": 65.7},
+            "inner_bore_load_active": True,
+            "inner_body_load_active": False,
+            "radial_load_value": "0.101[N]",
+            "active_rollers": [12, 1, 2],
+            "cage_contact_active": False,
+            "weak_inner_guidance_active": True,
+            "temporary_active_roller_stabilization_active": True,
+            "active_roller_stabilization_mode": "spring",
+            "displacement_preload_active": False,
+            "pre_solve_model_save": {
+                "success": True,
+                "filepath": str(run_dir / "stage_models" / "single_solve_3_roller_boundary_load_0p101n_parametric_configured.mph"),
+            },
+            "per_roller_probe_results": [
+                {"roller": "roller_1", "success": True, "value": 0.0},
+                {"roller": "roller_2", "success": True, "value": 6.5e6},
+                {"roller": "roller_12", "success": True, "value": 6.4e6},
+                *[
+                    {"roller": f"roller_{index}", "success": True, "value": 0.0}
+                    for index in range(3, 12)
+                ],
+            ],
+            "load_application_fidelity": (
+                "inner_bore_boundary_load_load_side_three_roller_single_solve_parametric_0p101n_diagnostic_not_design_gate"
+            ),
+        }
+        summary = {
+            "model_name": "bearing_probe_distribution",
+            "contact_stage_mode": "load_side_group_boundary_load_single_solve_0p101",
+            "requested_stage_image": {"production_ready": False},
+            "physical_contact_validation": {"quality_level": "raceway_contact_physics_smoke"},
+            "staged_contact_solve": {"stages": [stage]},
+        }
+        (run_dir / "direct_3d_bearing_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        diagnostic_dir = run_dir / "diagnostics_0p101n_probe_gate_single_solve"
+        diagnostic_dir.mkdir()
+        def contact_feature(tag: str, pair: str) -> dict:
+            return {
+                "tag": tag,
+                "exists": True,
+                "active": True,
+                "type": "Contact",
+                "properties": {
+                    "pairs": {"success": True, "value": [pair]},
+                    "pn_penalty": {"success": True, "value": ["5e-5*E_steel"]},
+                    "useRelaxation": {"success": True, "value": ["Always"]},
+                    "irlx": {"success": True, "value": ["0.12"]},
+                    "tolcontact": {"success": True, "value": ["3[um]"]},
+                    "zeroInitGap": {"success": True, "value": ["0"]},
+                },
+            }
+        (diagnostic_dir / "stage_mph_diagnostic.json").write_text(json.dumps({
+            "success": True,
+            "mph_path": str(run_dir / "stage_models" / "single_solve_3_roller_boundary_load_0p101n_parametric_configured.mph"),
+            "audit": {
+                "payload": {
+                    "solid_feature_audit": [
+                        {
+                            "tag": "load_inner_bore",
+                            "active": True,
+                            "properties": {"FperArea": {"success": True, "value": ["inner_bore_load_pressure", "0", "0"]}},
+                        },
+                        contact_feature("contact_roller_1_inner", "cp_roller_1_inner_raceway"),
+                        contact_feature("contact_roller_1_outer", "cp_roller_1_outer_raceway"),
+                        {"tag": "contact_roller_1_cage", "active": False},
+                        {"tag": "weak_roller_1_foundation", "active": True},
+                        {"tag": "fix_roller_1_stage_stabilization", "active": False},
+                        contact_feature("contact_roller_2_inner", "cp_roller_2_inner_raceway"),
+                        contact_feature("contact_roller_2_outer", "cp_roller_2_outer_raceway"),
+                        contact_feature("contact_roller_12_inner", "cp_roller_12_inner_raceway"),
+                        contact_feature("contact_roller_12_outer", "cp_roller_12_outer_raceway"),
+                    ],
+                    "selection_audit": [
+                        {
+                            "tag": "sel_roller_1_body",
+                            "exists": True,
+                            "type": "Box",
+                            "entity_count": 5,
+                            "properties": {
+                                "xmin": {"success": True, "value": "23[mm]"},
+                                "xmax": {"success": True, "value": "31[mm]"},
+                                "ymin": {"success": True, "value": "-4[mm]"},
+                                "ymax": {"success": True, "value": "4[mm]"},
+                                "zmin": {"success": True, "value": "-8[mm]"},
+                                "zmax": {"success": True, "value": "8[mm]"},
+                            },
+                        },
+                        {
+                            "tag": "box_roller_1_inner_contact_patch",
+                            "exists": True,
+                            "type": "Box",
+                            "entity_count": 14,
+                            "properties": {
+                                "xmin": {"success": True, "value": "21.8[mm]"},
+                                "xmax": {"success": True, "value": "24.2[mm]"},
+                                "ymin": {"success": True, "value": "-4.6[mm]"},
+                                "ymax": {"success": True, "value": "4.6[mm]"},
+                                "zmin": {"success": True, "value": "-8[mm]"},
+                                "zmax": {"success": True, "value": "8[mm]"},
+                            },
+                        },
+                        {
+                            "tag": "box_roller_1_outer_contact_patch",
+                            "exists": True,
+                            "type": "Box",
+                            "entity_count": 6,
+                            "properties": {
+                                "xmin": {"success": True, "value": "29.8[mm]"},
+                                "xmax": {"success": True, "value": "32.2[mm]"},
+                                "ymin": {"success": True, "value": "-4.6[mm]"},
+                                "ymax": {"success": True, "value": "4.6[mm]"},
+                                "zmin": {"success": True, "value": "-8[mm]"},
+                                "zmax": {"success": True, "value": "8[mm]"},
+                            },
+                        },
+                    ],
+                    "contact_pair_audit": [
+                        {
+                            "tag": "cp_roller_1_inner_raceway",
+                            "exists": True,
+                            "source": {"named": {"success": True, "value": "sel_roller_1_inner_contact"}, "entity_count": 2},
+                            "destination": {"named": {"success": True, "value": "sel_inner_raceway_1_contact"}, "entity_count": 2},
+                        },
+                        {
+                            "tag": "cp_roller_1_outer_raceway",
+                            "exists": True,
+                            "source": {"named": {"success": True, "value": "sel_roller_1_outer_contact"}, "entity_count": 2},
+                            "destination": {"named": {"success": True, "value": "sel_outer_raceway_1_contact"}, "entity_count": 1},
+                        },
+                    ],
+                },
+            },
+        }), encoding="utf-8")
+        contact_probe_dir = run_dir / "contact_probe_solved_mph"
+        contact_probe_dir.mkdir()
+        (contact_probe_dir / "contact_probe_summary.json").write_text(json.dumps({
+            "success": True,
+            "kind": "bearing_3d_saved_mph_contact_probe",
+            "mph_path": str(run_dir / "result_packages" / "bearing_probe_distribution.mph"),
+            "contact_probe": {
+                "candidate_count": 60,
+                "success_count": 60,
+                "nonzero_count": 50,
+                "contact_status_by_roller": {
+                    "roller_1": {
+                        "pair_specific_success_count": 2,
+                        "pair_specific_nonzero_count": 0,
+                        "pair_specific_nonzero_ratio": 0.0,
+                    },
+                    "roller_2": {
+                        "pair_specific_success_count": 2,
+                        "pair_specific_nonzero_count": 2,
+                        "pair_specific_nonzero_ratio": 1.0,
+                    },
+                },
+                "normal_orientation_by_roller": {
+                    "roller_1": {
+                        "source_destination_radial_normal_alignment": {
+                            "inner": {
+                                "source_radial_avg": 1.0,
+                                "destination_radial_avg": -1.0,
+                                "opposite_radial_sign": True,
+                            },
+                        },
+                    },
+                },
+                "pair_transfer_by_roller": {
+                    "roller_1": {
+                        "destination_abs_tn_nonzero_count": 0,
+                        "source_destination_transfer": {
+                            "inner": {
+                                "source_abs_Tn_integral": None,
+                                "destination_abs_Tn_integral": 0.0,
+                                "source_zero_destination_nonzero": False,
+                            },
+                        },
+                    },
+                    "roller_2": {
+                        "destination_abs_tn_nonzero_count": 2,
+                    },
+                },
+                "by_roller": {
+                    "roller_1": {
+                        "source_destination_imbalance": {
+                            "inner": {
+                                "source_nonzero": False,
+                                "destination_nonzero": True,
+                                "source_zero_destination_nonzero": True,
+                            },
+                            "outer": {
+                                "source_nonzero": False,
+                                "destination_nonzero": True,
+                                "source_zero_destination_nonzero": True,
+                            },
+                        },
+                    },
+                    "roller_2": {
+                        "source_destination_imbalance": {
+                            "inner": {
+                                "source_nonzero": True,
+                                "destination_nonzero": True,
+                                "source_zero_destination_nonzero": False,
+                            },
+                        },
+                    },
+                },
+            },
+            "pair_enforcement_diagnostic": {
+                "success": True,
+                "zero_pair_specific_contact_pressure_rollers": ["roller_1"],
+                "source_destination_imbalance_rollers": ["roller_1"],
+                "nonzero_reference_rollers": ["roller_2"],
+                "roller_states": {
+                    "roller_1": {
+                        "contact_feature_settings_match_nonzero_references": True,
+                        "inner_pair": {
+                            "source_named": "sel_roller_1_inner_contact",
+                            "destination_named": "sel_inner_raceway_1_contact",
+                        },
+                    },
+                },
+                "recommendations": [
+                    "Zero-carry rollers have solved-MPH source/destination imbalance and zero pair-specific normal pressure while their contact feature settings match nonzero neighboring rollers; prioritize contact normal/gap orientation or pair enforcement transfer over static feature-setting differences."
+                ],
+            },
+        }), encoding="utf-8")
+
+        matrix = demo.build_stage_evidence_matrix(search_root=tmp_path / "runtime_smoke")
+
+        row = matrix["rows"][0]
+        assert row["physical_plausibility_success"] is False
+        assert row["active_roller_probe_success_count"] == 3
+        assert row["active_roller_nonzero_probe_count"] == 2
+        assert row["active_roller_nonzero_probe_ratio"] == pytest.approx(2 / 3)
+        assert row["active_roller_zero_stress_rollers"] == ["roller_1"]
+        assert row["active_roller_load_distribution_success"] is False
+        distribution = matrix["boundaryload_distribution_diagnostics"]
+        assert distribution["success"] is False
+        assert distribution["zero_carry_row_count"] == 1
+        assert distribution["zero_carry_rollers"] == {"roller_1": 1}
+        assert distribution["focus_rows"][0]["stage"] == "single_solve_3_roller_boundary_load_0p101n_probe_gate"
+        assert distribution["stage_mph_diagnostic_report_count"] == 1
+        assert distribution["saved_contact_probe_report_count"] == 1
+        configured = distribution["focus_rows"][0]["configured_mph_diagnostic"]
+        contact_probe = distribution["focus_rows"][0]["saved_contact_probe_diagnostic"]
+        assert contact_probe["zero_carry_source_destination_imbalance"] == ["roller_1"]
+        assert contact_probe["zero_carry_pair_specific_contact_pressure_zero"] == ["roller_1"]
+        assert contact_probe["zero_carry_normal_orientation"]["roller_1"]["source_destination_radial_normal_alignment"]["inner"]["opposite_radial_sign"] is True
+        assert contact_probe["zero_carry_pair_transfer"]["roller_1"]["destination_abs_tn_nonzero_count"] == 0
+        pair_enforcement = contact_probe["pair_enforcement_diagnostic"]
+        assert pair_enforcement["zero_pair_specific_contact_pressure_rollers"] == ["roller_1"]
+        assert pair_enforcement["zero_carry_roller_states"]["roller_1"]["contact_feature_settings_match_nonzero_references"] is True
+        assert contact_probe["nonzero_count"] == 50
+        roller_state = configured["zero_carry_roller_feature_state"]["roller_1"]
+        assert roller_state["body_selection_entity_count"] == 5
+        assert roller_state["inner_contact_active"] is True
+        assert roller_state["outer_contact_active"] is True
+        assert roller_state["cage_contact_active"] is False
+        assert roller_state["weak_foundation_active"] is True
+        assert roller_state["fixed_stabilization_active"] is False
+        assert roller_state["inner_pair"] == {
+            "exists": True,
+            "source_named": "sel_roller_1_inner_contact",
+            "source_entity_count": 2,
+            "destination_named": "sel_inner_raceway_1_contact",
+            "destination_entity_count": 2,
+        }
+        assert roller_state["outer_pair"] == {
+            "exists": True,
+            "source_named": "sel_roller_1_outer_contact",
+            "source_entity_count": 2,
+            "destination_named": "sel_outer_raceway_1_contact",
+            "destination_entity_count": 1,
+        }
+        assert roller_state["cage_pair"] is None
+        assert roller_state["selection_geometry"]["roller_body"]["success"] is True
+        assert roller_state["selection_geometry"]["roller_body"]["center_mm"]["x"] == pytest.approx(27.0)
+        assert roller_state["load_angle_alignment"]["success"] is True
+        assert roller_state["load_angle_alignment"]["angle_offset_deg"] == pytest.approx(0.0)
+        assert roller_state["contact_patch_geometry"]["success"] is True
+        assert roller_state["contact_patch_geometry"]["inner_patch_radial_offset_mm"] == pytest.approx(-4.0)
+        assert roller_state["contact_patch_geometry"]["outer_patch_radial_offset_mm"] == pytest.approx(4.0)
+        assert roller_state["contact_feature_settings_match_active_nonzero"] is True
+        assert roller_state["contact_feature_settings"]["inner"]["properties"]["pn_penalty"] == "5e-5*E_steel"
+        assert any("zero roller-side source response" in recommendation for recommendation in distribution["recommendations"])
+        assert any("load-side roller distribution is incomplete" in error for error in row["physical_plausibility_errors"])
+        assert matrix["highest_trust_stage"] is None
+
+        selected = demo._select_requested_stage_image_from_staged_solve({"stages": [stage]})
+        assert selected["success"] is False
+        assert selected["image_role"] == "no_physically_plausible_converged_native_comsol_stage_available"
+        assert any("load-side roller distribution is incomplete" in error for error in selected["best_available_rejected_reasons"])
+
+    def test_stage_mph_diagnostic_writes_no_solve_artifacts(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        mph_path = tmp_path / "stage_models" / "load_side_3_roller_boundary_load_0p2n_configured.mph"
+        mph_path.parent.mkdir(parents=True)
+        mph_path.write_text("fake mph placeholder", encoding="utf-8")
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+
+        payload = {
+            "study_tags": {"success": True, "value": ["std1"]},
+            "solver_tags": {"success": True, "value": ["sol1"]},
+            "solid_feature_tags": ["load_inner_bore", "weak_inner_ring_load_guidance"],
+            "solid_feature_audit": [
+                {
+                    "tag": "load_inner_bore",
+                    "exists": True,
+                    "type": "BoundaryLoad",
+                    "active": True,
+                    "selection_named": {"success": True, "value": "sel_inner_bore_load_surface"},
+                    "properties": {"FperArea": {"success": True, "value": ["-inner_bore_load_pressure", "0", "0"]}},
+                }
+            ],
+            "selection_audit": [
+                {
+                    "tag": "sel_inner_bore_load_surface",
+                    "exists": True,
+                    "entity_count": 4,
+                    "entities": {"success": True, "value": [1, 2, 3, 4]},
+                }
+            ],
+            "coupling_audit": [
+                {
+                    "tag": "intop_displacement_reaction_probe",
+                    "exists": False,
+                    "error": "not found",
+                }
+            ],
+            "study_audit": [{"tag": "std1", "features": []}],
+            "solver_audit": [{"tag": "sol1", "features": []}],
+        }
+
+        def fake_execute_java(code: str, *, model_name: str):
+            assert model_name == "loaded_stage_model"
+            assert ".solve(" not in code
+            return {
+                "success": True,
+                "model_name": model_name,
+                "stdout": (
+                    f"{demo.STAGE_MPH_DIAGNOSTIC_JSON_START}\n"
+                    f"{json.dumps(payload)}\n"
+                    f"{demo.STAGE_MPH_DIAGNOSTIC_JSON_END}\n"
+                ),
+            }
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(demo, "comsol_load_model", lambda filepath: {"success": True, "model_name": "loaded_stage_model", "filepath": filepath})
+        monkeypatch.setattr(demo, "comsol_get_model_summary", lambda model_name: {"success": True, "model_name": model_name, "summary": {"studies": 1}})
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        report = demo.diagnose_stage_mph(
+            mph_path=mph_path,
+            output_dir=tmp_path / "diagnostics",
+            cores=1,
+        )
+
+        assert report["success"] is True
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert Path(report["json_path"]).exists()
+        assert Path(report["markdown_path"]).exists()
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "load_inner_bore" in markdown
+        assert "sel_inner_bore_load_surface" in markdown
+
+    def test_saved_mph_reaction_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        mph_path = tmp_path / "result_packages" / "bearing_reaction.mph"
+        mph_path.parent.mkdir(parents=True)
+        mph_path.write_text("fake solved mph placeholder", encoding="utf-8")
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+
+        def fake_reaction_probe(model_name: str, *, selection_name: str):
+            assert model_name == "loaded_reaction_model"
+            assert selection_name == "sel_inner_bore_load_surface"
+            return {
+                "success": False,
+                "kind": "displacement_controlled_reaction_equivalent_probe",
+                "candidate_count": 40,
+                "evaluated_candidate_success_count": 9,
+                "successful_candidate_count": 0,
+                "setup_audit": {
+                    "success": True,
+                    "operator_exists": True,
+                    "opname": {"success": True, "value": "intop_displacement_reaction_probe"},
+                    "selection_named": {"success": True, "value": "sel_inner_bore_load_surface"},
+                },
+                "candidate_audit": {
+                    "diagnostic_class_counts": {"unknown_operator": 23, "zero_result": 9},
+                    "nonzero_success_count": 0,
+                },
+                "warning": "No probed COMSOL reaction-force expression evaluated to a nonzero reaction.",
+            }
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(demo, "comsol_load_model", lambda filepath: {"success": True, "model_name": "loaded_reaction_model", "filepath": filepath})
+        monkeypatch.setattr(demo, "comsol_get_model_summary", lambda model_name: {"success": True, "model_name": model_name})
+        monkeypatch.setattr(demo, "_evaluate_displacement_reaction_equivalent", fake_reaction_probe)
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        report = demo.probe_saved_reaction_mph(
+            mph_path=mph_path,
+            output_dir=tmp_path / "reaction_probe",
+            selection_name="sel_inner_bore_load_surface",
+            cores=1,
+        )
+
+        assert report["success"] is False
+        assert report["reaction_verified"] is False
+        assert report["candidate_audit"]["nonzero_success_count"] == 0
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert Path(report["json_path"]).exists()
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "Reaction verified: `False`" in markdown
+        assert "unknown_operator" in markdown
+
+    def test_bearing_geometry_partition_api_probe_writes_artifacts(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        executed: dict[str, str] = {}
+        closed: list[str] = []
+
+        def fake_execute_java(code: str, *, model_name: str):
+            executed["code"] = code
+            executed["model_name"] = model_name
+            payload = {
+                "success": True,
+                "kind": "bearing_3d_geometry_partition_api_probe",
+                "candidate_count": 3,
+                "create_success_count": 2,
+                "run_success_count": 1,
+                "valid_feature_types": ["Partition", "Intersection"],
+                "runnable_feature_types": ["Intersection"],
+                "rows": [
+                    {
+                        "feature_type": "Partition",
+                        "create_success": True,
+                        "run_attempt": {"success": False, "error": "Unknown property"},
+                        "set_attempts": {"selection_input_set": {"success": True}},
+                    },
+                    {
+                        "feature_type": "Intersection",
+                        "create_success": True,
+                        "run_attempt": {"success": True},
+                        "set_attempts": {"selection_input_set": {"success": True}},
+                    },
+                    {
+                        "feature_type": "Imprint",
+                        "create_success": False,
+                        "error": "Unknown feature type",
+                    },
+                ],
+            }
+            stdout = (
+                demo.GEOMETRY_PARTITION_API_PROBE_JSON_START
+                + "\n"
+                + json.dumps(payload)
+                + "\n"
+                + demo.GEOMETRY_PARTITION_API_PROBE_JSON_END
+            )
+            return {"success": True, "stdout": stdout}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(demo, "comsol_create_model", lambda model_name: {"success": True, "model_name": "created_partition_probe"})
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: closed.append(model_name) or {"success": True})
+
+        report = demo.probe_geometry_partition_api(
+            output_dir=tmp_path / "partition_probe",
+            model_name="requested_partition_probe",
+            cores=1,
+        )
+
+        assert report["success"] is True
+        assert report["model_name"] == "created_partition_probe"
+        assert report["probe"]["valid_feature_types"] == ["Partition", "Intersection"]
+        assert report["probe"]["runnable_feature_types"] == ["Intersection"]
+        assert "PartitionObjects" in executed["code"]
+        assert executed["model_name"] == "created_partition_probe"
+        assert closed == ["created_partition_probe"]
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert Path(report["json_path"]).exists()
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "Bearing 3D Geometry Partition API Probe" in markdown
+        assert "Partition" in markdown
+        assert "Intersection" in markdown
+
+    def test_bearing_cylinder_seam_api_probe_writes_artifacts(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        executed: dict[str, str] = {}
+        closed: list[str] = []
+
+        def fake_execute_java(code: str, *, model_name: str):
+            executed["code"] = code
+            executed["model_name"] = model_name
+            payload = {
+                "success": True,
+                "kind": "bearing_3d_cylinder_seam_api_probe",
+                "run_result": {"success": True},
+                "successful_properties": ["axis", "pos", "rot", "selresult"],
+                "failed_properties": ["axistype"],
+                "set_attempts": [
+                    {
+                        "feature": "roller_cyl",
+                        "property": "rot",
+                        "value": "15[deg]",
+                        "set": {"success": True, "value": "15[deg]"},
+                    },
+                    {
+                        "feature": "roller_cyl",
+                        "property": "axistype",
+                        "value": "z",
+                        "set": {"success": False, "error": "Unknown property"},
+                    },
+                ],
+            }
+            stdout = (
+                demo.CYLINDER_SEAM_API_PROBE_JSON_START
+                + "\n"
+                + json.dumps(payload)
+                + "\n"
+                + demo.CYLINDER_SEAM_API_PROBE_JSON_END
+            )
+            return {"success": True, "stdout": stdout}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(demo, "comsol_create_model", lambda model_name: {"success": True, "model_name": "created_cylinder_probe"})
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: closed.append(model_name) or {"success": True})
+
+        report = demo.probe_cylinder_seam_api(
+            output_dir=tmp_path / "cylinder_probe",
+            model_name="requested_cylinder_probe",
+            cores=1,
+        )
+
+        assert report["success"] is True
+        assert report["model_name"] == "created_cylinder_probe"
+        assert report["probe"]["successful_properties"] == ["axis", "pos", "rot", "selresult"]
+        assert "Cylinder" in executed["code"]
+        assert "rot" in executed["code"]
+        assert "axis" in executed["code"]
+        assert executed["model_name"] == "created_cylinder_probe"
+        assert closed == ["created_cylinder_probe"]
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert Path(report["json_path"]).exists()
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "Bearing 3D Cylinder Seam API Probe" in markdown
+        assert "roller_1" in markdown
+        assert "axistype" in markdown
+
+    def test_saved_mph_contact_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        mph_path = tmp_path / "result_packages" / "bearing_contact_probe.mph"
+        mph_path.parent.mkdir(parents=True)
+        mph_path.write_text("fake solved mph placeholder", encoding="utf-8")
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+
+        def fake_contact_probe(
+            model_name: str,
+            *,
+            rollers: tuple[int, ...],
+            entity_transfer: dict | None = None,
+        ):
+            assert model_name == "loaded_contact_model"
+            assert rollers == (1, 2, 12)
+            assert entity_transfer is None
+            return {
+                "success": True,
+                "kind": "bearing_3d_saved_mph_contact_surface_candidate_probe",
+                "candidate_count": 6,
+                "success_count": 6,
+                "nonzero_count": 4,
+                "evaluations": [
+                    {
+                        "roller": 1,
+                        "contact_label": "roller_1_inner_source",
+                        "selection": "sel_roller_1_inner_contact",
+                        "method": "java_maxsurface",
+                        "expression": "solid.mises",
+                        "success": True,
+                        "value": 0.0,
+                        "diagnostic_class": "zero_result",
+                    },
+                    {
+                        "roller": 2,
+                        "contact_label": "roller_2_inner_source",
+                        "selection": "sel_roller_2_inner_contact",
+                        "method": "java_maxsurface",
+                        "expression": "solid.mises",
+                        "success": True,
+                        "value": 6.5e6,
+                        "diagnostic_class": "nonzero_success",
+                    },
+                ],
+                "by_roller": {
+                    "roller_1": {"candidate_count": 2, "success_count": 2, "nonzero_count": 0},
+                    "roller_2": {"candidate_count": 2, "success_count": 2, "nonzero_count": 2},
+                },
+                "contact_status_by_roller": {
+                    "roller_1": {"pair_specific_success_count": 2, "pair_specific_nonzero_count": 0},
+                    "roller_2": {"pair_specific_success_count": 2, "pair_specific_nonzero_count": 2},
+                },
+            }
+
+        def fake_model_audit(model_name: str):
+            assert model_name == "loaded_contact_model"
+            return {
+                "solid_feature_audit": [
+                    {
+                        "tag": "contact_roller_1_inner",
+                        "exists": True,
+                        "active": True,
+                        "type": "Contact",
+                        "properties": {
+                            "pairs": {"success": True, "value": ["cp_roller_1_inner_raceway"]},
+                            "pn_penalty": {"success": True, "value": "5e-5*E_steel"},
+                            "useRelaxation": {"success": True, "value": "Always"},
+                            "irlx": {"success": True, "value": "0.12"},
+                            "tolcontact": {"success": True, "value": "3[um]"},
+                            "zeroInitGap": {"success": True, "value": "0"},
+                        },
+                    },
+                    {
+                        "tag": "contact_roller_2_inner",
+                        "exists": True,
+                        "active": True,
+                        "type": "Contact",
+                        "properties": {
+                            "pairs": {"success": True, "value": ["cp_roller_2_inner_raceway"]},
+                            "pn_penalty": {"success": True, "value": "5e-5*E_steel"},
+                            "useRelaxation": {"success": True, "value": "Always"},
+                            "irlx": {"success": True, "value": "0.12"},
+                            "tolcontact": {"success": True, "value": "3[um]"},
+                            "zeroInitGap": {"success": True, "value": "0"},
+                        },
+                    },
+                ],
+                "contact_pair_audit": [
+                    {
+                        "tag": "cp_roller_1_inner_raceway",
+                        "exists": True,
+                        "source": {"named": {"success": True, "value": "sel_roller_1_inner_contact"}, "entity_count": 2},
+                        "destination": {"named": {"success": True, "value": "sel_inner_raceway_1_contact"}, "entity_count": 2},
+                    },
+                    {
+                        "tag": "cp_roller_2_inner_raceway",
+                        "exists": True,
+                        "source": {"named": {"success": True, "value": "sel_roller_2_inner_contact"}, "entity_count": 2},
+                        "destination": {"named": {"success": True, "value": "sel_inner_raceway_2_contact"}, "entity_count": 2},
+                    },
+                ],
+            }
+
+        def fake_contact_feature_introspection(model_name: str, *, rollers: tuple[int, ...]):
+            assert model_name == "loaded_contact_model"
+            assert rollers == (1, 2, 12)
+            return {
+                "success": True,
+                "kind": "bearing_3d_contact_feature_property_introspection",
+                "feature_count": 4,
+                "comparison": {
+                    "offset_like_properties": ["zeroInitGap"],
+                    "unsupported_offset_candidate_properties": {"gapoffset": ["contact_roller_1_inner"]},
+                    "zero_carry_reference_differences": [],
+                    "zero_carry_matches_reference_properties": True,
+                },
+                "rows": [
+                    {
+                        "tag": "contact_roller_1_inner",
+                        "exists": True,
+                        "property_names": {"success": True, "value": ["pairs", "pn_penalty", "zeroInitGap"]},
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(demo, "comsol_load_model", lambda filepath: {"success": True, "model_name": "loaded_contact_model", "filepath": filepath})
+        monkeypatch.setattr(demo, "comsol_get_model_summary", lambda model_name: {"success": True, "model_name": model_name})
+        monkeypatch.setattr(demo, "_evaluate_saved_contact_surface_candidates", fake_contact_probe)
+        monkeypatch.setattr(demo, "_run_stage_mph_model_audit", fake_model_audit)
+        monkeypatch.setattr(demo, "_introspect_contact_feature_properties", fake_contact_feature_introspection)
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        report = demo.probe_saved_contact_mph(
+            mph_path=mph_path,
+            output_dir=tmp_path / "contact_probe",
+            cores=1,
+        )
+
+        assert report["success"] is True
+        assert report["contact_probe_success_count"] == 6
+        assert report["contact_probe_nonzero_count"] == 4
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert Path(report["json_path"]).exists()
+        pair_diag = report["pair_enforcement_diagnostic"]
+        assert pair_diag["zero_pair_specific_contact_pressure_rollers"] == ["roller_1"]
+        assert pair_diag["nonzero_reference_rollers"] == ["roller_2"]
+        assert pair_diag["roller_states"]["roller_1"]["inner_pair"]["source_named"] == "sel_roller_1_inner_contact"
+        assert report["contact_feature_introspection"]["comparison"]["zero_carry_matches_reference_properties"] is True
+        markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
+        assert "Bearing 3D Saved MPH Contact Probe" in markdown
+        assert "sel_roller_2_inner_contact" in markdown
+        assert "Pair Enforcement Diagnostic" in markdown
+        assert "Contact Feature Property Introspection" in markdown
+        assert "gapoffset" in markdown
+
+    def test_bearing_3d_entity_transfer_diagnostic_maps_nonzero_destination(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        def fake_selection_entities(model_name: str, *, selection_name: str):
+            assert model_name == "contact_model"
+            assert selection_name == "sel_outer_raceway_1_contact"
+            return {
+                "success": True,
+                "selection": selection_name,
+                "entities": [13, 14],
+                "entity_count": 2,
+            }
+
+        def fake_max(
+            model_name: str,
+            expression: str,
+            *,
+            entities: list[int],
+            tag: str,
+        ):
+            assert model_name == "contact_model"
+            entity = entities[0]
+            values = {
+                (13, "solid.Tn_cp_roller_1_outer_raceway"): 4.0,
+                (13, "abs(solid.Tn_cp_roller_1_outer_raceway)"): 4.0,
+                (13, "solid.p"): 8.0,
+                (13, "solid.mises"): 12.0,
+                (14, "solid.Tn_cp_roller_1_outer_raceway"): 0.0,
+                (14, "abs(solid.Tn_cp_roller_1_outer_raceway)"): 0.0,
+                (14, "solid.p"): 0.0,
+                (14, "solid.mises"): 0.0,
+            }
+            return {
+                "success": True,
+                "expression": expression,
+                "entities": entities,
+                "value": values.get((entity, expression), 0.0),
+                "method": "java_maxsurface_entities",
+            }
+
+        def fake_integral(
+            model_name: str,
+            expression: str,
+            *,
+            entities: list[int],
+            tag: str,
+        ):
+            entity = entities[0]
+            return {
+                "success": True,
+                "expression": expression,
+                "entities": entities,
+                "value": 4.0 if entity == 13 else 0.0,
+                "method": "java_intsurface_entity",
+            }
+
+        monkeypatch.setattr(demo, "_get_selection_entities_via_java", fake_selection_entities)
+        monkeypatch.setattr(demo, "_evaluate_surface_max_expression_on_entities_via_java", fake_max)
+        monkeypatch.setattr(demo, "_evaluate_surface_integral_expression_on_entities_via_java", fake_integral)
+
+        result = demo._evaluate_contact_entity_transfer(
+            "contact_model",
+            entity_transfer={
+                "roller": 1,
+                "contact_label": "roller_1_outer_raceway",
+                "selection_name": "sel_outer_raceway_1_contact",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["entity_count"] == 2
+        assert result["nonzero_entities"]["abs_pair_Tn_max"] == [13]
+        assert result["by_entity"]["13"]["pair_Tn_max"]["value"] == 4.0
+        assert result["by_entity"]["14"]["pair_Tn_max"]["value"] == 0.0
+
+    def test_contact_pair_endpoint_consistency_accepts_expected_bindings(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        rows = []
+        for roller in (1, 2, 12):
+            for side in ("inner", "outer"):
+                rows.append({
+                    "tag": f"cp_roller_{roller}_{side}_raceway",
+                    "exists": True,
+                    "source": {
+                        "named": {
+                            "success": True,
+                            "value": f"sel_roller_{roller}_{side}_contact",
+                        },
+                        "entity_count": 2,
+                    },
+                    "destination": {
+                        "named": {
+                            "success": True,
+                            "value": f"sel_{side}_raceway_{roller}_contact",
+                        },
+                        "entity_count": 2,
+                    },
+                })
+
+        summary = demo._summarize_contact_pair_endpoint_consistency(rows)
+
+        assert summary["success"] is True
+        assert summary["consistent_pair_count"] == 6
+        assert summary["divergent_pair_tags"] == []
+        assert summary["endpoint_rebind_justified"] is False
+
+    def test_contact_pair_endpoint_consistency_flags_rebind_candidate(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        rows = [
+            {
+                "tag": "cp_roller_1_inner_raceway",
+                "exists": True,
+                "source": {
+                    "named": {"success": True, "value": "sel_roller_1_inner_contact"},
+                    "entity_count": 2,
+                },
+                "destination": {
+                    "named": {"success": True, "value": "sel_inner_raceway_1_contact"},
+                    "entity_count": 2,
+                },
+            },
+            {
+                "tag": "cp_roller_1_outer_raceway",
+                "exists": True,
+                "source": {
+                    "named": {"success": True, "value": "sel_outer_raceway_1_contact"},
+                    "entity_count": 4,
+                },
+                "destination": {
+                    "named": {"success": True, "value": "sel_roller_1_outer_contact"},
+                    "entity_count": 2,
+                },
+            },
+        ]
+
+        summary = demo._summarize_contact_pair_endpoint_consistency(
+            rows,
+            rollers=(1,),
+        )
+
+        assert summary["success"] is False
+        assert summary["consistent_pair_count"] == 1
+        assert summary["divergent_pair_tags"] == ["cp_roller_1_outer_raceway"]
+        assert summary["endpoint_rebind_justified"] is True
+
+    def test_bearing_3d_contact_feature_introspection_code_is_syntax_checked(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        code = demo._build_contact_feature_introspection_code(rollers=(1, 2, 12))
+
+        compile(code, "contact_feature_introspection", "exec")
+        assert "CONTACT_FEATURE_INTROSPECTION_JSON_START" in code
+        assert "property_read_success_count" in code
+        assert "gapoffset" in code
+
+    def test_bearing_3d_contact_feature_introspection_normalizes_expected_tag_differences(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        def row(tag: str, pair: str) -> dict:
+            return {
+                "tag": tag,
+                "exists": True,
+                "property_names": {
+                    "success": True,
+                    "value": ["pairs", "pn", "pn_penalty", "offset", "source_offset", "pressureOffsetCtrl", "zeroInitGap"],
+                },
+                "properties": {
+                    "pairs": {"success": True, "value": [pair]},
+                    "pn": {
+                        "success": True,
+                        "value": [f"solid.{tag}.E_char/solid.hmin_dst"],
+                    },
+                    "pn_penalty": {"success": True, "value": ["5e-5*E_steel"]},
+                    "offset": {"success": True, "value": ["0"]},
+                    "source_offset": {"success": True, "value": ["0"]},
+                    "pressureOffsetCtrl": {"success": True, "value": ["From contact pressure"]},
+                    "zeroInitGap": {"success": True, "value": ["0"]},
+                    "gapoffset": {"success": False, "error": "Unknown parameter X#gapoffset"},
+                },
+            }
+
+        summary = demo._summarize_contact_feature_introspection({
+            "rows": [
+                row("contact_roller_1_inner", "cp_roller_1_inner_raceway"),
+                row("contact_roller_2_inner", "cp_roller_2_inner_raceway"),
+                row("contact_roller_12_inner", "cp_roller_12_inner_raceway"),
+                row("contact_roller_1_outer", "cp_roller_1_outer_raceway"),
+                row("contact_roller_2_outer", "cp_roller_2_outer_raceway"),
+                row("contact_roller_12_outer", "cp_roller_12_outer_raceway"),
+            ]
+        })
+
+        assert summary["zero_carry_matches_reference_properties"] is True
+        assert summary["zero_carry_reference_differences"] == []
+        assert "offset" in summary["offset_like_properties"]
+        assert "source_offset" in summary["offset_like_properties"]
+        assert "offset" in summary["readable_offset_candidate_properties"]["contact_roller_1_inner"]
+        assert "source_offset" in summary["readable_offset_candidate_properties"]["contact_roller_1_inner"]
+        assert "offset" not in summary["unsupported_offset_candidate_properties"]
+        assert "source_offset" not in summary["unsupported_offset_candidate_properties"]
+        assert summary["unsupported_offset_candidate_properties"]["gapoffset"] == [
+            "contact_roller_1_inner",
+            "contact_roller_2_inner",
+            "contact_roller_12_inner",
+            "contact_roller_1_outer",
+            "contact_roller_2_outer",
+            "contact_roller_12_outer",
+        ]
+
+    def test_saved_contact_probe_includes_pair_status_variable_candidates(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        max_expressions: list[tuple[str, str]] = []
+        integral_expressions: list[tuple[str, str]] = []
+
+        def fake_max(model_name: str, expression: str, *, selection_name: str, tag: str):
+            assert model_name == "contact_model"
+            max_expressions.append((selection_name, expression))
+            if expression == "solid.mises":
+                value = 0.0 if selection_name == "sel_roller_1_inner_contact" else 5.0
+                return {
+                    "success": True,
+                    "method": "java_maxsurface",
+                    "expression": expression,
+                    "selection": selection_name,
+                    "value": value,
+                }
+            if expression == "solid.Tn_cp_roller_1_inner_raceway":
+                return {
+                    "success": True,
+                    "method": "java_maxsurface",
+                    "expression": expression,
+                    "selection": selection_name,
+                    "value": 12.0,
+                }
+            if expression == "solid.gap_cp_roller_1_inner_raceway":
+                return {
+                    "success": True,
+                    "method": "java_maxsurface",
+                    "expression": expression,
+                    "selection": selection_name,
+                    "value": float("inf"),
+                }
+            return {
+                "success": False,
+                "method": "java_maxsurface",
+                "expression": expression,
+                "selection": selection_name,
+                "error": f"Unknown variable: {expression}",
+            }
+
+        def fake_integral(model_name: str, expression: str, *, selection_name: str, tag: str):
+            assert model_name == "contact_model"
+            integral_expressions.append((selection_name, expression))
+            radial_centers = {
+                "sel_roller_1_inner_contact": 0.02300,
+                "sel_inner_raceway_1_contact": 0.02301,
+                "sel_roller_1_outer_contact": 0.03100,
+                "sel_outer_raceway_1_contact": 0.03102,
+            }
+            if expression == "1":
+                value = 2.0
+            elif expression == "x":
+                value = 2.0 * radial_centers.get(selection_name, 0.0)
+            elif expression in {"y", "z"}:
+                value = 0.0
+            elif expression == "nx":
+                value = 2.0
+            elif expression in {"ny", "nz"}:
+                value = 0.0
+            elif expression.startswith("x*("):
+                value = 2.0 * radial_centers.get(selection_name, 0.0)
+            elif expression.startswith("nx*("):
+                value = 2.0
+            elif expression == "abs(solid.Tn_cp_roller_1_inner_raceway)":
+                value = 24.0
+            elif expression == "solid.Tn_cp_roller_1_inner_raceway":
+                value = -24.0
+            else:
+                value = 0.0
+            return {
+                "success": True,
+                "method": "java_intsurface",
+                "expression": expression,
+                "selection": selection_name,
+                "value": value,
+            }
+
+        def fake_selection_entities(model_name: str, *, selection_name: str):
+            assert model_name == "contact_model"
+            return {
+                "success": True,
+                "selection": selection_name,
+                "entities": [101, 102],
+                "entity_count": 2,
+            }
+
+        def fake_entity_integral(model_name: str, expression: str, *, entities: list[int], tag: str):
+            assert model_name == "contact_model"
+            entity = entities[0]
+            radial_centers = {101: 0.0225, 102: 0.0235}
+            if expression == "1":
+                value = 1.0
+            elif expression == "x":
+                value = radial_centers.get(entity, 0.0)
+            elif expression in {"y", "z"}:
+                value = 0.0
+            elif expression.startswith("x*("):
+                value = radial_centers.get(entity, 0.0)
+            else:
+                value = 0.0
+            return {
+                "success": True,
+                "method": "java_intsurface_entity",
+                "expression": expression,
+                "entities": entities,
+                "value": value,
+            }
+
+        monkeypatch.setattr(demo, "_evaluate_surface_max_expression_via_java", fake_max)
+        monkeypatch.setattr(demo, "_evaluate_surface_integral_expression_via_java", fake_integral)
+        monkeypatch.setattr(demo, "_get_selection_entities_via_java", fake_selection_entities)
+        monkeypatch.setattr(demo, "_evaluate_surface_integral_expression_on_entities_via_java", fake_entity_integral)
+
+        result = demo._evaluate_saved_contact_surface_candidates("contact_model", rollers=(1,))
+
+        assert result["success"] is True
+        assert any(expr == "solid.Tn_cp_roller_1_inner_raceway" for _, expr in max_expressions)
+        assert any(expr == "abs(solid.Tn_cp_roller_1_outer_raceway)" for _, expr in max_expressions)
+        assert any(expr == "solid.active_cp_roller_1_inner_raceway" for _, expr in max_expressions)
+        assert any(expr == "solid.lambdaN_cp_roller_1_outer_raceway" for _, expr in max_expressions)
+        assert integral_expressions
+        assert any(expr == "1" for _, expr in integral_expressions)
+        assert any(expr == "nx" for _, expr in integral_expressions)
+        assert any(expr == "x" for _, expr in integral_expressions)
+        assert any(expr == "abs(solid.Tn_cp_roller_1_inner_raceway)" for _, expr in integral_expressions)
+        assert result["candidate_audit"]["contact_status_candidate_count"] > 0
+        assert result["candidate_audit"]["contact_status_success_count"] >= 2
+        assert result["candidate_audit"]["infinite_result_count"] >= 1
+        assert result["candidate_audit"]["unknown_variable_count"] > 0
+        assert any(
+            item["expression"] == "solid.Tn_cp_roller_1_inner_raceway"
+            for item in result["candidate_audit"]["first_contact_variable_successes"]
+        )
+        discovery = result["contact_variable_discovery"]
+        assert discovery["success"] is True
+        assert "Tn" in discovery["useful_variables"]
+        assert "Tn" in discovery["finite_nonzero_variables"]
+        assert discovery["by_variable"]["Tn"]["finite_nonzero_count"] >= 1
+        assert discovery["by_variable"]["Tn"]["pair_specific_finite_nonzero_count"] >= 1
+        assert "roller_1" in discovery["by_variable"]["Tn"]["rollers_with_pair_specific_finite_nonzero"]
+        assert "gap" in discovery["useful_variables"]
+        assert discovery["by_variable"]["gap"]["infinite_count"] >= 1
+        assert discovery["by_variable"]["active"]["unknown_variable_count"] >= 1
+        assert discovery["by_roller"]["roller_1"]["Tn"]["pair_specific_finite_nonzero_count"] >= 1
+        assert discovery["by_roller"]["roller_1"]["Tn"]["first_success"]["expression"] == "solid.Tn_cp_roller_1_inner_raceway"
+        status = result["contact_status_by_roller"]["roller_1"]
+        assert status["pair_specific_success_count"] >= 2
+        assert status["pair_specific_nonzero_count"] >= 2
+        assert status["by_contact_label"]["roller_1_inner_source"]["pair_specific"]["inner_raceway"]["Tn"]["value"] == 12.0
+        normal = result["normal_orientation_by_roller"]["roller_1"]["by_contact_label"]["roller_1_inner_source"]
+        assert normal["area_integral"] == 2.0
+        assert normal["average_normal"]["radial"] == 1.0
+        geometry = result["geometry_moments_by_roller"]["roller_1"]
+        assert geometry["by_contact_label"]["roller_1_inner_source"]["centroid_m"]["radial"] == 0.023
+        gap_proxy = geometry["source_destination_radial_gap_proxy"]["inner"]
+        assert gap_proxy["both_centroids_available"] is True
+        assert gap_proxy["abs_radial_delta_m"] == pytest.approx(1.0e-5)
+        entity_geometry = result["entity_geometry_moments_by_roller"]["roller_1"]
+        entity_rows = entity_geometry["by_contact_label"]["roller_1_inner_source"]["entity_centroid_rows"]
+        assert [row["entity"] for row in entity_rows] == [101, 102]
+        assert entity_rows[0]["centroid_m"]["radial"] == 0.0225
+        assert entity_rows[1]["centroid_m"]["radial"] == 0.0235
+        transfer = result["pair_transfer_by_roller"]["roller_1"]["by_contact_label"]["roller_1_inner_source"]
+        assert transfer["abs_Tn_integral"]["value"] == 24.0
+        assert result["pair_transfer_by_roller"]["roller_1"]["destination_abs_tn_nonzero_count"] >= 1
+
+    def test_contact_transfer_does_not_call_unevaluable_source_zero(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        transfer = demo._pair_transfer_source_destination(
+            {
+                "abs_Tn_integral": {
+                    "success": False,
+                    "value": None,
+                    "diagnostic_class": "selection_error",
+                }
+            },
+            {
+                "abs_Tn_integral": {
+                    "success": True,
+                    "value": 5.0,
+                    "diagnostic_class": "nonzero_success",
+                }
+            },
+        )
+
+        assert transfer["source_evaluable"] is False
+        assert transfer["source_unevaluable"] is True
+        assert transfer["destination_evaluable"] is True
+        assert transfer["destination_nonzero"] is True
+        assert transfer["source_zero_destination_nonzero"] is False
+        assert transfer["source_unevaluable_destination_nonzero"] is True
+
+        imbalance = demo._contact_source_destination_imbalance(
+            {
+                "success_count": 0,
+                "finite_success_count": 0,
+                "nonzero_count": 0,
+            },
+            {
+                "success_count": 1,
+                "finite_success_count": 1,
+                "nonzero_count": 1,
+                "max_abs_value": 5.0,
+            },
+        )
+
+        assert imbalance["source_evaluable"] is False
+        assert imbalance["source_unevaluable"] is True
+        assert imbalance["source_zero_destination_nonzero"] is False
+        assert imbalance["source_unevaluable_destination_nonzero"] is True
+
+    def test_boundary_entity_map_summarizes_radius_angle_and_nearest_roller(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        row = demo._summarize_boundary_entity_row(
+            9,
+            [
+                {"success": True, "expression": "1", "value": 2.0},
+                {"success": True, "expression": "x", "value": 0.0467653718},
+                {"success": True, "expression": "y", "value": 0.027},
+                {"success": True, "expression": "z", "value": 0.0},
+            ],
+            rollers=(1, 2, 12),
+        )
+
+        assert row["success"] is True
+        assert row["radius_mm"] == pytest.approx(27.0, rel=1.0e-5)
+        assert row["angle_deg"] == pytest.approx(30.0, rel=1.0e-5)
+        assert row["nearest_roller"]["roller"] == 2
+        assert row["nearest_roller"]["abs_angle_delta_deg"] == pytest.approx(0.0, abs=1.0e-4)
+
+        summary = demo._summarize_boundary_entity_map(
+            selection_name="geom1_outer_ring_bnd",
+            rows=[row],
+            rollers=(1, 2, 12),
+        )
+
+        assert summary["success"] is True
+        assert summary["successful_entity_count"] == 1
+        assert summary["nearest_entity_by_roller"]["roller_2"]["entity"] == 9
+
+    def test_3d_physical_contact_validation_requires_inner_ring_stress(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        failed = demo._build_3d_physical_contact_validation(
+            solve={"success": False, "error": "nonlinear contact did not converge"},
+            final_stage={
+                "name": "single_roller_physical_displacement_preload",
+                "contact_scope": "single_load_side_roller_inner_outer_raceway_true_contact_displacement_preload",
+                "active_rollers": [1],
+                "cage_contact_active": False,
+                "temporary_active_roller_stabilization_active": False,
+                "temporary_cage_stabilization_active": True,
+            },
+        )
+        assert failed["success"] is False
+        assert failed["quality_level"] == "not_physical_contact_validated"
+        assert failed["inner_ring_max_von_mises_pa"] is None
+        assert any("COMSOL solve did not converge" in error for error in failed["errors"])
+
+        passed = demo._build_3d_physical_contact_validation(
+            solve={"success": True},
+            stress={"success": True, "statistics": {"max": 20.0}},
+            inner_ring_stress={"success": True, "value": 12.0},
+            displacement={"success": True, "statistics": {"max": 1e-8}},
+            png_quality={"success": True},
+            final_stage={
+                "name": "single_roller_physical_displacement_preload",
+                "contact_scope": "single_load_side_roller_inner_outer_raceway_true_contact_displacement_preload",
+                "active_rollers": [1],
+                "cage_contact_active": False,
+                "temporary_active_roller_stabilization_active": False,
+                "temporary_cage_stabilization_active": True,
+            },
+        )
+        assert passed["success"] is True
+        assert passed["quality_level"] == "raceway_contact_physics_smoke"
+        assert passed["inner_ring_max_von_mises_pa"] == 12.0
+
+        guided = demo._build_3d_physical_contact_validation(
+            solve={"success": True},
+            stress={"success": True, "statistics": {"max": 20.0}},
+            inner_ring_stress={"success": True, "value": 12.0},
+            displacement={"success": True, "statistics": {"max": 1e-8}},
+            png_quality={"success": True},
+            final_stage={
+                "name": "raceway_contact_guided_probe_1n_boundary_load",
+                "contact_scope": "all_12_rollers_inner_outer_raceway_true_contact_inner_bore_boundary_load_with_weak_inner_guidance",
+                "active_rollers": list(range(1, 13)),
+                "cage_contact_active": False,
+                "temporary_active_roller_stabilization_active": False,
+                "temporary_cage_stabilization_active": True,
+                "weak_inner_guidance_active": True,
+            },
+        )
+        assert guided["success"] is True
+        assert guided["final_stage"]["weak_inner_guidance_active"] is True
+        assert any("Weak inner-ring guidance" in warning for warning in guided["warnings"])
+
+        retained_preload = demo._build_3d_physical_contact_validation(
+            solve={"success": True},
+            stress={"success": True, "statistics": {"max": 2.0e6}},
+            inner_ring_stress={"success": True, "value": 1.0e6},
+            displacement={"success": True, "statistics": {"max": 1e-6}},
+            png_quality={"success": True},
+            final_stage={
+                "name": "continuous_boundary_load_high_ramp_retained_preload",
+                "contact_scope": "all_12_rollers_inner_outer_raceway_true_contact_inner_bore_boundary_load_high_ramp_retained_preload",
+                "active_rollers": list(range(1, 13)),
+                "cage_contact_active": False,
+                "temporary_active_roller_stabilization_active": False,
+                "temporary_cage_stabilization_active": True,
+                "inner_bore_load_active": True,
+                "displacement_preload_active": True,
+                "weak_inner_guidance_active": True,
+                "load_application_fidelity": "inner_bore_boundary_load_high_ramp_with_retained_displacement_preload_and_weak_inner_guidance_not_design_gate",
+            },
+        )
+        assert retained_preload["success"] is True
+        assert retained_preload["quality_level"] == "raceway_contact_physics_smoke"
+        assert retained_preload["final_stage"]["displacement_preload_active"] is True
+        assert any("retained prescribed inner-bore displacement" in warning for warning in retained_preload["warnings"])
+
     def test_generated_code_agent_demo_prompt_fixture_and_extraction(self):
         from scripts.run_agent_generated_code_demo import (
             build_code_generation_prompt,
@@ -3110,9 +6874,10 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "probe_scope_verified" in injected["probe_scope_status"]
         assert injected["per_roller_probe_results"][0]["value"] == 1.0
         assert injected["selection_plan"]["global_selections"]["outer_support_surface"] == "sel_outer_support_surface"
+        assert injected["selection_plan"]["global_selections"]["inner_bore_load_surface"] == "sel_inner_bore_load_surface"
         assert injected["selection_plan"]["roller_contact_sets"][0]["risk_probe"] == "probe_roller_1_max_mises"
         assert injected["selection_binding_contract"]["kind"] == "bearing_3d_selection_binding_contract"
-        assert len(injected["selection_binding_contract"]["entries"]) == 5 + 5 * VERIFIED_ROLLER_COUNT
+        assert len(injected["selection_binding_contract"]["entries"]) == 5 + 7 * VERIFIED_ROLLER_COUNT
         assert injected["selection_binding_audit"]["success"] is True
         assert injected["physical_result_audit"]["success"] is True
         assert injected["physical_result_audit"]["production_ready"] is True
@@ -3153,7 +6918,7 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             "selection_plan": {
                 "global_selections": {
                     "outer_support_surface": "sel_outer_support_surface",
-                    "inner_load_region": "sel_inner_load_region",
+                    "inner_bore_load_surface": "sel_inner_bore_load_surface",
                 }
             },
             "result_interpretation": {
@@ -3197,12 +6962,15 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         read = simulation_read_template("thermal_heat_transfer_seed", archive_path=str(archive_path))
 
         assert listed["success"] is True
-        assert listed["count"] == 1
-        assert listed["templates"][0]["name"] == "thermal_heat_transfer_seed"
+        listed_names = {template["name"] for template in listed["templates"]}
+        assert listed["count"] >= 2
+        assert {"thermal_heat_transfer_seed", "pcb_thermal_plate_seed"}.issubset(listed_names)
         assert searched["success"] is True
-        assert searched["templates"][0]["name"] == "thermal_heat_transfer_seed"
+        searched_names = {template["name"] for template in searched["templates"]}
+        assert "thermal_heat_transfer_seed" in searched_names
         assert "Offline keyword search" in searched["note"]
-        assert "power" in listed["templates"][0]["params"]
+        thermal_seed = next(template for template in listed["templates"] if template["name"] == "thermal_heat_transfer_seed")
+        assert "power" in thermal_seed["params"]
         assert read["success"] is True
         assert "model.param().set('power'" in read["template"]["java_code"]
 
@@ -3304,7 +7072,11 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert result["validation"]["status"] == "ok"
         assert calls[0] == ("create", "template_smoke_model")
         assert calls[1][0] == "execute"
-        assert calls[2] == ("close", "template_smoke_model", False)
+        assert calls[2][0] == "execute"
+        assert "model.param().set('power'" in calls[2][2]
+        assert "geom('geom1').run()" in calls[2][2]
+        assert result["parameter_override"]["success"] is True
+        assert calls[3] == ("close", "template_smoke_model", False)
         assert Path(result["artifacts"]["json_path"]).exists()
         archived = ArchiveStore(archive_path).get_simulation_artifact(result["artifacts"]["run_id"])
         assert archived.kind == "template_execution"
@@ -3362,6 +7134,8 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert result["success"] is True
         assert result["executed"] is True
         assert calls[0] == ("create", "generated_code_model")
+        assert calls[2][0] == "execute"
+        assert "model.param().set('radial_load', '3000[N]')" in calls[2][2]
         assert Path(result["artifacts"]["json_path"]).exists()
         archived = ArchiveStore(archive_path).get_simulation_artifact(result["artifacts"]["run_id"])
         assert archived.kind == "generated_code_execution"
@@ -3394,8 +7168,8 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
 
         entries = selection_binding_contract()["entries"]
         probe_lines = [SELECTION_BINDING_PROBE_START]
-        for entry in entries:
-            probe_lines.append(f"SEL|{entry['tag']}|{entry['entitydim']}|1|101|")
+        for entity_id, entry in enumerate(entries, start=101):
+            probe_lines.append(f"SEL|{entry['tag']}|{entry['entitydim']}|1|{entity_id}|")
         probe_lines.append(SELECTION_BINDING_PROBE_END)
 
         calls = []
@@ -3703,7 +7477,7 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert validate_payload["validation"]["status"] == "ok"
         assert export_payload["output_path"] == str(export_path.resolve())
         assert export_path.exists()
-        assert search_payload["templates"][0]["name"] == "thermal_heat_transfer_seed"
+        assert "thermal_heat_transfer_seed" in {template["name"] for template in search_payload["templates"]}
 
 
 class TestParameterSweeps:
@@ -4945,16 +8719,155 @@ class TestLocalDocsSearch:
         assert infer_model_family("齿轮副啮合接触压力和齿根应力").name == "gear_pair"
         assert infer_model_family("PCB FR4板和芯片功率热仿真").name == "pcb_thermal_electric"
 
+    def test_bearing_family_registry_covers_p12_topologies(self):
+        from comsol_agent.simulation.bearing_families import get_bearing_family, list_bearing_families
+
+        names = {spec.name for spec in list_bearing_families()}
+
+        assert {
+            "deep_groove_ball",
+            "angular_contact_ball",
+            "cylindrical_roller",
+            "tapered_roller",
+            "needle_roller",
+            "thrust_bearing",
+            "general_bearing",
+        }.issubset(names)
+        tapered = get_bearing_family("tapered_roller")
+        assert tapered.rolling_element == "tapered_roller"
+        assert "combined_radial_axial" in tapered.load_modes
+        assert "frictional" in tapered.contact_policies
+        assert tapered.quality_gate
+
+    def test_simulation_plan_bearing_modeling_request_routes_deep_groove_real_contact(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做深沟球轴承，1000N，真实接触，输出应力和接触压力",
+            allow_defaults=True,
+        )
+
+        assert result["success"] is True
+        assert result["bearing_family"] == "deep_groove_ball"
+        assert result["rolling_element"] == "ball"
+        assert result["load_mode"] == "radial"
+        assert result["resolved_executable_params"]["radial_load"] == "1000[N]"
+        assert result["template_policy"]["smoke_templates"] == [
+            "bearing_contact_pair_seed",
+            "bearing_contact_hertz_seed",
+        ]
+        assert result["quality_contract"]["smoke_fidelity_must_be_labeled"] is True
+
+    def test_simulation_plan_bearing_modeling_request_routes_cylindrical_roller_staged_cage(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做圆柱滚子轴承，12个滚子，带保持架，滚道先接触后保持架接触，输出应力",
+            allow_defaults=True,
+        )
+
+        assert result["success"] is True
+        assert result["bearing_family"] == "cylindrical_roller"
+        assert result["rolling_element"] == "cylindrical_roller"
+        assert result["resolved_executable_params"]["roller_count"] == "12"
+        assert result["contact_policy"] in {
+            "staged_contact_activation",
+            "cage_pocket_contact_load_transfer",
+        }
+        assert "bearing_3d_cylindrical_roller_legacy_raceway_highload_direct" in result["template_policy"]["family_starter_templates"]
+        assert any("run_agent_3d_bearing_full_demo.py" in step for step in result["next_tool_chain"])
+
+    def test_simulation_plan_bearing_modeling_request_recommends_highload_visual_stage(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做12个滚子的圆柱滚子轴承高载荷应力图，要COMSOL原生图片",
+            allow_defaults=True,
+        )
+
+        assert result["success"] is True
+        assert result["bearing_family"] == "cylindrical_roller"
+        assert "bearing_3d_cylindrical_roller_legacy_raceway_highload_direct" in result["template_policy"]["family_starter_templates"]
+        assert any("legacy_raceway_highload_direct" in step for step in result["next_tool_chain"])
+        assert "high_load_visual" in result["quality_contract"]["default_assumptions"]
+
+    def test_simulation_plan_bearing_modeling_request_rejects_tapered_ball_template_substitution(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做圆锥滚子轴承，轴向和径向联合载荷，输出接触压力和应力",
+            known_params={"radial_load": "2000[N]", "axial_load": "800[N]"},
+            allow_defaults=False,
+        )
+
+        assert result["success"] is True
+        assert result["bearing_family"] == "tapered_roller"
+        assert result["rolling_element"] == "tapered_roller"
+        assert result["load_mode"] == "combined_radial_axial"
+        assert result["template_policy"]["reject_deep_groove_substitution"] is True
+        assert "bearing_contact_pair_seed" not in json.dumps(result["template_policy"], ensure_ascii=False)
+        assert "declared_unsupported_fidelity" in result["template_policy"]
+
+    def test_simulation_plan_bearing_modeling_request_routes_thrust_axial_load(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做推力轴承，轴向载荷，输出应力和接触压力",
+            known_params={"axial_load": "1500[N]"},
+            allow_defaults=False,
+        )
+
+        assert result["success"] is True
+        assert result["bearing_family"] == "thrust_bearing"
+        assert result["load_mode"] == "axial"
+        assert result["template_policy"]["reject_deep_groove_substitution"] is True
+        assert "bearing_contact_pair_seed" not in json.dumps(result["next_tool_chain"], ensure_ascii=False)
+
+    def test_simulation_plan_bearing_modeling_request_distinguishes_contact_policy(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        frictional = simulation_plan_bearing_modeling_request(
+            user_request="做深沟球轴承摩擦接触，输出应力",
+            allow_defaults=True,
+        )
+        frictionless = simulation_plan_bearing_modeling_request(
+            user_request="做深沟球轴承无摩擦接触，输出应力",
+            allow_defaults=True,
+        )
+
+        assert frictional["contact_policy"] == "frictional"
+        assert frictionless["contact_policy"] == "frictionless"
+        assert frictional["contact_policy"] != frictionless["contact_policy"]
+
+    def test_bearing_modeling_request_keeps_intent_out_of_executable_params(self):
+        from comsol_agent.tools.simulation import simulation_plan_bearing_modeling_request
+
+        result = simulation_plan_bearing_modeling_request(
+            user_request="做圆锥滚子轴承，带保持架，真实接触，输出应力",
+            known_params={
+                "bearing_type": "圆锥滚子轴承",
+                "cage_included": "true",
+                "contact_policy": "真实接触",
+                "radial_load": "1000[N]",
+            },
+            allow_defaults=True,
+        )
+
+        executable = result["resolved_executable_params"]
+        assert executable == {"radial_load": "1000[N]"}
+        assert "圆锥滚子轴承" not in json.dumps(executable, ensure_ascii=False)
+        assert "真实接触" not in json.dumps(executable, ensure_ascii=False)
+
     def test_simulation_plan_modeling_request_routes_pcb_without_bearing_templates(self):
         from comsol_agent.tools.simulation import simulation_plan_modeling_request
 
         result = simulation_plan_modeling_request(
-            user_request="做一个PCB热仿真，FR4板上有芯片功率，底面对流散热，输出最高温度云图",
+            user_request="做 PCB 热仿真，FR4，两个 5W 芯片，底面对流散热，输出温升云图",
             known_params={
                 "geometry": "PCB rectangular FR4 board",
                 "material": "FR4 and copper",
                 "boundary_conditions": "bottom convection",
-                "load_conditions": "chip power",
+                "load_conditions": "two 5[W] chips",
                 "outputs": "maximum temperature and temperature plot",
                 "executable_params": {"chip_power": "5[W]", "convection_h": "10[W/m^2/K]"},
             },
@@ -4969,6 +8882,274 @@ class TestLocalDocsSearch:
         assert result["template_policy"]["reject_unrelated_bearing_templates"] is True
         assert result["quality_contract"]["quality_gate"] == "validate_pcb_thermal_electric_code_draft"
         assert "simulation_plan_bearing_contact" not in result["next_tool_chain"]
+
+    def test_pcb_thermal_plate_seed_is_registered_and_validates(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.simulation.skills import seed_builtin_templates
+        from comsol_agent.tools.simulation import simulation_validate_template
+
+        archive_path = tmp_path / "archive.sqlite3"
+        archive = ArchiveStore(archive_path)
+        templates = seed_builtin_templates(archive)
+        names = {template.name for template in templates}
+
+        assert "pcb_thermal_plate_seed" in names
+        template = archive.get_template("pcb_thermal_plate_seed")
+        assert template.domain == "thermal"
+        assert template.params["board_length"] == "80[mm]"
+        assert template.params["chip1_power"] == "5[W]"
+        assert template.params["chip2_power"] == "5[W]"
+        assert template.params["convection_h"] == "10[W/(m^2*K)]"
+
+        result = simulation_validate_template(
+            name="pcb_thermal_plate_seed",
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["validation"]["errors"] == []
+
+    def test_pcb_thermal_plate_seed_contains_engineering_pure_thermal_content(self):
+        from comsol_agent.simulation.skills import get_skill
+
+        skill = get_skill("pcb_thermal")
+        code = skill.template_java_code.lower()
+
+        assert skill.template_name == "pcb_thermal_plate_seed"
+        assert "fr4 substrate" in code
+        assert "copper_top" in code
+        assert "copper_bottom" in code
+        assert "chip1_pkg" in code
+        assert "chip2_pkg" in code
+        assert "heattransfer" in code
+        assert "heatsource" in code
+        assert "convectiveheatflux" in code
+        assert "stationary" in code
+        assert "pg_temperature" in code
+        assert "max_board_temperature" in code
+        assert "chip_hotspot_indicator" in code
+        assert "selection().create('sel_chip1_pkg', 'box')" in code
+        assert "selection().create('sel_copper_layers', 'union')" in code
+        assert "selection().named('sel_chip1_pkg')" in code
+        assert "cpl().create('maxop1', 'maximum')" in code
+        assert "feature('conv_bottom').selection().named('sel_conv_bottom')" in code
+        assert "feature('chip1_heat').selection().all()" not in code
+
+    def test_simulation_plan_modeling_request_recommends_pcb_thermal_plate_seed(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.simulation.skills import seed_builtin_templates
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        archive_path = tmp_path / "archive.sqlite3"
+        seed_builtin_templates(ArchiveStore(archive_path))
+
+        result = simulation_plan_modeling_request(
+            user_request="做 PCB 热仿真，FR4，两个 5W 芯片，底面对流散热",
+            known_params={
+                "geometry": "FR4 PCB with two chip packages and top/bottom copper layers",
+                "material": "FR4, copper, and chip package thermal material",
+                "boundary_conditions": "bottom and outside convection cooling",
+                "load_conditions": "chip1_power=5[W], chip2_power=5[W]",
+                "outputs": "temperature field and hotspot temperature",
+                "executable_params": {"chip1_power": "5[W]", "chip2_power": "5[W]"},
+            },
+            allow_defaults=True,
+            archive_path=str(archive_path),
+        )
+
+        candidate_names = {candidate["name"] for candidate in result["template_policy"]["candidates"]}
+
+        assert result["success"] is True
+        assert result["model_family"] == "pcb_thermal_electric"
+        assert result["domain"] == "thermal"
+        assert result["template_policy"]["use_template_if_fit"] is True
+        assert "pcb_thermal_plate_seed" in result["template_policy"]["family_starter_templates"]
+        assert "pcb_thermal_plate_seed" in candidate_names
+        assert "bearing_contact_pair_seed" not in json.dumps(result["template_policy"], ensure_ascii=False)
+        assert "simulation_plan_bearing_contact" not in result["next_tool_chain"]
+        assert result["known_params"] == {"chip1_power": "5[W]", "chip2_power": "5[W]"}
+
+    def test_model_family_registry_covers_p11_mvp_families(self):
+        from comsol_agent.simulation.model_families import get_model_family, list_model_families
+
+        names = {spec.name for spec in list_model_families()}
+
+        assert {
+            "bearing_contact",
+            "eccentric_shaft",
+            "gear_pair",
+            "pcb_thermal_electric",
+            "general",
+        }.issubset(names)
+        assert get_model_family("gear_pair").quality_gate == "validate_gear_pair_code_draft"
+        assert get_model_family("pcb_thermal_electric").output_expressions
+        assert get_model_family("pcb_thermal_electric").starter_templates == ("pcb_thermal_plate_seed",)
+        assert "chip_hotspot_indicator" in get_model_family("pcb_thermal_electric").output_expressions
+
+    def test_requirement_state_modeling_request_keeps_intent_out_of_executable_params(self):
+        from comsol_agent.memory.requirements import RequirementState
+
+        state = RequirementState()
+        state.observe_user_message("做 PCB 热仿真，FR4，两个 5W 芯片，底面对流散热，输出温升")
+        modeling_request = state.to_modeling_request()
+
+        assert "pcb" in modeling_request.intent_slots["geometry"].lower()
+        assert "fr4" in modeling_request.intent_slots["material"].lower()
+        assert "geometry" not in modeling_request.executable_params
+        assert "做 PCB" not in json.dumps(modeling_request.executable_params, ensure_ascii=False)
+
+    def test_simulation_plan_modeling_request_routes_eccentric_shaft_without_bearing_template(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        archive_path = tmp_path / "archive.sqlite3"
+        ArchiveStore(archive_path).add_template(
+            name="bearing_contact_pair_seed",
+            domain="structural",
+            java_code="model.param().set('radial_load', '1000[N]');",
+            params={"radial_load": "1000[N]"},
+        )
+
+        result = simulation_plan_modeling_request(
+            user_request="做一个偏心轴，钢材，3000 rpm，输出应力和位移",
+            known_params={"rpm": "3000[1/min]"},
+            allow_defaults=True,
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["model_family"] == "eccentric_shaft"
+        assert result["domain"] == "structural"
+        assert result["ready_to_generate"] is True
+        assert result["template_policy"]["reject_unrelated_bearing_templates"] is True
+        assert result["template_policy"]["candidates"] == []
+        assert "bearing_contact_pair_seed" not in json.dumps(result["next_tool_chain"], ensure_ascii=False)
+
+    def test_simulation_plan_modeling_request_routes_gear_pair_without_bearing_contact_pair_seed(self, tmp_path):
+        from comsol_agent.memory.archive_store import ArchiveStore
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        archive_path = tmp_path / "archive.sqlite3"
+        ArchiveStore(archive_path).add_template(
+            name="bearing_contact_pair_seed",
+            domain="structural",
+            java_code="model.param().set('radial_load', '1000[N]');",
+            params={"radial_load": "1000[N]"},
+        )
+
+        result = simulation_plan_modeling_request(
+            user_request="做简化齿轮副接触模型，给定扭矩，输出齿根应力和接触压力",
+            known_params={"torque": "20[N*m]"},
+            allow_defaults=True,
+            archive_path=str(archive_path),
+        )
+
+        assert result["success"] is True
+        assert result["model_family"] == "gear_pair"
+        assert result["domain"] == "structural"
+        assert result["template_policy"]["candidate_count"] == 0
+        assert "bearing_contact_pair_seed" not in json.dumps(result["template_policy"], ensure_ascii=False)
+
+    def test_simulation_plan_modeling_request_keeps_bearing_path(self):
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        result = simulation_plan_modeling_request(
+            user_request="做一个轴承接触模型",
+            allow_defaults=True,
+        )
+
+        assert result["success"] is True
+        assert result["model_family"] == "bearing_contact"
+        assert result["template_policy"]["family_starter_templates"] == [
+            "bearing_contact_pair_seed",
+            "bearing_contact_hertz_seed",
+        ]
+        assert "simulation_plan_bearing_contact" in result["next_tool_chain"]
+        assert result["quality_contract"]["preserve_family_specific_checks"] is True
+
+    def test_pcb_thermal_smoke_skip_comsol_writes_artifacts(self, tmp_path):
+        from scripts.run_pcb_thermal_template_smoke import parse_args, run_smoke
+
+        artifact_dir = tmp_path / "pcb_artifacts"
+        archive_path = tmp_path / "pcb.sqlite3"
+        args = parse_args(
+            [
+                "--skip-comsol",
+                "--archive-path",
+                str(archive_path),
+                "--artifact-dir",
+                str(artifact_dir),
+                "--model-name",
+                "pcb_unit_smoke",
+            ]
+        )
+
+        result = run_smoke(args)
+
+        assert result["success"] is True
+        assert result["template_name"] == "pcb_thermal_plate_seed"
+        assert result["stage"] == "offline_validate"
+        assert result["validation"]["validation"]["errors"] == []
+        assert Path(result["summary_json_path"]).exists()
+        assert Path(result["report_markdown_path"]).exists()
+        assert Path(result["manifest_path"]).exists()
+
+    def test_pcb_thermal_smoke_audit_parser_checks_required_nodes(self):
+        from scripts.run_pcb_thermal_template_smoke import (
+            check_pcb_runtime_audit,
+            parse_audit_stdout,
+        )
+
+        lines = []
+        for kind, tags in {
+            "component": ["comp1"],
+            "geometry": ["geom1"],
+            "geometry_feature": ["fr4_board", "copper_top", "copper_bottom", "chip1_pkg", "chip2_pkg"],
+            "material": ["mat_fr4", "mat_copper", "mat_chip"],
+            "physics": ["ht"],
+            "physics_feature": ["chip1_heat", "chip2_heat", "conv_bottom", "conv_sides", "conv_chip_tops"],
+            "mesh": ["mesh1"],
+            "study": ["std1"],
+            "study_feature": ["stat"],
+            "result": ["pg_temperature"],
+            "numerical": ["max_board_temperature", "chip_hotspot_indicator"],
+            "coupling": ["maxop1"],
+            "selection": [
+                "sel_fr4_board",
+                "sel_copper_layers",
+                "sel_chip1_pkg",
+                "sel_chip2_pkg",
+                "sel_conv_bottom",
+                "sel_conv_sides",
+                "sel_conv_chip_tops",
+            ],
+        }.items():
+            for tag in tags:
+                lines.append(f"AUDIT|{kind}|{tag}|1|")
+
+        audit = parse_audit_stdout("\n".join(lines))
+        audit["success"] = True
+        check = check_pcb_runtime_audit(audit)
+
+        assert check["success"] is True
+        assert check["counts"]["component_count"] == 1
+        assert check["counts"]["physics_count"] == 1
+        assert check["counts"]["selection_count"] >= 7
+
+    def test_simulation_plan_modeling_request_asks_followups_when_defaults_disallowed(self):
+        from comsol_agent.tools.simulation import simulation_plan_modeling_request
+
+        result = simulation_plan_modeling_request(
+            user_request="帮我做一个新的仿真模型",
+            allow_defaults=False,
+        )
+
+        assert result["success"] is True
+        assert result["model_family"] == "general"
+        assert result["ready_to_generate"] is False
+        assert result["missing_decisions"]
+        assert result["follow_up_questions"]
+        assert result["next_tool_chain"][0] == "ask_follow_up_questions"
 
     def test_local_docs_search_rejects_outside_workspace_directory(self):
         from comsol_agent.tools.simulation import simulation_search_local_docs
@@ -5287,6 +9468,32 @@ class TestCOMSOLRuntimeConfig:
         assert result["modified"] is True
         assert client.get_model("fake").is_modified is True
         COMSOLClient.reset_instance()
+
+    def test_png_quality_gate_rejects_blank_single_color_png(self, tmp_path):
+        import binascii
+        import struct
+        import zlib
+
+        from comsol_agent.tools.comsol.evaluate import inspect_png_quality
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            payload = kind + data
+            return struct.pack(">I", len(data)) + payload + struct.pack(">I", binascii.crc32(payload) & 0xFFFFFFFF)
+
+        path = tmp_path / "blank.png"
+        width, height = 4, 4
+        row = b"\x00" + bytes([12, 34, 56]) * width
+        raw = row * height
+        png = bytearray(b"\x89PNG\r\n\x1a\n")
+        png.extend(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+        png.extend(chunk(b"IDAT", zlib.compress(raw)))
+        png.extend(chunk(b"IEND", b""))
+        path.write_bytes(bytes(png))
+
+        result = inspect_png_quality(path)
+
+        assert result["success"] is False
+        assert "single-color" in result["error"]
 
     def test_comsol_execute_java_tool_classifies_api_errors(self):
         from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
