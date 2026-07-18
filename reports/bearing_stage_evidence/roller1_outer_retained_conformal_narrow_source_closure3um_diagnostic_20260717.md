@@ -90,6 +90,20 @@ Saved-MPH contact probe:
   --cores 1
 ```
 
+Saved-MPH source-entity transfer probe:
+
+```bash
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py \
+  --probe-contact-mph \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph \
+  --probe-contact-entity-transfer \
+  --contact-entity-transfer-selection sel_roller_1_outer_contact \
+  --contact-entity-transfer-roller 1 \
+  --contact-probe-output-dir \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/source_entity_transfer_probe_solved_mph \
+  --cores 1
+```
+
 Saved-MPH reaction probe:
 
 ```bash
@@ -171,6 +185,11 @@ For `roller_1` outer contact:
 - Pair-specific `pn`/`gn`: mostly `selection_error`.
 - Source/destination imbalance diagnostic: `false`.
 - Pair-transfer source unevaluable / destination nonzero diagnostic: `true`.
+- Source-entity transfer probe: source entities `197` and `198` have nonzero
+  generic pressure/stress, but `solid.Tn_cp_roller_1_outer_raceway` evaluates
+  with `evaluation_error` on both entities. The added `src`/`dst` alias
+  candidates also return `evaluation_error`, so the source-side limitation is
+  not just a naming suffix mismatch.
 
 Thus, the narrow box preserves a nonzero destination-side transfer signal and
 does not introduce the previously observed source/destination imbalance, but it
@@ -237,6 +256,10 @@ though the COMSOL solve, contact probe, and PNG generation succeeded.
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/contact_probe_solved_mph/contact_probe_summary.json`
 - Contact probe Markdown:
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/contact_probe_solved_mph/contact_probe_summary.md`
+- Source-entity transfer probe JSON:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/source_entity_transfer_probe_solved_mph/contact_probe_summary.json`
+- Source-entity transfer probe Markdown:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/source_entity_transfer_probe_solved_mph/contact_probe_summary.md`
 - Reaction probe JSON:
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json`
 - Reaction probe Markdown:

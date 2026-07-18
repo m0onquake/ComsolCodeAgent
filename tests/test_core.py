@@ -6386,10 +6386,14 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             values = {
                 (13, "solid.Tn_cp_roller_1_outer_raceway"): 4.0,
                 (13, "abs(solid.Tn_cp_roller_1_outer_raceway)"): 4.0,
+                (13, "solid.Tn_cp_roller_1_outer_raceway_src"): 5.0,
+                (13, "abs(solid.Tn_cp_roller_1_outer_raceway_src)"): 5.0,
                 (13, "solid.p"): 8.0,
                 (13, "solid.mises"): 12.0,
                 (14, "solid.Tn_cp_roller_1_outer_raceway"): 0.0,
                 (14, "abs(solid.Tn_cp_roller_1_outer_raceway)"): 0.0,
+                (14, "solid.Tn_cp_roller_1_outer_raceway_src"): 0.0,
+                (14, "abs(solid.Tn_cp_roller_1_outer_raceway_src)"): 0.0,
                 (14, "solid.p"): 0.0,
                 (14, "solid.mises"): 0.0,
             }
@@ -6433,8 +6437,25 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert result["success"] is True
         assert result["entity_count"] == 2
         assert result["nonzero_entities"]["abs_pair_Tn_max"] == [13]
+        assert result["nonzero_entities"]["pair_Tn_src_max"] == [13]
         assert result["by_entity"]["13"]["pair_Tn_max"]["value"] == 4.0
+        assert result["by_entity"]["13"]["pair_Tn_src_max"]["value"] == 5.0
         assert result["by_entity"]["14"]["pair_Tn_max"]["value"] == 0.0
+
+    def test_contact_entity_transfer_expression_candidates_include_source_and_destination_aliases(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        expressions = demo._contact_entity_transfer_expression_candidates("cp_roller_1_outer_raceway")
+        labels = {label for label, _expression, _method in expressions}
+        expression_text = {expression for _label, expression, _method in expressions}
+
+        assert "pair_Tn_max" in labels
+        assert "pair_Tn_src_max" in labels
+        assert "pair_Tn_src_prefix_max" in labels
+        assert "pair_Tn_dst_max" in labels
+        assert "solid.Tn_cp_roller_1_outer_raceway_src" in expression_text
+        assert "solid.Tn_src_cp_roller_1_outer_raceway" in expression_text
+        assert "solid.Tn_cp_roller_1_outer_raceway_dst" in expression_text
 
     def test_contact_pair_endpoint_consistency_accepts_expected_bindings(self):
         from scripts import run_agent_3d_bearing_full_demo as demo

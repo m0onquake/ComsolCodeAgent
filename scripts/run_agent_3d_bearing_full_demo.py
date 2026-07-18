@@ -10020,14 +10020,7 @@ def _evaluate_contact_entity_transfer(
             "entity_count": 0,
             "error": entity_lookup.get("error") or "No entities found for entity transfer probe.",
         }
-    expressions = [
-        ("pair_Tn_max", f"solid.Tn_{pair_tag}", "max"),
-        ("abs_pair_Tn_max", f"abs(solid.Tn_{pair_tag})", "max"),
-        ("pair_Tn_integral", f"solid.Tn_{pair_tag}", "integral"),
-        ("abs_pair_Tn_integral", f"abs(solid.Tn_{pair_tag})", "integral"),
-        ("generic_p_max", "solid.p", "max"),
-        ("mises_max", "solid.mises", "max"),
-    ]
+    expressions = _contact_entity_transfer_expression_candidates(pair_tag)
     evaluations: list[dict[str, Any]] = []
     for entity in entities:
         for label, expression, method in expressions:
@@ -10080,7 +10073,7 @@ def _evaluate_contact_entity_transfer(
     }
     return {
         "success": bool(evaluations) and any(
-            item.get("transfer_label") in {"pair_Tn_max", "abs_pair_Tn_max"}
+            str(item.get("transfer_label") or "").endswith("Tn_max")
             and item.get("success")
             and _runtime_numeric_is_finite_nonzero(item)
             for item in evaluations
@@ -10095,6 +10088,32 @@ def _evaluate_contact_entity_transfer(
         "by_entity": by_entity,
         "nonzero_entities": nonzero_entities,
     }
+
+
+def _contact_entity_transfer_expression_candidates(pair_tag: str) -> list[tuple[str, str, str]]:
+    """Return source/destination-aware pair-transfer candidates for one contact pair."""
+    expressions = [
+        ("pair_Tn_max", f"solid.Tn_{pair_tag}", "max"),
+        ("abs_pair_Tn_max", f"abs(solid.Tn_{pair_tag})", "max"),
+        ("pair_Tn_integral", f"solid.Tn_{pair_tag}", "integral"),
+        ("abs_pair_Tn_integral", f"abs(solid.Tn_{pair_tag})", "integral"),
+    ]
+    for endpoint in ("src", "dst"):
+        for pattern_label, expression in (
+            (f"pair_Tn_{endpoint}", f"solid.Tn_{pair_tag}_{endpoint}"),
+            (f"pair_Tn_{endpoint}_prefix", f"solid.Tn_{endpoint}_{pair_tag}"),
+        ):
+            expressions.extend([
+                (f"{pattern_label}_max", expression, "max"),
+                (f"abs_{pattern_label}_max", f"abs({expression})", "max"),
+                (f"{pattern_label}_integral", expression, "integral"),
+                (f"abs_{pattern_label}_integral", f"abs({expression})", "integral"),
+            ])
+    expressions.extend([
+        ("generic_p_max", "solid.p", "max"),
+        ("mises_max", "solid.mises", "max"),
+    ])
+    return expressions
 
 
 def _contact_status_candidate_expressions(*, roller: int, contact_label: str) -> list[str]:
