@@ -5370,6 +5370,79 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "unknown_operator" not in markdown
         assert "reaction_probe_summary.json" in markdown
 
+    def test_saved_mph_reaction_probe_requires_boundary_load_balance_for_verified_count(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        root = tmp_path / "runtime_smoke"
+
+        def write_case(name: str, reaction_force_abs_n: float) -> None:
+            run_dir = root / name
+            run_dir.mkdir(parents=True)
+            (run_dir / "direct_3d_bearing_summary.json").write_text(json.dumps({
+                "model_name": name,
+                "staged_contact_solve": {
+                    "success": True,
+                    "stages": [
+                        {
+                            "name": "single_solve_3_roller_boundary_load_0p101n_parametric",
+                            "solve": {"success": True},
+                            "native_volume_plot": {"success": True, "png_quality": {"success": True}},
+                            "stress": {"success": True, "statistics": {"max": 1.0e5}},
+                            "displacement": {"success": True, "statistics": {"max": 1.0e-6}},
+                            "inner_bore_load_active": True,
+                            "inner_body_load_active": False,
+                            "radial_load_value": "0.101[N]",
+                            "active_rollers": [12, 1, 2],
+                            "cage_contact_active": False,
+                            "weak_inner_guidance_active": True,
+                            "temporary_active_roller_stabilization_active": True,
+                            "active_roller_stabilization_mode": "spring",
+                            "load_application_fidelity": "inner_bore_boundary_load_diagnostic_not_design_gate",
+                        }
+                    ],
+                },
+            }), encoding="utf-8")
+            probe_dir = run_dir / "reaction_probe_solved_mph"
+            probe_dir.mkdir()
+            (probe_dir / "reaction_probe_summary.json").write_text(json.dumps({
+                "success": True,
+                "kind": "bearing_3d_saved_mph_reaction_probe",
+                "mph_path": str(run_dir / "result.mph"),
+                "selection_name": "sel_inner_bore_load_surface",
+                "reaction_verified": True,
+                "reaction_equivalent": {
+                    "success": True,
+                    "candidate_count": 40,
+                    "evaluated_candidate_success_count": 9,
+                    "successful_candidate_count": 3,
+                    "best_expression": "solid.sx*nx+solid.sxy*ny+solid.sxz*nz",
+                    "best_method": "java_intsurface",
+                    "best_reaction_force_abs_n": reaction_force_abs_n,
+                    "candidate_audit": {
+                        "diagnostic_class_counts": {"nonzero_success": 3},
+                        "nonzero_success_count": 3,
+                    },
+                },
+            }), encoding="utf-8")
+
+        write_case("mismatched_boundaryload_reaction", 594.5611858)
+        write_case("balanced_boundaryload_reaction", 0.102)
+
+        matrix = demo.build_stage_evidence_matrix(search_root=root)
+
+        reports = {Path(report["path"]).parts[-3]: report for report in matrix["saved_reaction_probe_reports"]}
+        mismatched = reports["mismatched_boundaryload_reaction"]
+        balanced = reports["balanced_boundaryload_reaction"]
+        assert mismatched["reaction_candidate_nonzero"] is True
+        assert mismatched["reaction_verified"] is False
+        assert mismatched["reaction_load_balance"]["success"] is False
+        assert mismatched["reaction_load_balance"]["reaction_to_load_ratio"] > 5000
+        assert balanced["reaction_candidate_nonzero"] is True
+        assert balanced["reaction_verified"] is True
+        assert balanced["reaction_load_balance"]["success"] is True
+        assert matrix["saved_reaction_probe_report_count"] == 2
+        assert matrix["saved_reaction_probe_verified_count"] == 1
+
     def test_stage_evidence_matrix_flags_boundaryload_stress_plateau(self, tmp_path):
         from scripts import run_agent_3d_bearing_full_demo as demo
 

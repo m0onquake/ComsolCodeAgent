@@ -7,7 +7,7 @@
 - Reaction-verified stages: `0`
 - Production-ready stages: `0`
 - Saved-MPH reaction probe reports: `2`
-- Saved-MPH reaction probe verified reports: `1`
+- Saved-MPH reaction probe verified reports: `0`
 - Saved-MPH contact probe reports: `52`
 - Saved-MPH contact source/destination imbalance reports: `19`
 
@@ -550,10 +550,10 @@ Recommended next diagnostics:
 
 ## Saved-MPH Reaction Probe Reports
 
-| Report | Verified | Candidate count | Nonzero candidates | Unknown operator | Zero result | Selection error | MPH |
-|---|---:|---:|---:|---:|---:|---:|---|
-| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json` | yes | 40 | 3 | 23 | 6 | 8 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
-| `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/reaction_probe_post_mph/reaction_probe_summary.json` | no | 40 | 0 | 23 | 9 | 8 | `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/stage_models/raceway_contact_high_preload_reaction_equivalent_post_reaction_probe_configured.mph` |
+| Report | Candidate nonzero | Load balanced | Verified | Applied load (N) | Reaction (N) | Ratio | Candidate count | Nonzero candidates | Unknown operator | Zero result | Selection error | MPH |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json` | yes | no | no | 0.101 | 594.5611857670098 | 5886.74441353475 | 40 | 3 | 23 | 6 | 8 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
+| `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/reaction_probe_post_mph/reaction_probe_summary.json` | no | no | no | None | None | None | 40 | 0 | 23 | 9 | 8 | `runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/stage_models/raceway_contact_high_preload_reaction_equivalent_post_reaction_probe_configured.mph` |
 
 ## Saved-MPH Contact Probe Reports
 

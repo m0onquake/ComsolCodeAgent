@@ -8,7 +8,7 @@
   "converged_native_stage_count": 206,
   "reaction_verified_stage_count": 0,
   "saved_reaction_probe_report_count": 2,
-  "saved_reaction_probe_verified_count": 1,
+  "saved_reaction_probe_verified_count": 0,
   "saved_contact_probe_report_count": 52,
   "saved_contact_probe_source_destination_imbalance_count": 19,
   "errors": [],
@@ -50067,7 +50067,26 @@
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
       "success": true,
-      "reaction_verified": true,
+      "reaction_candidate_nonzero": true,
+      "reaction_verified": false,
+      "boundary_load_context": {
+        "success": true,
+        "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
+        "stage": "single_solve_3_roller_boundary_load_0p101n_parametric",
+        "radial_load_value": "0.101[N]",
+        "applied_load_n": 0.101,
+        "reason": null
+      },
+      "reaction_load_balance": {
+        "success": false,
+        "reaction_force_abs_n": 594.5611857670098,
+        "applied_load_n": 0.101,
+        "absolute_residual_n": 594.4601857670098,
+        "relative_residual_to_load": 5885.74441353475,
+        "reaction_to_load_ratio": 5886.74441353475,
+        "relative_tolerance": 0.05,
+        "absolute_tolerance_n": 1e-06
+      },
       "selection_name": "sel_inner_bore_load_surface",
       "candidate_count": 40,
       "evaluated_candidate_success_count": 9,
@@ -50152,7 +50171,19 @@
       "artifact_root": "runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/reaction_probe_post_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/stage_models/raceway_contact_high_preload_reaction_equivalent_post_reaction_probe_configured.mph",
       "success": false,
+      "reaction_candidate_nonzero": false,
       "reaction_verified": false,
+      "boundary_load_context": {
+        "success": false,
+        "summary_path": "runtime_smoke/bearing_family_p12_reaction_equivalent/bearing3d_high_preload_reaction_equivalent_current_audit3/direct_3d_bearing_summary.json",
+        "reason": "ambiguous_boundaryload_stage_count:0"
+      },
+      "reaction_load_balance": {
+        "success": false,
+        "reason": "missing_reaction_force",
+        "relative_tolerance": 0.05,
+        "absolute_tolerance_n": 1e-06
+      },
       "selection_name": "sel_inner_bore_load_surface",
       "candidate_count": 40,
       "evaluated_candidate_success_count": 9,

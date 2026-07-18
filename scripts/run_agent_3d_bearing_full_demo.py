@@ -7573,15 +7573,28 @@ def _scan_saved_reaction_probe_reports(root: Path) -> dict[str, Any]:
             reaction_force_abs_numeric = float(reaction_force_abs) if reaction_force_abs is not None else None
         except (TypeError, ValueError):
             reaction_force_abs_numeric = None
-        verified = bool(report.get("reaction_verified") or reaction.get("success")) and (
+        candidate_nonzero = bool(report.get("reaction_verified") or reaction.get("success")) and (
             reaction_force_abs_numeric is not None and abs(reaction_force_abs_numeric) > 1.0e-9
         )
+        load_context = report.get("boundary_load_context") if isinstance(report.get("boundary_load_context"), dict) else None
+        if load_context is None:
+            load_context = _infer_saved_reaction_boundary_load_context(report_path)
+        load_balance = report.get("reaction_load_balance") if isinstance(report.get("reaction_load_balance"), dict) else None
+        if load_balance is None:
+            load_balance = _reaction_load_balance_gate(
+                reaction_force_abs_n=reaction_force_abs_numeric,
+                applied_load_n=load_context.get("applied_load_n") if isinstance(load_context, dict) else None,
+            )
+        verified = bool(candidate_nonzero and load_balance.get("success"))
         reports.append({
             "path": str(report_path),
             "artifact_root": str(report_path.parent),
             "mph_path": report.get("mph_path"),
             "success": bool(report.get("success")),
+            "reaction_candidate_nonzero": candidate_nonzero,
             "reaction_verified": verified,
+            "boundary_load_context": load_context,
+            "reaction_load_balance": load_balance,
             "selection_name": report.get("selection_name") or reaction.get("selection"),
             "candidate_count": reaction.get("candidate_count"),
             "evaluated_candidate_success_count": reaction.get("evaluated_candidate_success_count"),
@@ -7601,6 +7614,79 @@ def _scan_saved_reaction_probe_reports(root: Path) -> dict[str, Any]:
         "verified_count": sum(1 for report in reports if report.get("reaction_verified") is True),
         "reports": reports,
         "errors": errors,
+    }
+
+
+def _infer_saved_reaction_boundary_load_context(report_path: Path) -> dict[str, Any]:
+    """Find an adjacent direct-run summary and extract an unambiguous BoundaryLoad stage."""
+    for ancestor in [report_path.parent, *report_path.parents]:
+        summary_path = ancestor / "direct_3d_bearing_summary.json"
+        if not summary_path.exists():
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"success": False, "summary_path": str(summary_path), "reason": f"summary_read_error: {exc}"}
+        stages = _summary_staged_contact_solve(summary).get("stages") or []
+        boundary_stages = [
+            stage for stage in stages
+            if stage.get("inner_bore_load_active") is True and stage.get("inner_body_load_active") is not True
+        ]
+        if len(boundary_stages) != 1:
+            return {
+                "success": False,
+                "summary_path": str(summary_path),
+                "reason": f"ambiguous_boundaryload_stage_count:{len(boundary_stages)}",
+            }
+        stage = boundary_stages[0]
+        radial_load_value = stage.get("radial_load_value")
+        applied_load_n = _parse_unit_value_to_float(radial_load_value, unit="N")
+        return {
+            "success": applied_load_n is not None,
+            "summary_path": str(summary_path),
+            "stage": stage.get("name") or stage.get("stage"),
+            "radial_load_value": radial_load_value,
+            "applied_load_n": applied_load_n,
+            "reason": None if applied_load_n is not None else "missing_numeric_radial_load_value",
+        }
+    return {"success": False, "reason": "no_adjacent_direct_3d_bearing_summary"}
+
+
+def _reaction_load_balance_gate(
+    *,
+    reaction_force_abs_n: float | None,
+    applied_load_n: float | None,
+    relative_tolerance: float = 0.05,
+    absolute_tolerance_n: float = 1.0e-6,
+) -> dict[str, Any]:
+    """Require saved-MPH reaction evidence to balance the traced external load."""
+    if reaction_force_abs_n is None:
+        return {
+            "success": False,
+            "reason": "missing_reaction_force",
+            "relative_tolerance": relative_tolerance,
+            "absolute_tolerance_n": absolute_tolerance_n,
+        }
+    if applied_load_n is None or abs(applied_load_n) <= 0.0:
+        return {
+            "success": False,
+            "reason": "missing_applied_boundary_load",
+            "reaction_force_abs_n": reaction_force_abs_n,
+            "applied_load_n": applied_load_n,
+            "relative_tolerance": relative_tolerance,
+            "absolute_tolerance_n": absolute_tolerance_n,
+        }
+    residual = abs(abs(reaction_force_abs_n) - abs(applied_load_n))
+    relative_residual = residual / max(abs(applied_load_n), absolute_tolerance_n)
+    return {
+        "success": residual <= absolute_tolerance_n or relative_residual <= relative_tolerance,
+        "reaction_force_abs_n": reaction_force_abs_n,
+        "applied_load_n": applied_load_n,
+        "absolute_residual_n": residual,
+        "relative_residual_to_load": relative_residual,
+        "reaction_to_load_ratio": abs(reaction_force_abs_n) / abs(applied_load_n),
+        "relative_tolerance": relative_tolerance,
+        "absolute_tolerance_n": absolute_tolerance_n,
     }
 
 
@@ -8822,7 +8908,20 @@ def probe_saved_reaction_mph(
         )
         reaction = result.get("reaction_equivalent") or {}
         result["success"] = bool(reaction.get("success"))
-        result["reaction_verified"] = bool(reaction.get("success"))
+        reaction_force_abs = reaction.get("best_reaction_force_abs_n")
+        try:
+            reaction_force_abs_numeric = float(reaction_force_abs) if reaction_force_abs is not None else None
+        except (TypeError, ValueError):
+            reaction_force_abs_numeric = None
+        result["reaction_candidate_nonzero"] = bool(reaction.get("success")) and (
+            reaction_force_abs_numeric is not None and abs(reaction_force_abs_numeric) > 1.0e-9
+        )
+        result["boundary_load_context"] = _infer_saved_reaction_boundary_load_context(json_path)
+        result["reaction_load_balance"] = _reaction_load_balance_gate(
+            reaction_force_abs_n=reaction_force_abs_numeric,
+            applied_load_n=(result["boundary_load_context"] or {}).get("applied_load_n"),
+        )
+        result["reaction_verified"] = bool(result["reaction_candidate_nonzero"] and result["reaction_load_balance"].get("success"))
         result["candidate_audit"] = reaction.get("candidate_audit")
         result["setup_audit"] = reaction.get("setup_audit")
         result["warning"] = reaction.get("warning")
@@ -11598,11 +11697,14 @@ def _render_saved_reaction_probe_markdown(result: dict[str, Any]) -> str:
     reaction = result.get("reaction_equivalent") or {}
     setup = reaction.get("setup_audit") or result.get("setup_audit") or {}
     candidate_audit = reaction.get("candidate_audit") or result.get("candidate_audit") or {}
+    load_context = result.get("boundary_load_context") or {}
+    load_balance = result.get("reaction_load_balance") or {}
     lines = [
         "# Bearing 3D Saved MPH Reaction Probe",
         "",
         f"- MPH: `{result.get('mph_path')}`",
         f"- Success: `{result.get('success')}`",
+        f"- Reaction candidate nonzero: `{result.get('reaction_candidate_nonzero')}`",
         f"- Reaction verified: `{result.get('reaction_verified')}`",
         f"- Selection: `{result.get('selection_name')}`",
         f"- Error: `{result.get('error')}`",
@@ -11616,6 +11718,15 @@ def _render_saved_reaction_probe_markdown(result: dict[str, Any]) -> str:
         f"- Best expression: `{reaction.get('best_expression')}`",
         f"- Best method: `{reaction.get('best_method')}`",
         f"- Best force abs (N): `{reaction.get('best_reaction_force_abs_n')}`",
+        "",
+        "## Load Balance",
+        "",
+        "```json",
+        json.dumps({
+            "boundary_load_context": load_context,
+            "reaction_load_balance": load_balance,
+        }, ensure_ascii=False, indent=2, default=str),
+        "```",
         "",
         "## Setup Audit",
         "",
@@ -12832,16 +12943,22 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
         "",
         "## Saved-MPH Reaction Probe Reports",
         "",
-        "| Report | Verified | Candidate count | Nonzero candidates | Unknown operator | Zero result | Selection error | MPH |",
-        "|---|---:|---:|---:|---:|---:|---:|---|",
+        "| Report | Candidate nonzero | Load balanced | Verified | Applied load (N) | Reaction (N) | Ratio | Candidate count | Nonzero candidates | Unknown operator | Zero result | Selection error | MPH |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ])
     for report in saved_probe_reports:
         candidate_audit = report.get("candidate_audit") or {}
         diagnostic_counts = candidate_audit.get("diagnostic_class_counts") or {}
+        load_balance = report.get("reaction_load_balance") or {}
         lines.append(
-            "| `{report_path}` | {verified} | {candidate_count} | {nonzero} | {unknown} | {zero} | {selection_error} | `{mph}` |".format(
+            "| `{report_path}` | {candidate_nonzero} | {balanced} | {verified} | {applied} | {reaction} | {ratio} | {candidate_count} | {nonzero} | {unknown} | {zero} | {selection_error} | `{mph}` |".format(
                 report_path=report.get("path"),
+                candidate_nonzero=_md_bool(report.get("reaction_candidate_nonzero")),
+                balanced=_md_bool(load_balance.get("success")),
                 verified=_md_bool(report.get("reaction_verified")),
+                applied=load_balance.get("applied_load_n"),
+                reaction=load_balance.get("reaction_force_abs_n") or report.get("best_reaction_force_abs_n"),
+                ratio=load_balance.get("reaction_to_load_ratio"),
                 candidate_count=report.get("candidate_count"),
                 nonzero=report.get("successful_candidate_count"),
                 unknown=diagnostic_counts.get("unknown_operator"),

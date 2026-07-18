@@ -177,9 +177,10 @@ evidence.
 
 ### Saved-MPH reaction and load balance
 
-The saved-MPH reaction tool returned a nonzero candidate and therefore reported
-its tool-level flag as `reaction_verified=true`. The project load-balance
-comparison is not satisfied:
+The saved-MPH reaction tool returned a nonzero candidate, but the current
+reaction gate separates `reaction_candidate_nonzero` from
+`reaction_verified`. Because the candidate does not balance the traced
+`0.101[N]` BoundaryLoad, `reaction_verified=false`:
 
 | Quantity | Result |
 |---|---:|
@@ -188,6 +189,8 @@ comparison is not satisfied:
 | Absolute residual | `594.4601858[N]` |
 | Reaction/load ratio | `5886.7444` |
 | Relative residual to applied load | `5885.7444` |
+| Reaction candidate nonzero | `true` |
+| Reaction verified | `false` |
 | Balance gate | **FAIL** |
 
 The nonzero reaction candidate is
