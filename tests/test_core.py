@@ -3812,6 +3812,50 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert len(setup_codes) == 1
 
         setup_codes.clear()
+        actual_area_fixed_active_bootstrap = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_actual_area_fixed_active_bootstrap",
+            stage_plot_dir=tmp_path / "single_solve_0p101_actual_area_fixed_active_bootstrap_stage_plots",
+        )
+        assert actual_area_fixed_active_bootstrap["success"] is True
+        assert (
+            actual_area_fixed_active_bootstrap["contact_stage_mode"]
+            == "load_side_group_boundary_load_single_solve_0p101_actual_area_fixed_active_bootstrap"
+        )
+        assert len(actual_area_fixed_active_bootstrap["stages"]) == 1
+        stage = actual_area_fixed_active_bootstrap["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["radial_load_value"] == "0.101[N]"
+        assert stage["preload_steps"] == (
+            "1e-5 5e-5 1e-4 5e-4 0.001 0.002 0.005 0.01 0.02 0.05 0.08 0.1 0.1005 0.101"
+        )
+        assert stage["inner_bore_load_pressure_expression"] == "radial_load/(4.863178789249815e-3[m^2])"
+        assert stage["contact_penalty"] == "5e-5*E_steel"
+        assert stage["contact_relaxation"] == "0.12"
+        assert stage["contact_tolerance"] == "3[um]"
+        assert stage["active_roller_stabilization_active"] is True
+        assert stage["active_roller_stabilization_mode"] == "fixed"
+        assert stage["active_roller_stabilization_k"] == "1e10[N/m^3]"
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert stage["contact_patch_box_overrides"] == {}
+        assert stage["raceway_partition_patch_overrides"] == {}
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "single_solve_0p101_actual_area_pressure_fixed_active_roller_bootstrap_only"
+        )
+        assert "actual_area_pressure_fixed_active_bootstrap_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "model.param().set('radial_load', '0.101[N]')" in setup_codes[0]
+        assert (
+            "model.param().set('inner_bore_load_pressure', "
+            "'radial_load/(4.863178789249815e-3[m^2])')"
+        ) in setup_codes[0]
+        assert "'|active_roller_stabilization_mode=' + 'fixed'" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
         pair_swap = demo._run_3d_staged_contact_solve(
             "staged_model",
             contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_pair_swap",
