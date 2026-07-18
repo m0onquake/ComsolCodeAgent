@@ -6386,6 +6386,97 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             "load_side_group_boundary_load_single_solve_0p101_actual_area_resume_from_solved_nominal"
         )
 
+    def test_actual_area_resume_from_solved_nominal_can_rebuild_solver_sequence(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "nominal_solved.mph"
+        source_mph.write_text("fake nominal solved mph", encoding="utf-8")
+        output_dir = tmp_path / "actual_area_resume_fresh_solver"
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        configured: dict[str, object] = {}
+        rebuild_calls: list[str] = []
+
+        def fake_set_state(model_name: str, **kwargs):
+            configured["model_name"] = model_name
+            configured.update(kwargs)
+            return {"success": True, "model_name": model_name, "stdout": "configured actual area fresh solver"}
+
+        def fake_save_stage(model_name: str, *, stage_name: str, output_dir: Path | None):
+            path = Path(output_dir) / f"{stage_name}_configured.mph"
+            path.write_text("configured mph", encoding="utf-8")
+            return {"success": True, "model_name": model_name, "stage": stage_name, "saved_to": str(path)}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_nominal_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_remove_model_solver_sequences_via_java",
+            lambda model_name: rebuild_calls.append(model_name) or {
+                "success": True,
+                "removed_solver_tags": ["sol1"],
+                "solver_tags_before": ["sol1"],
+                "solver_tags_after": [],
+            },
+        )
+        monkeypatch.setattr(demo, "_set_3d_staged_contact_state", fake_set_state)
+        monkeypatch.setattr(demo, "_save_stage_configured_mph", fake_save_stage)
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": False, "error": "Solve failed: timed out"})
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=output_dir,
+            cores=1,
+            rebuild_solver_sequence=True,
+        )
+
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert rebuild_calls == ["loaded_nominal_model"]
+        assert configured["reuse_existing_solver"] is False
+        assert configured["use_parametric_sweep"] is False
+        assert configured["radial_load_value"] == "0.101[N]"
+        assert configured["inner_bore_load_pressure_expression"] == "radial_load/(4.863178789249815e-3[m^2])"
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["name"].endswith("_fresh_solver")
+        assert stage["solver_sequence_rebuild"]["success"] is True
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "actual_area_pressure_resume_from_solved_nominal_fresh_solver_sequence_only"
+        )
+        assert summary["staged_contact_solve"]["policy"] == (
+            "load_solved_nominal_mph_then_rebuild_solver_sequence_and_configure_actual_area_pressure_checkpoint"
+        )
+        assert summary["staged_contact_solve"]["contact_stage_mode"].endswith("_fresh_solver")
+        assert summary["solve"]["success"] is False
+
     def test_saved_mph_reaction_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
@@ -9993,6 +10084,31 @@ class TestCOMSOLRuntimeConfig:
         assert list_result["parameters"] == [
             {"name": "L", "value": "1[mm]", "description": ""}
         ]
+        COMSOLClient.reset_instance()
+
+    def test_comsol_solve_handles_unprintable_runtime_exception(self):
+        from comsol_agent.tools.comsol.client import COMSOLClient, ModelHandle
+        from comsol_agent.tools.comsol.solve import comsol_solve
+
+        class UnprintableRuntimeError(Exception):
+            def __str__(self):
+                raise RuntimeError("JVM is not running")
+
+        class FakeMPhModel:
+            def solve(self, *args):
+                raise UnprintableRuntimeError()
+
+        COMSOLClient.reset_instance()
+        client = COMSOLClient.get_instance()
+        client._started = True
+        client._mph_client = object()
+        client._models["fake"] = ModelHandle(name="fake", mph_model=FakeMPhModel())
+
+        result = comsol_solve("fake")
+
+        assert result["success"] is False
+        assert "Solve failed: UnprintableRuntimeError" in result["error"]
+        assert "exception stringification failed" in result["error"]
         COMSOLClient.reset_instance()
 
     def test_comsol_execute_java_strips_java_comments_and_runs_multiline_code(self):

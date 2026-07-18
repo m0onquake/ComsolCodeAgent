@@ -6312,12 +6312,61 @@ def _actual_area_resume_from_solved_nominal_stage() -> dict[str, Any]:
     }
 
 
+def _remove_model_solver_sequences_via_java(model_name: str) -> dict[str, Any]:
+    """Remove saved solver sequences so COMSOL can generate a fresh one for the same study."""
+    marker_start = "SOLVER_SEQUENCE_REBUILD_JSON_START"
+    marker_end = "SOLVER_SEQUENCE_REBUILD_JSON_END"
+    code = f"""
+import json
+
+payload = {{'success': False, 'removed_solver_tags': [], 'errors': []}}
+try:
+    payload['solver_tags_before'] = [str(tag) for tag in list(model.sol().tags())]
+except Exception as error:
+    payload['solver_tags_before_error'] = str(error)
+    payload['solver_tags_before'] = []
+
+for solver_tag in list(payload.get('solver_tags_before') or []):
+    try:
+        model.sol().remove(solver_tag)
+        payload['removed_solver_tags'].append(solver_tag)
+    except Exception as error:
+        payload['errors'].append({{'solver_tag': solver_tag, 'error': str(error)}})
+
+try:
+    payload['solver_tags_after'] = [str(tag) for tag in list(model.sol().tags())]
+except Exception as error:
+    payload['solver_tags_after_error'] = str(error)
+    payload['solver_tags_after'] = []
+
+payload['success'] = len(payload.get('errors') or []) == 0
+output.write({marker_start!r} + '\\n')
+output.write(json.dumps(payload, ensure_ascii=False, default=str))
+output.write('\\n' + {marker_end!r} + '\\n')
+"""
+    execution = comsol_execute_java(code, model_name=model_name)
+    parsed = _extract_marked_json_payload(
+        execution.get("stdout") or execution.get("output"),
+        start_marker=marker_start,
+        end_marker=marker_end,
+    )
+    payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
+    if not payload:
+        payload = {"success": False, "error": parsed.get("error") or execution.get("error") or "solver rebuild payload missing"}
+    payload["execution"] = _compact_runtime_result(execution)
+    payload["success"] = bool(execution.get("success")) and bool(payload.get("success"))
+    if not payload.get("success") and not payload.get("error"):
+        payload["error"] = payload.get("errors") or execution.get("error") or parsed.get("error")
+    return payload
+
+
 def run_actual_area_resume_from_solved_nominal_mph(
     *,
     source_mph: str | Path,
     output_dir: str | Path,
     cores: int = 1,
     run_saved_probes: bool = True,
+    rebuild_solver_sequence: bool = False,
 ) -> dict[str, Any]:
     """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
     mph_file = Path(source_mph)
@@ -6331,13 +6380,30 @@ def run_actual_area_resume_from_solved_nominal_mph(
 
     stage = _actual_area_resume_from_solved_nominal_stage()
     contact_stage_mode = "load_side_group_boundary_load_single_solve_0p101_actual_area_resume_from_solved_nominal"
+    resume_policy = "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint"
+    run_id = "actual_area_resume_from_solved_nominal"
+    model_label = "bearing3d_load_side_boundaryload_0p101_actual_area_resume_from_solved_nominal"
+    if rebuild_solver_sequence:
+        stage["name"] = f"{stage['name']}_fresh_solver"
+        stage["contact_scope"] = f"{stage['contact_scope']}_fresh_solver_sequence"
+        stage["reuse_existing_solver"] = False
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_from_solved_nominal_fresh_solver_sequence_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_fresh_solver_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_fresh_solver"
+        resume_policy = "load_solved_nominal_mph_then_rebuild_solver_sequence_and_configure_actual_area_pressure_checkpoint"
+        run_id = "actual_area_resume_from_solved_nominal_fresh_solver"
+        model_label = "bearing3d_load_side_boundaryload_0p101_actual_area_resume_fresh_solver"
     summary: dict[str, Any] = {
         "summary_path": str(summary_path),
         "template_run": {
             "success": True,
-            "model_name": "bearing3d_load_side_boundaryload_0p101_actual_area_resume_from_solved_nominal",
+            "model_name": model_label,
             "template_name": "resume_from_existing_solved_mph",
-            "run_id": "actual_area_resume_from_solved_nominal",
+            "run_id": run_id,
             "json_path": str(mph_file),
         },
         "geometry_overrides": {
@@ -6399,7 +6465,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
     summary["staged_contact_solve"] = {
         "success": False,
         "kind": "bearing_3d_staged_contact_solve",
-        "policy": "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint",
+        "policy": resume_policy,
         "run_full_cage_stage": False,
         "contact_stage_mode": contact_stage_mode,
         "requested_contact_stage_mode": contact_stage_mode,
@@ -6429,6 +6495,17 @@ def run_actual_area_resume_from_solved_nominal_mph(
 
         model_name = str(load["model_name"])
         summary["pre_solve_selection_binding_probe"] = {"success": True, "model_name": model_name}
+        if rebuild_solver_sequence:
+            stage_result["solver_sequence_rebuild"] = _remove_model_solver_sequences_via_java(model_name)
+            if not stage_result["solver_sequence_rebuild"].get("success"):
+                error = stage_result["solver_sequence_rebuild"].get("error") or "Failed to rebuild solver sequence."
+                stage_result["solve"] = {"success": False, "error": error}
+                summary["solve"] = stage_result["solve"]
+                summary["staged_contact_solve"]["final_solve"] = stage_result["solve"]
+                summary["physical_contact_validation"]["quality_level"] = "diagnostic_failed"
+                summary["physical_contact_validation"]["errors"] = [error]
+                _write_direct_3d_summary(summary, summary_path)
+                return summary
         setup = _set_3d_staged_contact_state(
             model_name,
             stage_name=stage["name"],
@@ -15308,6 +15385,14 @@ def main() -> None:
         help="Skip saved-MPH load/contact/reaction probes after a successful resume solve.",
     )
     parser.add_argument(
+        "--resume-actual-area-rebuild-solver",
+        action="store_true",
+        help=(
+            "Before the actual-area resume solve, remove existing solver sequences from the loaded nominal MPH "
+            "and let the stage setup generate a fresh solver sequence. Diagnostic only."
+        ),
+    )
+    parser.add_argument(
         "--probe-geometry-partition-api",
         action="store_true",
         help="Create a tiny COMSOL geometry and probe supported partition/imprint feature APIs.",
@@ -15518,6 +15603,7 @@ def main() -> None:
             output_dir=args.resume_actual_area_output_dir,
             cores=args.cores,
             run_saved_probes=not bool(args.resume_actual_area_skip_saved_probes),
+            rebuild_solver_sequence=bool(args.resume_actual_area_rebuild_solver),
         )
         staged = report.get("staged_contact_solve") or {}
         final_solve = staged.get("final_solve") or report.get("solve") or {}

@@ -1,14 +1,14 @@
 # Bearing 3D Stage Evidence Matrix
 
 - Search root: `runtime_smoke`
-- Summaries scanned: `157`
-- Stage rows: `310`
+- Summaries scanned: `158`
+- Stage rows: `311`
 - Converged native stages: `206`
 - Reaction-verified stages: `0`
 - Production-ready stages: `0`
 - Saved-MPH reaction probe reports: `6`
 - Saved-MPH reaction probe verified reports: `0`
-- Saved-MPH BoundaryLoad probe reports: `9`
+- Saved-MPH BoundaryLoad probe reports: `10`
 - Saved-MPH BoundaryLoad balanced reports: `0`
 - Saved-MPH contact probe reports: `60`
 - Saved-MPH contact source/destination imbalance reports: `19`
@@ -168,6 +168,7 @@
 | single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | no | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_load | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/direct_3d_bearing_summary.json` |
+| single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal_fresh_solver | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal_fresh_solver/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_singlepoint | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_patch/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_sector_source_closure3um/direct_3d_bearing_summary.json` |
@@ -532,11 +533,11 @@
 
 ## BoundaryLoad Distribution Diagnostics
 
-- BoundaryLoad rows: `127`
+- BoundaryLoad rows: `128`
 - Zero-carry active-roller rows: `15`
-- Missing-probe BoundaryLoad rows: `105`
+- Missing-probe BoundaryLoad rows: `106`
 - Stress-plateau BoundaryLoad rows: `0`
-- Stage MPH diagnostic reports: `114`
+- Stage MPH diagnostic reports: `116`
 - Zero-carry rollers: `{"roller_1": 15}`
 
 Recommended next diagnostics:
@@ -581,6 +582,7 @@ Recommended next diagnostics:
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/load_probe_configured_mph/load_probe_summary.json` | configured_checkpoint | no | None | None | None | None | None | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap_configured.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/load_probe_failed_mph/load_probe_summary.json` | failed_checkpoint | no | 0.101 | 0.0010000000000000057 | 0.009900990099009957 | None | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/failed_3d_contact_model.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/load_probe_configured_mph/load_probe_summary.json` | configured_checkpoint | no | 0.101 | 0.2171497035786822 | 2.149997065135467 | 0.101 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal_configured.mph` |
+| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal_fresh_solver/load_probe_configured_mph/load_probe_summary.json` | configured_checkpoint | no | None | None | None | None | None | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal_fresh_solver/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal_fresh_solver_configured.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/load_probe/load_probe_summary.json` | configured_checkpoint | no | None | None | None | None | None | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_singlepoint_configured.mph` |
 
 ## Saved-MPH Contact Probe Reports
