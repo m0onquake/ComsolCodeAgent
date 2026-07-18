@@ -6268,6 +6268,326 @@ def _save_stage_configured_mph(
     return compact
 
 
+def _actual_area_resume_from_solved_nominal_stage() -> dict[str, Any]:
+    return {
+        "name": "single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal",
+        "contact_scope": "load_side_three_roller_actual_area_pressure_resume_from_solved_nominal_checkpoint",
+        "active_rollers": [12, 1, 2],
+        "cage_contact_active": False,
+        "inner_radial_displacement": "0[um]",
+        "preload_steps": "0.101",
+        "sweep_parameter": "radial_load",
+        "sweep_unit": "N",
+        "radial_load_value": "0.101[N]",
+        "mesh_contact_size": "2.4[mm]",
+        "mesh_bulk_size": "5.0[mm]",
+        "solver_maxsegiter": "260",
+        "solver_maxlinit": "1600",
+        "contact_penalty": "5e-5*E_steel",
+        "contact_relaxation": "0.12",
+        "contact_tolerance": "3[um]",
+        "inner_bore_load_active": True,
+        "inner_body_load_active": False,
+        "displacement_preload_active": False,
+        "displacement_preload_selection": "sel_inner_raceway_contact",
+        "inner_bore_load_pressure_expression": "radial_load/(4.863178789249815e-3[m^2])",
+        "active_roller_stabilization_active": True,
+        "temporary_active_roller_stabilization_active": True,
+        "active_roller_stabilization_mode": "spring",
+        "active_roller_stabilization_k": "1e10[N/m^3]",
+        "weak_roller_foundation_active": True,
+        "weak_roller_foundation_k": "1e8[N/m^3]",
+        "weak_inner_guidance_active": True,
+        "weak_inner_guidance_k": "5e4[N/m^3]",
+        "reuse_existing_solver": True,
+        "use_parametric_sweep": False,
+        "solver_formulation_diagnostic_role": "actual_area_pressure_resume_from_solved_nominal_checkpoint_only",
+        "load_application_fidelity": (
+            "inner_bore_boundary_load_load_side_three_roller_actual_area_pressure_resume_from_solved_nominal_diagnostic_not_design_gate"
+        ),
+        "physical_acceptance": (
+            "actual_area_resume_from_solved_nominal_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        ),
+        "reaction_equivalent_requested": False,
+    }
+
+
+def run_actual_area_resume_from_solved_nominal_mph(
+    *,
+    source_mph: str | Path,
+    output_dir: str | Path,
+    cores: int = 1,
+    run_saved_probes: bool = True,
+) -> dict[str, Any]:
+    """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
+    mph_file = Path(source_mph)
+    artifact_root = Path(output_dir)
+    summary_path = artifact_root / "direct_3d_bearing_summary.json"
+    stage_model_dir = artifact_root / "stage_models"
+    stage_plot_dir = artifact_root / "stage_plots"
+    result_dir = artifact_root / "result_packages"
+    for directory in (artifact_root, stage_model_dir, stage_plot_dir, result_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    stage = _actual_area_resume_from_solved_nominal_stage()
+    contact_stage_mode = "load_side_group_boundary_load_single_solve_0p101_actual_area_resume_from_solved_nominal"
+    summary: dict[str, Any] = {
+        "summary_path": str(summary_path),
+        "template_run": {
+            "success": True,
+            "model_name": "bearing3d_load_side_boundaryload_0p101_actual_area_resume_from_solved_nominal",
+            "template_name": "resume_from_existing_solved_mph",
+            "run_id": "actual_area_resume_from_solved_nominal",
+            "json_path": str(mph_file),
+        },
+        "geometry_overrides": {
+            "contact_interference": None,
+            "cage_pocket_clearance": None,
+            "verified_fixture_roller_angular_offset_deg": 0.0,
+            "verified_fixture_local_contact_patch_mode": "roller1_outer_retained_conformal_narrow_source_closure3um",
+            "verified_fixture_local_contact_patch_diagnostic_role": (
+                "roller1_outer_retained_conformal_target_with_3um_source_closure_and_0p9mm_tangential_box_diagnostic"
+            ),
+        },
+        "fixture_quality": {
+            "success": True,
+            "errors": [],
+            "warnings": ["Loaded from an existing solved nominal-pressure MPH checkpoint."],
+            "quality_level": "diagnostic_checkpoint_resume",
+            "requires_named_selections": False,
+        },
+        "requested_stage_image": {
+            "success": False,
+            "request_class": "high_load_12roller_native_comsol_stress_image",
+            "image_role": "no_converged_native_comsol_stage_available",
+            "selected_stage": None,
+            "native_comsol_png": None,
+            "stage_selection_reason": "No actual-area checkpoint-resume stage exported a native COMSOL PNG.",
+        },
+        "physical_contact_validation": {
+            "success": False,
+            "quality_level": "diagnostic_pending",
+            "errors": [],
+            "warnings": [
+                "This experiment still uses weak inner guidance, weak roller foundation, temporary active-roller spring stabilization, and cage-inactive scope.",
+                "This checkpoint-resume path is diagnostic only and must not be marked production-ready.",
+            ],
+        },
+    }
+
+    config = load_config()
+    client = COMSOLClient.get_instance()
+    model_name: str | None = None
+    stage_result: dict[str, Any] = {
+        **stage,
+        "raceway_contact_active": True,
+        "inactive_roller_stabilization_active": True,
+        "temporary_cage_stabilization_active": True,
+        "setup": {},
+        "pre_solve_model_save": {},
+        "post_reaction_probe_model_save": {},
+        "solve": {"success": False, "error": "not_started"},
+        "stress": {},
+        "inner_ring_stress": {},
+        "displacement": {},
+        "contact_pressure": {},
+        "per_roller_probe_results": [],
+        "active_roller_load_distribution": {},
+        "reaction_equivalent": {},
+        "native_volume_plot": {},
+    }
+    summary["staged_contact_solve"] = {
+        "success": False,
+        "kind": "bearing_3d_staged_contact_solve",
+        "policy": "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint",
+        "run_full_cage_stage": False,
+        "contact_stage_mode": contact_stage_mode,
+        "requested_contact_stage_mode": contact_stage_mode,
+        "stage_plot_policy": "native_comsol_volume_plot_per_successful_stage",
+        "stages": [stage_result],
+        "final_solve": {"success": False, "error": "not_started"},
+    }
+
+    try:
+        client.start(
+            cores=cores,
+            version=config.comsol.version,
+            executable_path=config.comsol.executable_path,
+        )
+        load = comsol_load_model(str(mph_file))
+        summary["source_mph_load"] = _compact_runtime_result(load)
+        if not load.get("success"):
+            error = load.get("error") or "Failed to load source MPH."
+            summary["fixture_quality"]["success"] = False
+            summary["fixture_quality"]["errors"] = [error]
+            summary["solve"] = {"success": False, "error": error}
+            summary["staged_contact_solve"]["final_solve"] = summary["solve"]
+            summary["physical_contact_validation"]["quality_level"] = "diagnostic_failed"
+            summary["physical_contact_validation"]["errors"] = ["Could not load source solved MPH."]
+            _write_direct_3d_summary(summary, summary_path)
+            return summary
+
+        model_name = str(load["model_name"])
+        summary["pre_solve_selection_binding_probe"] = {"success": True, "model_name": model_name}
+        setup = _set_3d_staged_contact_state(
+            model_name,
+            stage_name=stage["name"],
+            cage_contact_active=stage["cage_contact_active"],
+            active_rollers=stage["active_rollers"],
+            inner_radial_displacement=stage["inner_radial_displacement"],
+            preload_steps=stage["preload_steps"],
+            mesh_contact_size=stage["mesh_contact_size"],
+            mesh_bulk_size=stage["mesh_bulk_size"],
+            inner_bore_load_active=stage["inner_bore_load_active"],
+            inner_body_load_active=stage["inner_body_load_active"],
+            displacement_preload_active=stage["displacement_preload_active"],
+            sweep_parameter=stage["sweep_parameter"],
+            sweep_unit=stage["sweep_unit"],
+            active_roller_stabilization_active=stage["active_roller_stabilization_active"],
+            active_roller_stabilization_mode=stage["active_roller_stabilization_mode"],
+            active_roller_stabilization_k=stage["active_roller_stabilization_k"],
+            weak_roller_foundation_active=stage["weak_roller_foundation_active"],
+            weak_roller_foundation_k=stage["weak_roller_foundation_k"],
+            weak_inner_guidance_active=stage["weak_inner_guidance_active"],
+            weak_inner_guidance_k=stage["weak_inner_guidance_k"],
+            solver_maxsegiter=stage["solver_maxsegiter"],
+            solver_maxlinit=stage["solver_maxlinit"],
+            contact_penalty=stage["contact_penalty"],
+            contact_relaxation=stage["contact_relaxation"],
+            contact_tolerance=stage["contact_tolerance"],
+            radial_load_value=stage["radial_load_value"],
+            inner_bore_load_pressure_expression=stage["inner_bore_load_pressure_expression"],
+            displacement_preload_selection=stage["displacement_preload_selection"],
+            reuse_existing_solver=stage["reuse_existing_solver"],
+            use_parametric_sweep=stage["use_parametric_sweep"],
+        )
+        stage_result["setup"] = _compact_runtime_result(setup)
+        if not setup.get("success"):
+            error = setup.get("error") or "Failed to configure actual-area checkpoint stage."
+            stage_result["solve"] = {"success": False, "error": error}
+            summary["solve"] = stage_result["solve"]
+            summary["staged_contact_solve"]["final_solve"] = stage_result["solve"]
+            summary["physical_contact_validation"]["quality_level"] = "diagnostic_failed"
+            summary["physical_contact_validation"]["errors"] = [error]
+            _write_direct_3d_summary(summary, summary_path)
+            return summary
+
+        stage_result["pre_solve_model_save"] = _compact_runtime_result(
+            _save_stage_configured_mph(
+                model_name,
+                stage_name=stage["name"],
+                output_dir=stage_model_dir,
+            )
+        )
+        solve = comsol_solve(model_name)
+        stage_result["solve"] = _compact_runtime_result(solve)
+        summary["solve"] = stage_result["solve"]
+        summary["staged_contact_solve"]["final_solve"] = stage_result["solve"]
+
+        if solve.get("success"):
+            stress = comsol_evaluate(model_name, "solid.mises")
+            inner_ring_stress = comsol_evaluate(model_name, "maxop_inner_ring(solid.mises)")
+            displacement = comsol_evaluate(model_name, "solid.disp")
+            contact_pressure = comsol_evaluate(model_name, "contact_pressure_est")
+            per_roller = _evaluate_per_roller_probe_results(model_name)
+            native_plot = _export_native_3d_stage_volume_plot(
+                model_name,
+                stage_name=stage["name"],
+                output_dir=stage_plot_dir,
+            )
+            solved_path = result_dir / "actual_area_resume_from_solved_nominal.mph"
+            solved_save = comsol_save_model(model_name, str(solved_path.resolve()))
+            stage_result.update({
+                "stress": _compact_runtime_result(stress),
+                "inner_ring_stress": _compact_runtime_result(inner_ring_stress),
+                "displacement": _compact_runtime_result(displacement),
+                "contact_pressure": _compact_runtime_result(contact_pressure),
+                "per_roller_probe_results": per_roller,
+                "active_roller_load_distribution": _active_roller_load_distribution_audit(
+                    per_roller,
+                    active_rollers=stage["active_rollers"],
+                    boundary_load_active=True,
+                ),
+                "native_volume_plot": _compact_runtime_result(native_plot),
+                "solved_model_save": _compact_runtime_result(solved_save),
+            })
+            summary["staged_contact_solve"]["success"] = True
+            summary["requested_stage_image"] = _select_requested_stage_image_from_staged_solve(
+                summary["staged_contact_solve"]
+            )
+            solved_mph = solved_save.get("saved_to") or solved_save.get("filepath") or str(solved_path.resolve())
+            if run_saved_probes and solved_save.get("success"):
+                stage_result["saved_boundary_load_probe"] = _compact_runtime_result(
+                    probe_saved_boundary_load_mph(
+                        mph_path=solved_mph,
+                        output_dir=artifact_root / "load_probe_solved_mph",
+                        selection_name="sel_inner_bore_load_surface",
+                        pressure_expression="inner_bore_load_pressure",
+                        cores=cores,
+                    )
+                )
+                stage_result["saved_contact_probe"] = _compact_runtime_result(
+                    probe_saved_contact_mph(
+                        mph_path=solved_mph,
+                        output_dir=artifact_root / "contact_probe_solved_mph",
+                        entity_transfer={
+                            "roller": 1,
+                            "contact_label": "roller_1_outer_raceway",
+                            "selection_name": "sel_roller_1_outer_contact",
+                        },
+                        cores=cores,
+                    )
+                )
+                stage_result["saved_reaction_probe"] = _compact_runtime_result(
+                    probe_saved_reaction_mph(
+                        mph_path=solved_mph,
+                        output_dir=artifact_root / "support_reaction_probe_solved_mph",
+                        selection_name="sel_outer_support_surface",
+                        cores=cores,
+                    )
+                )
+            load_balance = ((stage_result.get("saved_boundary_load_probe") or {}).get("load_balance") or {})
+            contact_probe = stage_result.get("saved_contact_probe") or {}
+            reaction_balance = ((stage_result.get("saved_reaction_probe") or {}).get("reaction_load_balance") or {})
+            errors: list[str] = []
+            if not load_balance.get("success"):
+                errors.append("Saved-MPH BoundaryLoad balance did not pass.")
+            if not contact_probe.get("success"):
+                errors.append("Saved-MPH contact probe did not pass.")
+            if not reaction_balance.get("success"):
+                errors.append("Saved-MPH support reaction/load balance did not pass.")
+            summary["physical_contact_validation"] = {
+                "success": False,
+                "quality_level": "diagnostic_solved_not_production" if not errors else "diagnostic_failed",
+                "errors": errors,
+                "warnings": [
+                    "This experiment still uses weak inner guidance, weak roller foundation, temporary active-roller spring stabilization, and cage-inactive scope.",
+                    "Even if solved, this checkpoint-resume path is diagnostic and must not be marked production-ready.",
+                ],
+            }
+        else:
+            failure_path = artifact_root / "failed_3d_contact_model.mph"
+            stage_result["failed_model_save"] = _compact_runtime_result(
+                comsol_save_model(model_name, str(failure_path.resolve()))
+            )
+            summary["failed_model_save"] = stage_result["failed_model_save"]
+            summary["physical_contact_validation"] = _build_3d_physical_contact_validation(
+                solve=stage_result["solve"],
+                final_stage=stage_result,
+            )
+        _write_direct_3d_summary(summary, summary_path)
+        return summary
+    finally:
+        if model_name:
+            try:
+                comsol_close_model(model_name, save=False)
+            except Exception:
+                pass
+        if client.is_running:
+            client.stop()
+        COMSOLClient.reset_instance()
+
+
 def _export_native_3d_stage_volume_plot(
     model_name: str,
     *,
@@ -14791,6 +15111,27 @@ def main() -> None:
         help="Roller id for --probe-contact-entity-transfer.",
     )
     parser.add_argument(
+        "--resume-actual-area-stage-from-mph",
+        default="",
+        help=(
+            "Load an existing solved nominal-pressure MPH, configure the diagnostic 0.101 N actual-area "
+            "BoundaryLoad checkpoint stage, solve it, and write a direct_3d_bearing_summary.json."
+        ),
+    )
+    parser.add_argument(
+        "--resume-actual-area-output-dir",
+        default=(
+            "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_"
+            "actual_area_resume_from_solved_nominal"
+        ),
+        help="Output directory for --resume-actual-area-stage-from-mph artifacts.",
+    )
+    parser.add_argument(
+        "--resume-actual-area-skip-saved-probes",
+        action="store_true",
+        help="Skip saved-MPH load/contact/reaction probes after a successful resume solve.",
+    )
+    parser.add_argument(
         "--probe-geometry-partition-api",
         action="store_true",
         help="Create a tiny COMSOL geometry and probe supported partition/imprint feature APIs.",
@@ -14994,6 +15335,25 @@ def main() -> None:
             "error": report.get("error"),
         }, ensure_ascii=False, indent=2, default=str))
         raise SystemExit(0 if report.get("success") else 1)
+
+    if args.resume_actual_area_stage_from_mph:
+        report = run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=args.resume_actual_area_stage_from_mph,
+            output_dir=args.resume_actual_area_output_dir,
+            cores=args.cores,
+            run_saved_probes=not bool(args.resume_actual_area_skip_saved_probes),
+        )
+        staged = report.get("staged_contact_solve") or {}
+        final_solve = staged.get("final_solve") or report.get("solve") or {}
+        print(json.dumps({
+            "success": report.get("success") or staged.get("success"),
+            "kind": "bearing_3d_actual_area_resume_from_solved_nominal",
+            "source_mph": args.resume_actual_area_stage_from_mph,
+            "summary_path": report.get("summary_path"),
+            "solve": final_solve,
+            "physical_contact_validation": report.get("physical_contact_validation"),
+        }, ensure_ascii=False, indent=2, default=str))
+        raise SystemExit(0 if final_solve.get("success") else 1)
 
     if args.probe_geometry_partition_api:
         report = probe_geometry_partition_api(

@@ -9,7 +9,10 @@
 ## Command
 
 ```bash
-.venv/bin/python /private/tmp/run_actual_area_resume_from_solved_nominal.py
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py \
+  --resume-actual-area-stage-from-mph runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph \
+  --resume-actual-area-output-dir runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal \
+  --cores 1
 ```
 
 Source solved MPH:
