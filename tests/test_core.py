@@ -5444,6 +5444,54 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert matrix["saved_reaction_probe_report_count"] == 2
         assert matrix["saved_reaction_probe_verified_count"] == 1
 
+    def test_stage_evidence_matrix_indexes_saved_boundary_load_probe_reports(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        root = tmp_path / "runtime_smoke"
+        probe_dir = root / "bearing_boundaryload_audit" / "load_probe_solved_mph"
+        probe_dir.mkdir(parents=True)
+        (probe_dir / "load_probe_summary.json").write_text(json.dumps({
+            "success": True,
+            "kind": "bearing_3d_saved_mph_boundary_load_probe",
+            "mph_path": str(root / "bearing_boundaryload_audit" / "result.mph"),
+            "selection_name": "sel_inner_bore_load_surface",
+            "pressure_expression": "inner_bore_load_pressure",
+            "area_m2": 2.0e-4,
+            "pressure_pa": -505.0,
+            "integrated_load_n": -0.101,
+            "boundary_load_context": {
+                "success": True,
+                "radial_load_value": "0.101[N]",
+                "applied_load_n": 0.101,
+            },
+            "load_balance": {
+                "success": True,
+                "integrated_load_n": -0.101,
+                "applied_load_n": 0.101,
+                "absolute_residual_n": 0.0,
+                "relative_residual_to_load": 0.0,
+                "integrated_to_load_ratio": 1.0,
+            },
+            "feature_audit": {
+                "success": True,
+                "properties": {"FperArea": {"success": True, "value": ["inner_bore_load_pressure", "0", "0"]}},
+            },
+        }), encoding="utf-8")
+
+        matrix = demo.build_stage_evidence_matrix(search_root=root)
+
+        assert matrix["saved_boundary_load_probe_report_count"] == 1
+        assert matrix["saved_boundary_load_probe_balanced_count"] == 1
+        report = matrix["saved_boundary_load_probe_reports"][0]
+        assert report["balanced"] is True
+        assert report["integrated_load_n"] == -0.101
+        assert report["load_balance"]["integrated_to_load_ratio"] == 1.0
+
+        rendered = demo._render_stage_evidence_matrix_markdown(matrix)
+        assert "Saved-MPH BoundaryLoad Probe Reports" in rendered
+        assert "inner_bore_load_pressure" in rendered
+        assert "0.101" in rendered
+
     def test_stage_evidence_matrix_flags_boundaryload_stress_plateau(self, tmp_path):
         from scripts import run_agent_3d_bearing_full_demo as demo
 

@@ -7515,6 +7515,7 @@ def build_stage_evidence_matrix(
     ]
     calibration = _build_preload_calibration_from_stage_rows(rows)
     saved_reaction_probe = _scan_saved_reaction_probe_reports(root)
+    saved_boundary_load_probe = _scan_saved_boundary_load_probe_reports(root)
     saved_contact_probe = _scan_saved_contact_probe_reports(root)
     boundaryload_distribution = _build_boundaryload_distribution_diagnostics(rows, search_root=root)
     return {
@@ -7528,6 +7529,8 @@ def build_stage_evidence_matrix(
         "reaction_verified_stage_count": len(reaction_verified_rows),
         "saved_reaction_probe_report_count": saved_reaction_probe["report_count"],
         "saved_reaction_probe_verified_count": saved_reaction_probe["verified_count"],
+        "saved_boundary_load_probe_report_count": saved_boundary_load_probe["report_count"],
+        "saved_boundary_load_probe_balanced_count": saved_boundary_load_probe["balanced_count"],
         "saved_contact_probe_report_count": saved_contact_probe["report_count"],
         "saved_contact_probe_source_destination_imbalance_count": saved_contact_probe["source_destination_imbalance_count"],
         "saved_contact_probe_source_unevaluable_destination_nonzero_count": saved_contact_probe[
@@ -7539,6 +7542,8 @@ def build_stage_evidence_matrix(
         "boundaryload_distribution_diagnostics": boundaryload_distribution,
         "saved_reaction_probe_reports": saved_reaction_probe["reports"],
         "saved_reaction_probe_errors": saved_reaction_probe["errors"],
+        "saved_boundary_load_probe_reports": saved_boundary_load_probe["reports"],
+        "saved_boundary_load_probe_errors": saved_boundary_load_probe["errors"],
         "saved_contact_probe_reports": saved_contact_probe["reports"],
         "saved_contact_probe_errors": saved_contact_probe["errors"],
         "production_ready_rows": production_ready_rows,
@@ -7620,6 +7625,41 @@ def _scan_saved_reaction_probe_reports(root: Path) -> dict[str, Any]:
     }
 
 
+def _scan_saved_boundary_load_probe_reports(root: Path) -> dict[str, Any]:
+    """Index no-solve saved-MPH BoundaryLoad input audit artifacts."""
+    reports: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for report_path in sorted(root.glob("**/load_probe_summary.json")):
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            errors.append({"path": str(report_path), "error": str(exc)})
+            continue
+        balance = report.get("load_balance") if isinstance(report.get("load_balance"), dict) else {}
+        reports.append({
+            "path": str(report_path),
+            "artifact_root": str(report_path.parent),
+            "mph_path": report.get("mph_path"),
+            "success": bool(report.get("success")),
+            "selection_name": report.get("selection_name"),
+            "pressure_expression": report.get("pressure_expression"),
+            "area_m2": report.get("area_m2"),
+            "integrated_load_n": report.get("integrated_load_n"),
+            "boundary_load_context": report.get("boundary_load_context"),
+            "load_balance": balance,
+            "balanced": bool(balance.get("success")),
+            "feature_audit": report.get("feature_audit"),
+            "error": report.get("error"),
+            "warning": report.get("warning"),
+        })
+    return {
+        "report_count": len(reports),
+        "balanced_count": sum(1 for report in reports if report.get("balanced") is True),
+        "reports": reports,
+        "errors": errors,
+    }
+
+
 def _infer_saved_reaction_boundary_load_context(report_path: Path) -> dict[str, Any]:
     """Find an adjacent direct-run summary and extract an unambiguous BoundaryLoad stage."""
     for ancestor in [report_path.parent, *report_path.parents]:
@@ -7688,6 +7728,44 @@ def _reaction_load_balance_gate(
         "absolute_residual_n": residual,
         "relative_residual_to_load": relative_residual,
         "reaction_to_load_ratio": abs(reaction_force_abs_n) / abs(applied_load_n),
+        "relative_tolerance": relative_tolerance,
+        "absolute_tolerance_n": absolute_tolerance_n,
+    }
+
+
+def _boundary_load_input_balance_gate(
+    *,
+    integrated_load_n: float | None,
+    applied_load_n: float | None,
+    relative_tolerance: float = 0.05,
+    absolute_tolerance_n: float = 1.0e-6,
+) -> dict[str, Any]:
+    """Check whether the integrated BoundaryLoad equals the traced stage load."""
+    if integrated_load_n is None:
+        return {
+            "success": False,
+            "reason": "missing_integrated_boundary_load",
+            "relative_tolerance": relative_tolerance,
+            "absolute_tolerance_n": absolute_tolerance_n,
+        }
+    if applied_load_n is None or abs(applied_load_n) <= 0.0:
+        return {
+            "success": False,
+            "reason": "missing_applied_boundary_load",
+            "integrated_load_n": integrated_load_n,
+            "applied_load_n": applied_load_n,
+            "relative_tolerance": relative_tolerance,
+            "absolute_tolerance_n": absolute_tolerance_n,
+        }
+    residual = abs(abs(integrated_load_n) - abs(applied_load_n))
+    relative_residual = residual / max(abs(applied_load_n), absolute_tolerance_n)
+    return {
+        "success": residual <= absolute_tolerance_n or relative_residual <= relative_tolerance,
+        "integrated_load_n": integrated_load_n,
+        "applied_load_n": applied_load_n,
+        "absolute_residual_n": residual,
+        "relative_residual_to_load": relative_residual,
+        "integrated_to_load_ratio": abs(integrated_load_n) / abs(applied_load_n),
         "relative_tolerance": relative_tolerance,
         "absolute_tolerance_n": absolute_tolerance_n,
     }
@@ -8769,6 +8847,8 @@ def write_stage_evidence_matrix_report(
         "reaction_verified_stage_count": matrix["reaction_verified_stage_count"],
         "saved_reaction_probe_report_count": matrix["saved_reaction_probe_report_count"],
         "saved_reaction_probe_verified_count": matrix["saved_reaction_probe_verified_count"],
+        "saved_boundary_load_probe_report_count": matrix["saved_boundary_load_probe_report_count"],
+        "saved_boundary_load_probe_balanced_count": matrix["saved_boundary_load_probe_balanced_count"],
         "saved_contact_probe_report_count": matrix["saved_contact_probe_report_count"],
         "saved_contact_probe_source_destination_imbalance_count": matrix["saved_contact_probe_source_destination_imbalance_count"],
         "saved_contact_probe_source_unevaluable_destination_nonzero_count": matrix[
@@ -8977,6 +9057,191 @@ def probe_saved_reaction_mph(
         if client.is_running:
             client.stop()
         COMSOLClient.reset_instance()
+
+
+def probe_saved_boundary_load_mph(
+    *,
+    mph_path: str | Path,
+    output_dir: str | Path,
+    selection_name: str = "sel_inner_bore_load_surface",
+    pressure_expression: str = "inner_bore_load_pressure",
+    cores: int = 1,
+) -> dict[str, Any]:
+    """Load a solved MPH and audit the actual integrated BoundaryLoad input."""
+    mph_file = Path(mph_path)
+    report_dir = Path(output_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    json_path = report_dir / "load_probe_summary.json"
+    markdown_path = report_dir / "load_probe_summary.md"
+
+    config = load_config()
+    client = COMSOLClient.get_instance()
+    model_name: str | None = None
+    result: dict[str, Any] = {
+        "success": False,
+        "kind": "bearing_3d_saved_mph_boundary_load_probe",
+        "mph_path": str(mph_file),
+        "selection_name": selection_name,
+        "pressure_expression": pressure_expression,
+        "output_dir": str(report_dir),
+        "json_path": str(json_path.resolve()),
+        "markdown_path": str(markdown_path.resolve()),
+        "policy": "load_solved_mph_and_probe_boundary_load_input_without_calling_solve",
+    }
+    try:
+        client.start(
+            cores=cores,
+            version=config.comsol.version,
+            executable_path=config.comsol.executable_path,
+        )
+        load = comsol_load_model(str(mph_file))
+        result["load"] = _compact_runtime_result(load)
+        if not load.get("success"):
+            result["error"] = load.get("error") or "Failed to load solved MPH for BoundaryLoad probe."
+            return _write_saved_boundary_load_probe_report(result, json_path=json_path, markdown_path=markdown_path)
+
+        model_name = str(load["model_name"])
+        result["model_name"] = model_name
+        result["model_summary"] = _compact_runtime_result(comsol_get_model_summary(model_name))
+        result["feature_audit"] = _audit_boundary_load_feature_via_java(
+            model_name,
+            feature_tag="load_inner_bore",
+        )
+        result["selection_entity_lookup"] = _get_selection_entities_via_java(
+            model_name,
+            selection_name=selection_name,
+        )
+        result["area_integral"] = _evaluate_surface_integral_expression_via_java(
+            model_name,
+            "1",
+            selection_name=selection_name,
+            tag="boundary_load_area_probe",
+        )
+        result["pressure_integral"] = _evaluate_surface_integral_expression_via_java(
+            model_name,
+            pressure_expression,
+            selection_name=selection_name,
+            tag="boundary_load_pressure_integral_probe",
+        )
+        result["pressure_value"] = _evaluate_global_expression_via_java(
+            model_name,
+            pressure_expression,
+            tag="boundary_load_pressure_value_probe",
+        )
+        result["area_m2"] = _runtime_numeric_max(result["area_integral"])
+        result["integrated_load_n"] = _runtime_numeric_max(result["pressure_integral"])
+        result["pressure_pa"] = _runtime_numeric_max(result["pressure_value"])
+        result["boundary_load_context"] = _infer_saved_reaction_boundary_load_context(json_path)
+        result["load_balance"] = _boundary_load_input_balance_gate(
+            integrated_load_n=result["integrated_load_n"],
+            applied_load_n=(result["boundary_load_context"] or {}).get("applied_load_n"),
+        )
+        result["success"] = bool(result["selection_entity_lookup"].get("success")) and result["integrated_load_n"] is not None
+        if not result["success"]:
+            result["error"] = (
+                result.get("pressure_integral", {}).get("error")
+                or result.get("selection_entity_lookup", {}).get("error")
+                or "BoundaryLoad probe did not produce an integrated load."
+            )
+        return _write_saved_boundary_load_probe_report(result, json_path=json_path, markdown_path=markdown_path)
+    finally:
+        if model_name:
+            result["close"] = _compact_runtime_result(comsol_close_model(model_name, save=False))
+        if client.is_running:
+            client.stop()
+        COMSOLClient.reset_instance()
+
+
+def _audit_boundary_load_feature_via_java(model_name: str, *, feature_tag: str) -> dict[str, Any]:
+    marker_start = "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_START"
+    marker_end = "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_END"
+    code = f"""
+import json
+
+def _stringify(value):
+    try:
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        try:
+            if str(value.getClass().getName()) == 'java.lang.String':
+                return str(value)
+        except Exception:
+            pass
+        if isinstance(value, (list, tuple)):
+            return [_stringify(item) for item in value]
+        if hasattr(value, 'tolist'):
+            return value.tolist()
+        try:
+            return [_stringify(item) for item in list(value)]
+        except Exception:
+            return str(value)
+    except Exception as error:
+        return '<stringify_error:' + str(error) + '>'
+
+def _safe(label, func):
+    try:
+        return {{'success': True, 'value': _stringify(func())}}
+    except Exception as error:
+        return {{'success': False, 'error': str(error)}}
+
+def _feature_get(feature, prop):
+    errors = []
+    for method in ['getStringArray', 'getString', 'getDoubleArray', 'getDouble', 'getIntArray', 'getInt', 'getBoolean']:
+        try:
+            return {{'success': True, 'method': method, 'value': _stringify(getattr(feature, method)(prop))}}
+        except Exception as error:
+            errors.append(method + ': ' + str(error))
+    return {{'success': False, 'error': ' | '.join(errors)}}
+
+for _name, _func in {{
+    '_stringify': _stringify,
+    '_safe': _safe,
+    '_feature_get': _feature_get,
+}}.items():
+    globals()[_name] = _func
+
+audit = {{'feature_tag': {feature_tag!r}}}
+try:
+    feature = model.component('comp1').physics('solid').feature({feature_tag!r})
+    audit['exists'] = True
+    audit['type'] = _safe('type', lambda feature=feature: feature.getType()).get('value')
+    audit['active'] = _safe('active', lambda feature=feature: feature.isActive()).get('value')
+    audit['selection_named'] = _safe('selection_named', lambda feature=feature: feature.selection().named())
+    audit['selection_entities'] = _safe('selection_entities', lambda feature=feature: list(feature.selection().entities()))
+    audit['properties'] = {{
+        prop: _feature_get(feature, prop)
+        for prop in ['FperArea', 'F', 'LoadType', 'BoundaryLoadType', 'Direction']
+    }}
+except Exception as error:
+    audit['exists'] = False
+    audit['error'] = str(error)
+output.write({marker_start!r} + '\\n')
+output.write(json.dumps(audit, ensure_ascii=False, default=str) + '\\n')
+output.write({marker_end!r} + '\\n')
+"""
+    runtime = comsol_execute_java(code, model_name=model_name)
+    text = runtime.get("stdout") or runtime.get("output") or ""
+    match = re.search(
+        re.escape(marker_start) + r"\s*(.*?)\s*" + re.escape(marker_end),
+        text,
+        flags=re.DOTALL,
+    )
+    compact = _compact_runtime_result(runtime)
+    if not match:
+        compact["success"] = False
+        compact["error"] = compact.get("error") or "BoundaryLoad feature audit markers were not found."
+        return compact
+    try:
+        audit = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        compact["success"] = False
+        compact["error"] = f"BoundaryLoad feature audit JSON parse failed: {exc}"
+        return compact
+    audit["success"] = bool(runtime.get("success")) and bool(audit.get("exists"))
+    audit["runtime"] = compact
+    return audit
 
 
 def probe_saved_contact_mph(
@@ -11344,6 +11609,70 @@ def _contact_source_destination_imbalance(source: Any, destination: Any) -> dict
     }
 
 
+def _write_saved_boundary_load_probe_report(
+    result: dict[str, Any],
+    *,
+    json_path: Path,
+    markdown_path: Path,
+) -> dict[str, Any]:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    result["json_path"] = str(json_path.resolve())
+    result["markdown_path"] = str(markdown_path.resolve())
+    json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    markdown_path.write_text(_render_saved_boundary_load_probe_markdown(result), encoding="utf-8")
+    return result
+
+
+def _render_saved_boundary_load_probe_markdown(result: dict[str, Any]) -> str:
+    lines = [
+        "# Bearing 3D Saved MPH BoundaryLoad Probe",
+        "",
+        f"- MPH: `{result.get('mph_path')}`",
+        f"- Success: `{result.get('success')}`",
+        f"- Selection: `{result.get('selection_name')}`",
+        f"- Pressure expression: `{result.get('pressure_expression')}`",
+        f"- Area (m^2): `{result.get('area_m2')}`",
+        f"- Integrated load (N): `{result.get('integrated_load_n')}`",
+        f"- Pressure (Pa): `{result.get('pressure_pa')}`",
+        f"- Load balanced: `{(result.get('load_balance') or {}).get('success')}`",
+        f"- Error: `{result.get('error')}`",
+        "",
+        "## Load Balance",
+        "",
+        "```json",
+        json.dumps({
+            "boundary_load_context": result.get("boundary_load_context"),
+            "load_balance": result.get("load_balance"),
+        }, ensure_ascii=False, indent=2, default=str),
+        "```",
+        "",
+        "## Feature Audit",
+        "",
+        "```json",
+        json.dumps(result.get("feature_audit") or {}, ensure_ascii=False, indent=2, default=str),
+        "```",
+        "",
+        "## Selection Entity Lookup",
+        "",
+        "```json",
+        json.dumps(result.get("selection_entity_lookup") or {}, ensure_ascii=False, indent=2, default=str),
+        "```",
+        "",
+        "## Area Integral",
+        "",
+        "```json",
+        json.dumps(result.get("area_integral") or {}, ensure_ascii=False, indent=2, default=str),
+        "```",
+        "",
+        "## Pressure Integral",
+        "",
+        "```json",
+        json.dumps(result.get("pressure_integral") or {}, ensure_ascii=False, indent=2, default=str),
+        "```",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _write_saved_contact_probe_report(
     result: dict[str, Any],
     *,
@@ -12897,6 +13226,8 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
         f"- Production-ready stages: `{matrix.get('production_ready_count')}`",
         f"- Saved-MPH reaction probe reports: `{matrix.get('saved_reaction_probe_report_count')}`",
         f"- Saved-MPH reaction probe verified reports: `{matrix.get('saved_reaction_probe_verified_count')}`",
+        f"- Saved-MPH BoundaryLoad probe reports: `{matrix.get('saved_boundary_load_probe_report_count')}`",
+        f"- Saved-MPH BoundaryLoad balanced reports: `{matrix.get('saved_boundary_load_probe_balanced_count')}`",
         f"- Saved-MPH contact probe reports: `{matrix.get('saved_contact_probe_report_count')}`",
         f"- Saved-MPH contact source/destination imbalance reports: `{matrix.get('saved_contact_probe_source_destination_imbalance_count')}`",
         f"- Saved-MPH contact source unevaluable / destination nonzero reports: `{matrix.get('saved_contact_probe_source_unevaluable_destination_nonzero_count')}`",
@@ -13027,6 +13358,30 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
                 unknown=diagnostic_counts.get("unknown_operator"),
                 zero=diagnostic_counts.get("zero_result"),
                 selection_error=diagnostic_counts.get("selection_error"),
+                mph=report.get("mph_path"),
+            )
+        )
+    saved_load_reports = matrix.get("saved_boundary_load_probe_reports") or []
+    lines.extend([
+        "",
+        "## Saved-MPH BoundaryLoad Probe Reports",
+        "",
+        "| Report | Balanced | Applied load (N) | Integrated load (N) | Ratio | Area (m^2) | Pressure (Pa) | Pressure expression | Selection | MPH |",
+        "|---|---:|---:|---:|---:|---:|---:|---|---|---|",
+    ])
+    for report in saved_load_reports:
+        balance = report.get("load_balance") or {}
+        lines.append(
+            "| `{report_path}` | {balanced} | {applied} | {integrated} | {ratio} | {area} | {pressure} | `{pressure_expression}` | `{selection}` | `{mph}` |".format(
+                report_path=report.get("path"),
+                balanced=_md_bool(report.get("balanced")),
+                applied=balance.get("applied_load_n"),
+                integrated=balance.get("integrated_load_n") or report.get("integrated_load_n"),
+                ratio=balance.get("integrated_to_load_ratio"),
+                area=report.get("area_m2"),
+                pressure=report.get("pressure_pa"),
+                pressure_expression=report.get("pressure_expression"),
+                selection=report.get("selection_name"),
                 mph=report.get("mph_path"),
             )
         )
@@ -14060,6 +14415,26 @@ def main() -> None:
         help="Output directory for --probe-reaction-mph reports. Defaults to <mph parent>/reaction_probe.",
     )
     parser.add_argument(
+        "--probe-load-mph",
+        default="",
+        help="Load an existing solved MPH and write a BoundaryLoad input audit report without re-solving.",
+    )
+    parser.add_argument(
+        "--load-probe-selection",
+        default="sel_inner_bore_load_surface",
+        help="Named selection used by --probe-load-mph for BoundaryLoad area/pressure integration.",
+    )
+    parser.add_argument(
+        "--load-probe-pressure-expression",
+        default="inner_bore_load_pressure",
+        help="Pressure expression integrated by --probe-load-mph.",
+    )
+    parser.add_argument(
+        "--load-probe-output-dir",
+        default="",
+        help="Output directory for --probe-load-mph reports. Defaults to <mph parent>/load_probe.",
+    )
+    parser.add_argument(
         "--probe-contact-mph",
         default="",
         help="Load an existing solved MPH and write a contact-surface candidate probe report without re-solving.",
@@ -14227,6 +14602,34 @@ def main() -> None:
             "error": report.get("error"),
         }, ensure_ascii=False, indent=2, default=str))
         raise SystemExit(0 if report.get("reaction_equivalent", {}).get("success") else 1)
+
+    if args.probe_load_mph:
+        mph_path = Path(args.probe_load_mph)
+        output_dir = (
+            Path(args.load_probe_output_dir)
+            if args.load_probe_output_dir
+            else mph_path.parent.parent / "load_probe"
+        )
+        report = probe_saved_boundary_load_mph(
+            mph_path=mph_path,
+            output_dir=output_dir,
+            selection_name=args.load_probe_selection,
+            pressure_expression=args.load_probe_pressure_expression,
+            cores=args.cores,
+        )
+        print(json.dumps({
+            "success": report.get("success"),
+            "kind": report.get("kind"),
+            "mph_path": report.get("mph_path"),
+            "json_path": report.get("json_path"),
+            "markdown_path": report.get("markdown_path"),
+            "area_m2": report.get("area_m2"),
+            "integrated_load_n": report.get("integrated_load_n"),
+            "pressure_pa": report.get("pressure_pa"),
+            "load_balance": report.get("load_balance"),
+            "error": report.get("error"),
+        }, ensure_ascii=False, indent=2, default=str))
+        raise SystemExit(0 if report.get("success") else 1)
 
     if args.probe_contact_mph:
         mph_path = Path(args.probe_contact_mph)

@@ -104,6 +104,19 @@ Saved-MPH source-entity transfer probe:
   --cores 1
 ```
 
+Saved-MPH BoundaryLoad input probe:
+
+```bash
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py \
+  --probe-load-mph \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph \
+  --load-probe-selection sel_inner_bore_load_surface \
+  --load-probe-pressure-expression inner_bore_load_pressure \
+  --load-probe-output-dir \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph \
+  --cores 1
+```
+
 Saved-MPH reaction probe:
 
 ```bash
@@ -162,6 +175,18 @@ Active roller maximum von Mises probes:
 | `roller_1` | `1.2605952849e9[Pa]` |
 | `roller_2` | `4.0263507088e5[Pa]` |
 | `roller_12` | `4.5410257891e5[Pa]` |
+
+### Saved-MPH BoundaryLoad input probe
+
+| Quantity | Result |
+|---|---:|
+| Selection | `sel_inner_bore_load_surface` |
+| Pressure expression | `inner_bore_load_pressure` |
+| Loaded boundary area | `4.8631787892e-3[m^2]` |
+| Integrated load | `2.1499970651e-3[N]` |
+| Applied BoundaryLoad | `0.101[N]` |
+| Load ratio | `0.0212871` |
+| Load balance gate | **FAIL** |
 
 The generated stress PNG is retained as evidence, but the requested stage
 image was not accepted as bearing stress evidence because the physical
@@ -284,6 +309,10 @@ though the COMSOL solve, contact probe, and PNG generation succeeded.
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/source_entity_transfer_probe_solved_mph/contact_probe_summary.json`
 - Source-entity transfer probe Markdown:
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/source_entity_transfer_probe_solved_mph/contact_probe_summary.md`
+- BoundaryLoad input probe JSON:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph/load_probe_summary.json`
+- BoundaryLoad input probe Markdown:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph/load_probe_summary.md`
 - Reaction probe JSON:
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json`
 - Reaction probe Markdown:
@@ -303,7 +332,7 @@ though the COMSOL solve, contact probe, and PNG generation succeeded.
 |---|---|
 | Code mode and single-variable geometry change | **PASS** |
 | COMSOL solve | **PASS** |
-| BoundaryLoad traceability | **PASS** |
+| BoundaryLoad traceability | **FAIL** |
 | Contact probe execution | **PASS** |
 | Nonzero roller/raceway transfer signal | **PASS, diagnostic only** |
 | Complete pair-specific `Tn/gap/pn` closure | **FAIL** |
