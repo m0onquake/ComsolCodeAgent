@@ -3761,6 +3761,56 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert len(setup_codes) == 1
 
         setup_codes.clear()
+        actual_area_singlepoint = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_actual_area_singlepoint",
+            stage_plot_dir=tmp_path / "single_solve_0p101_actual_area_singlepoint_stage_plots",
+        )
+        assert actual_area_singlepoint["success"] is True
+        assert (
+            actual_area_singlepoint["contact_stage_mode"]
+            == "load_side_group_boundary_load_single_solve_0p101_actual_area_singlepoint"
+        )
+        assert len(actual_area_singlepoint["stages"]) == 1
+        stage = actual_area_singlepoint["stages"][0]
+        assert stage["name"] == "single_solve_3_roller_boundary_load_0p101n_actual_area_singlepoint"
+        assert stage["active_rollers"] == [12, 1, 2]
+        assert stage["radial_load_value"] == "0.101[N]"
+        assert stage["preload_steps"] == "0.101"
+        assert stage["use_parametric_sweep"] is False
+        assert stage["reuse_existing_solver"] is False
+        assert stage["contact_penalty"] == "5e-5*E_steel"
+        assert stage["contact_relaxation"] == "0.12"
+        assert stage["contact_tolerance"] == "3[um]"
+        assert stage["inner_bore_load_active"] is True
+        assert stage["inner_body_load_active"] is False
+        assert stage["displacement_preload_active"] is False
+        assert stage["active_roller_stabilization_active"] is True
+        assert stage["active_roller_stabilization_mode"] == "spring"
+        assert stage["active_roller_stabilization_k"] == "1e10[N/m^3]"
+        assert stage["weak_roller_foundation_active"] is True
+        assert stage["weak_roller_foundation_k"] == "1e8[N/m^3]"
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert stage["contact_pair_endpoint_overrides"] == {}
+        assert stage["contact_patch_box_overrides"] == {}
+        assert stage["raceway_partition_patch_overrides"] == {}
+        assert stage["inner_bore_load_pressure_expression"] == "radial_load/(4.863178789249815e-3[m^2])"
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "single_solve_0p101_actual_area_pressure_singlepoint_no_radial_load_parametric_sweep"
+        )
+        assert "actual_area_pressure_diagnostic" in stage["load_application_fidelity"]
+        assert "not_design_gate" in stage["load_application_fidelity"]
+        assert "model.param().set('radial_load', '0.101[N]')" in setup_codes[0]
+        assert (
+            "model.param().set('inner_bore_load_pressure', "
+            "'radial_load/(4.863178789249815e-3[m^2])')"
+        ) in setup_codes[0]
+        assert "('useparam', 'off')" in setup_codes[0]
+        assert "('plistarr', ['0.101'])" in setup_codes[0]
+        assert len(setup_codes) == 1
+
+        setup_codes.clear()
         actual_area_fine_bootstrap = demo._run_3d_staged_contact_solve(
             "staged_model",
             contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_actual_area_fine_bootstrap",
