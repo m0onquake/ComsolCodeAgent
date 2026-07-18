@@ -3906,6 +3906,50 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert len(setup_codes) == 1
 
         setup_codes.clear()
+        actual_area_after_bootstrap = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_actual_area_after_nominal_bootstrap",
+            stage_plot_dir=tmp_path / "single_solve_0p101_actual_area_after_bootstrap_stage_plots",
+        )
+        assert actual_area_after_bootstrap["success"] is True
+        assert (
+            actual_area_after_bootstrap["contact_stage_mode"]
+            == "load_side_group_boundary_load_single_solve_0p101_actual_area_after_nominal_bootstrap"
+        )
+        assert len(actual_area_after_bootstrap["stages"]) == 2
+        bootstrap_stage, actual_area_stage = actual_area_after_bootstrap["stages"]
+        assert bootstrap_stage["name"] == "single_solve_3_roller_boundary_load_0p101n_parametric"
+        assert bootstrap_stage["inner_bore_load_pressure_expression"] == "inner_bore_load_pressure"
+        assert actual_area_stage["name"] == (
+            "single_solve_3_roller_boundary_load_0p101n_actual_area_after_nominal_bootstrap"
+        )
+        assert actual_area_stage["active_rollers"] == [12, 1, 2]
+        assert actual_area_stage["radial_load_value"] == "0.101[N]"
+        assert actual_area_stage["preload_steps"] == "0.101"
+        assert actual_area_stage["use_parametric_sweep"] is False
+        assert actual_area_stage["inner_bore_load_pressure_expression"] == (
+            "radial_load/(4.863178789249815e-3[m^2])"
+        )
+        assert actual_area_stage["contact_penalty"] == "5e-5*E_steel"
+        assert actual_area_stage["contact_relaxation"] == "0.12"
+        assert actual_area_stage["contact_tolerance"] == "3[um]"
+        assert actual_area_stage["active_roller_stabilization_active"] is True
+        assert actual_area_stage["active_roller_stabilization_mode"] == "spring"
+        assert actual_area_stage["weak_inner_guidance_active"] is True
+        assert actual_area_stage["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert actual_area_stage["solver_formulation_diagnostic_role"] == (
+            "actual_area_pressure_after_nominal_pressure_bootstrap_only"
+        )
+        assert "actual_area_pressure_after_nominal_bootstrap" in actual_area_stage["load_application_fidelity"]
+        assert "model.param().set('radial_load', '0.101[N]')" in setup_codes[1]
+        assert (
+            "model.param().set('inner_bore_load_pressure', "
+            "'radial_load/(4.863178789249815e-3[m^2])')"
+        ) in setup_codes[1]
+        assert "('useparam', 'off')" in setup_codes[1]
+        assert len(setup_codes) == 2
+
+        setup_codes.clear()
         pair_swap = demo._run_3d_staged_contact_solve(
             "staged_model",
             contact_stage_mode="load_side_group_boundary_load_single_solve_0p101_roller1_pair_swap",

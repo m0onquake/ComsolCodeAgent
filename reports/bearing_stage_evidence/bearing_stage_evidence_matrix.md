@@ -1,14 +1,14 @@
 # Bearing 3D Stage Evidence Matrix
 
 - Search root: `runtime_smoke`
-- Summaries scanned: `155`
-- Stage rows: `307`
+- Summaries scanned: `156`
+- Stage rows: `309`
 - Converged native stages: `206`
 - Reaction-verified stages: `0`
 - Production-ready stages: `0`
 - Saved-MPH reaction probe reports: `6`
 - Saved-MPH reaction probe verified reports: `0`
-- Saved-MPH BoundaryLoad probe reports: `7`
+- Saved-MPH BoundaryLoad probe reports: `8`
 - Saved-MPH BoundaryLoad balanced reports: `0`
 - Saved-MPH contact probe reports: `60`
 - Saved-MPH contact source/destination imbalance reports: `19`
@@ -162,6 +162,8 @@
 | single_solve_3_roller_boundary_load_0p101n_roller1_outer_entity_override | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1285361647.0195835 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_entity_override_source_closure3um/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1260598628.8747087 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_equal_height_source_closure3um/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_parametric | yes | yes | no | yes | yes | no | 3 | 3/3 | 1.0 |  | 1260595284.8760736 | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json` |
+| single_solve_3_roller_boundary_load_0p101n_parametric | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/direct_3d_bearing_summary.json` |
+| single_solve_3_roller_boundary_load_0p101n_actual_area_after_nominal_bootstrap | no | no | no | no | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_fine_bootstrap | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | no | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/direct_3d_bearing_summary.json` |
 | single_solve_3_roller_boundary_load_0p101n_actual_area_load | no | no | no | yes | yes | no | 3 | 0/0 | 0.0 |  | None | no | yes | yes | no | no | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/direct_3d_bearing_summary.json` |
@@ -529,11 +531,11 @@
 
 ## BoundaryLoad Distribution Diagnostics
 
-- BoundaryLoad rows: `124`
+- BoundaryLoad rows: `126`
 - Zero-carry active-roller rows: `15`
-- Missing-probe BoundaryLoad rows: `102`
+- Missing-probe BoundaryLoad rows: `104`
 - Stress-plateau BoundaryLoad rows: `0`
-- Stage MPH diagnostic reports: `110`
+- Stage MPH diagnostic reports: `112`
 - Zero-carry rollers: `{"roller_1": 15}`
 
 Recommended next diagnostics:
@@ -573,6 +575,7 @@ Recommended next diagnostics:
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph/load_probe_summary.json` | no | 0.101 | 0.0021499970651354676 | 0.02128709965480661 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_20260719/load_probe_summary.json` | no | 0.101 | 0.0021499970651354676 | 0.02128709965480661 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_globals_20260719/load_probe_summary.json` | no | 0.101 | 0.2171497035786822 | 2.149997065135467 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph` |
+| `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/load_probe_configured_mph/load_probe_summary.json` | no | None | None | None | None | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/stage_models/single_solve_3_roller_boundary_load_0p101n_parametric_configured.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/load_probe_failed_mph/load_probe_summary.json` | no | 0.101 | 1.0000000000000014e-05 | 9.900990099009915e-05 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/failed_3d_contact_model.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/load_probe_configured_mph/load_probe_summary.json` | no | None | None | None | None | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap_configured.mph` |
 | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/load_probe_failed_mph/load_probe_summary.json` | no | 0.101 | 0.0010000000000000057 | 0.009900990099009957 | 0.004863178789249815 | None | `inner_bore_load_pressure` | `sel_inner_bore_load_surface` | `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/failed_3d_contact_model.mph` |
