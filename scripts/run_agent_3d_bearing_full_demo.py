@@ -6367,6 +6367,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
     cores: int = 1,
     run_saved_probes: bool = True,
     rebuild_solver_sequence: bool = False,
+    load_ramp_steps: str | None = None,
 ) -> dict[str, Any]:
     """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
     mph_file = Path(source_mph)
@@ -6397,6 +6398,21 @@ def run_actual_area_resume_from_solved_nominal_mph(
         resume_policy = "load_solved_nominal_mph_then_rebuild_solver_sequence_and_configure_actual_area_pressure_checkpoint"
         run_id = "actual_area_resume_from_solved_nominal_fresh_solver"
         model_label = "bearing3d_load_side_boundaryload_0p101_actual_area_resume_fresh_solver"
+    if load_ramp_steps:
+        stage["name"] = f"{stage['name']}_load_ramp"
+        stage["contact_scope"] = f"{stage['contact_scope']}_load_ramp"
+        stage["preload_steps"] = load_ramp_steps
+        stage["use_parametric_sweep"] = True
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_from_solved_nominal_controlled_load_ramp_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_load_ramp_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_load_ramp"
+        resume_policy = f"{resume_policy}_with_controlled_actual_area_load_ramp"
+        run_id = f"{run_id}_load_ramp"
+        model_label = f"{model_label}_load_ramp"
     summary: dict[str, Any] = {
         "summary_path": str(summary_path),
         "template_run": {
@@ -15393,6 +15409,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resume-actual-area-load-ramp",
+        default="",
+        help=(
+            "Use a controlled radial_load parametric ramp for the resumed actual-area pressure stage, "
+            "for example '0.001 0.005 0.01 0.02 0.05 0.08 0.1 0.1005 0.101'. Diagnostic only."
+        ),
+    )
+    parser.add_argument(
         "--probe-geometry-partition-api",
         action="store_true",
         help="Create a tiny COMSOL geometry and probe supported partition/imprint feature APIs.",
@@ -15604,6 +15628,7 @@ def main() -> None:
             cores=args.cores,
             run_saved_probes=not bool(args.resume_actual_area_skip_saved_probes),
             rebuild_solver_sequence=bool(args.resume_actual_area_rebuild_solver),
+            load_ramp_steps=(args.resume_actual_area_load_ramp.strip() or None),
         )
         staged = report.get("staged_contact_solve") or {}
         final_solve = staged.get("final_solve") or report.get("solve") or {}
