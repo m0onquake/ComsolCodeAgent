@@ -116,6 +116,18 @@ Saved-MPH reaction probe:
   --cores 1
 ```
 
+Saved-MPH support reaction probe:
+
+```bash
+.venv/bin/python scripts/run_agent_3d_bearing_full_demo.py \
+  --probe-reaction-mph \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph \
+  --reaction-probe-selection sel_outer_support_surface \
+  --reaction-probe-output-dir \
+  runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/support_reaction_probe_solved_mph \
+  --cores 1
+```
+
 Evidence matrix refresh:
 
 ```bash
@@ -215,6 +227,18 @@ reaction gate separates `reaction_candidate_nonzero` from
 | Reaction verified | `false` |
 | Balance gate | **FAIL** |
 
+The same saved MPH was also probed on `sel_outer_support_surface`. That support
+surface returned a nonzero candidate, but it also fails the traced
+`0.101[N]` load-balance gate:
+
+| Quantity | Result |
+|---|---:|
+| Support reaction candidate | `294.6119539[N]` |
+| Support reaction/load ratio | `2916.9500` |
+| Support relative residual to applied load | `2915.9500` |
+| Support reaction verified | `false` |
+| Support balance gate | **FAIL** |
+
 The nonzero reaction candidate is
 `solid.sx*nx+solid.sxy*ny+solid.sxz*nz` evaluated by the saved-MPH
 `java_intsurface` method. It is evidence that a nonzero surface traction
@@ -264,6 +288,10 @@ though the COMSOL solve, contact probe, and PNG generation succeeded.
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.json`
 - Reaction probe Markdown:
   `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/reaction_probe_solved_mph/reaction_probe_summary.md`
+- Support reaction probe JSON:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/support_reaction_probe_solved_mph/reaction_probe_summary.json`
+- Support reaction probe Markdown:
+  `runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/support_reaction_probe_solved_mph/reaction_probe_summary.md`
 - Evidence matrix JSON:
   `reports/bearing_stage_evidence/bearing_stage_evidence_matrix.json`
 - Evidence matrix Markdown:

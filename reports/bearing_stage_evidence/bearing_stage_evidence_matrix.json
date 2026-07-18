@@ -7,7 +7,7 @@
   "production_ready_count": 0,
   "converged_native_stage_count": 206,
   "reaction_verified_stage_count": 0,
-  "saved_reaction_probe_report_count": 2,
+  "saved_reaction_probe_report_count": 3,
   "saved_reaction_probe_verified_count": 0,
   "saved_contact_probe_report_count": 53,
   "saved_contact_probe_source_destination_imbalance_count": 19,
@@ -50137,6 +50137,109 @@
         "unknown_variable_count": 0,
         "zero_result_count": 6,
         "nonzero_success_count": 3,
+        "first_failures": [
+          {
+            "expression": "intop_displacement_reaction_probe(solid.RFx)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: intop_displacement_reaction_probe\n\t- 特征: 计算 1\n"
+          },
+          {
+            "expression": "intop_displacement_reaction_probe(solid.RFy)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: intop_displacement_reaction_probe\n\t- 特征: 计算 2\n"
+          },
+          {
+            "expression": "intop_displacement_reaction_probe(solid.RFz)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: intop_displacement_reaction_probe\n\t- 特征: 计算 3\n"
+          },
+          {
+            "expression": "comp1.intop_displacement_reaction_probe(solid.RFx)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: comp1.intop_displacement_reaction_probe\n\t- 特征: 计算 4\n"
+          },
+          {
+            "expression": "comp1.intop_displacement_reaction_probe(solid.RFy)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: comp1.intop_displacement_reaction_probe\n\t- 特征: 计算 5\n"
+          },
+          {
+            "expression": "comp1.intop_displacement_reaction_probe(solid.RFz)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: comp1.intop_displacement_reaction_probe\n\t- 特征: 计算 6\n"
+          },
+          {
+            "expression": "intop_displacement_reaction_probe(comp1.solid.RFx)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: intop_displacement_reaction_probe\n\t- 特征: 计算 7\n"
+          },
+          {
+            "expression": "intop_displacement_reaction_probe(comp1.solid.RFy)",
+            "method": "operator_expression",
+            "diagnostic_class": "unknown_operator",
+            "error": "Evaluation failed: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown function or operator\nMessages:\n\t未知函数或算子。\n\t- 名称: intop_displacement_reaction_probe\n\t- 特征: 计算 8\n"
+          }
+        ]
+      },
+      "error": null,
+      "warning": null
+    },
+    {
+      "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/support_reaction_probe_solved_mph/reaction_probe_summary.json",
+      "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/support_reaction_probe_solved_mph",
+      "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "success": true,
+      "reaction_candidate_nonzero": true,
+      "reaction_verified": false,
+      "boundary_load_context": {
+        "success": true,
+        "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
+        "stage": "single_solve_3_roller_boundary_load_0p101n_parametric",
+        "radial_load_value": "0.101[N]",
+        "applied_load_n": 0.101,
+        "reason": null
+      },
+      "reaction_load_balance": {
+        "success": false,
+        "reaction_force_abs_n": 294.6119538579628,
+        "applied_load_n": 0.101,
+        "absolute_residual_n": 294.5109538579628,
+        "relative_residual_to_load": 2915.9500381976513,
+        "reaction_to_load_ratio": 2916.9500381976513,
+        "relative_tolerance": 0.05,
+        "absolute_tolerance_n": 1e-06
+      },
+      "selection_name": "sel_outer_support_surface",
+      "candidate_count": 40,
+      "evaluated_candidate_success_count": 9,
+      "successful_candidate_count": 9,
+      "best_expression": "solid.sx*nx+solid.sxy*ny+solid.sxz*nz",
+      "best_method": "java_intsurface",
+      "best_reaction_force_abs_n": 294.6119538579628,
+      "setup_success": true,
+      "operator_exists": true,
+      "selection_bound": true,
+      "candidate_audit": {
+        "method_counts": {
+          "operator_expression": 23,
+          "java_intsurface": 17
+        },
+        "diagnostic_class_counts": {
+          "unknown_operator": 23,
+          "nonzero_success": 9,
+          "selection_error": 8
+        },
+        "unknown_operator_count": 23,
+        "unknown_variable_count": 0,
+        "zero_result_count": 0,
+        "nonzero_success_count": 9,
         "first_failures": [
           {
             "expression": "intop_displacement_reaction_probe(solid.RFx)",
