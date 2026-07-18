@@ -51309,11 +51309,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "mph_solution_context": {
+        "kind": "solved_result_package",
+        "load_balance_evidence_allowed": true,
+        "reason": "result_package_mph_is_intended_as_solved_mph_evidence"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 0.0021499970651354676,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
@@ -51408,11 +51414,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_20260719/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_20260719",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "mph_solution_context": {
+        "kind": "solved_result_package",
+        "load_balance_evidence_allowed": true,
+        "reason": "result_package_mph_is_intended_as_solved_mph_evidence"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 0.0021499970651354676,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
@@ -51507,11 +51519,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_globals_20260719/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_globals_20260719",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "mph_solution_context": {
+        "kind": "solved_result_package",
+        "load_balance_evidence_allowed": true,
+        "reason": "result_package_mph_is_intended_as_solved_mph_evidence"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 0.2171497035786822,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
@@ -51606,11 +51624,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/load_probe_configured_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/load_probe_configured_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_after_nominal_bootstrap/stage_models/single_solve_3_roller_boundary_load_0p101n_parametric_configured.mph",
+      "mph_solution_context": {
+        "kind": "configured_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance"
+      },
       "success": false,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": null,
       "integrated_load_n": null,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": false,
         "reason": "no_adjacent_direct_3d_bearing_summary"
@@ -51697,11 +51721,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/load_probe_failed_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/load_probe_failed_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/failed_3d_contact_model.mph",
+      "mph_solution_context": {
+        "kind": "failed_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "failed_mph_checkpoint_is_not_a_converged_solved_result"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 1.0000000000000014e-05,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fine_bootstrap/direct_3d_bearing_summary.json",
@@ -51796,11 +51826,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/load_probe_configured_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/load_probe_configured_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_fixed_active_bootstrap_configured.mph",
+      "mph_solution_context": {
+        "kind": "configured_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance"
+      },
       "success": false,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": null,
       "integrated_load_n": null,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_fixed_active_bootstrap/direct_3d_bearing_summary.json",
@@ -51891,11 +51927,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/load_probe_failed_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/load_probe_failed_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/failed_3d_contact_model.mph",
+      "mph_solution_context": {
+        "kind": "failed_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "failed_mph_checkpoint_is_not_a_converged_solved_result"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 0.0010000000000000057,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_load/direct_3d_bearing_summary.json",
@@ -51990,23 +52032,66 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/load_probe_configured_mph/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/load_probe_configured_mph",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal_configured.mph",
+      "mph_solution_context": {
+        "kind": "configured_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance"
+      },
       "success": true,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": 0.004863178789249815,
       "integrated_load_n": 0.2171497035786822,
+      "configured_parameter_load_estimate": {
+        "success": true,
+        "role": "configured_parameter_expression_estimate_not_solution_field",
+        "pressure_expression": "inner_bore_load_pressure",
+        "pressure_parameter_name": "inner_bore_load_pressure",
+        "pressure_parameter_expression": "radial_load/(4.863178789249815e-3[m^2])",
+        "selection_area_m2": 0.004863178789249815,
+        "applied_load_n": 0.101,
+        "resolved_expression": "radial_load/(4.863178789249815e-3[m^2])",
+        "denominator_area_m2": 0.004863178789249815,
+        "configured_pressure_pa": 20.76830903755033,
+        "configured_integrated_load_n": 0.101,
+        "configured_load_balance": {
+          "success": true,
+          "integrated_load_n": 0.101,
+          "applied_load_n": 0.101,
+          "absolute_residual_n": 0.0,
+          "relative_residual_to_load": 0.0,
+          "integrated_to_load_ratio": 1.0,
+          "relative_tolerance": 0.05,
+          "absolute_tolerance_n": 1e-06
+        },
+        "selection_area_to_denominator_ratio": 1.0
+      },
       "boundary_load_context": {
-        "success": false,
+        "success": true,
         "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_resume_from_solved_nominal/direct_3d_bearing_summary.json",
-        "reason": "ambiguous_boundaryload_stage_count:0"
+        "stage": "single_solve_3_roller_boundary_load_0p101n_actual_area_resume_from_solved_nominal",
+        "radial_load_value": "0.101[N]",
+        "applied_load_n": 0.101,
+        "reason": null
       },
       "load_balance": {
         "success": false,
-        "reason": "missing_applied_boundary_load",
-        "integrated_load_n": 0.2171497035786822,
-        "applied_load_n": null,
-        "relative_tolerance": 0.05,
-        "absolute_tolerance_n": 1e-06
+        "reason": "mph_context_not_valid_for_solved_load_balance",
+        "mph_solution_context": {
+          "kind": "configured_checkpoint",
+          "load_balance_evidence_allowed": false,
+          "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance"
+        },
+        "solution_evaluation_load_balance": {
+          "success": false,
+          "integrated_load_n": 0.2171497035786822,
+          "applied_load_n": 0.101,
+          "absolute_residual_n": 0.1161497035786822,
+          "relative_residual_to_load": 1.1499970651354674,
+          "integrated_to_load_ratio": 2.149997065135467,
+          "relative_tolerance": 0.05,
+          "absolute_tolerance_n": 1e-06
+        }
       },
       "balanced": false,
       "feature_audit": {
@@ -52084,11 +52169,17 @@
       "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/load_probe/load_probe_summary.json",
       "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/load_probe",
       "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um_actual_area_singlepoint/stage_models/single_solve_3_roller_boundary_load_0p101n_actual_area_singlepoint_configured.mph",
+      "mph_solution_context": {
+        "kind": "configured_checkpoint",
+        "load_balance_evidence_allowed": false,
+        "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance"
+      },
       "success": false,
       "selection_name": "sel_inner_bore_load_surface",
       "pressure_expression": "inner_bore_load_pressure",
       "area_m2": null,
       "integrated_load_n": null,
+      "configured_parameter_load_estimate": null,
       "boundary_load_context": {
         "success": false,
         "reason": "no_adjacent_direct_3d_bearing_summary"

@@ -5686,7 +5686,7 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         (probe_dir / "load_probe_summary.json").write_text(json.dumps({
             "success": True,
             "kind": "bearing_3d_saved_mph_boundary_load_probe",
-            "mph_path": str(root / "bearing_boundaryload_audit" / "result.mph"),
+            "mph_path": str(root / "bearing_boundaryload_audit" / "result_packages" / "result.mph"),
             "selection_name": "sel_inner_bore_load_surface",
             "pressure_expression": "inner_bore_load_pressure",
             "area_m2": 2.0e-4,
@@ -5724,6 +5724,60 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "Saved-MPH BoundaryLoad Probe Reports" in rendered
         assert "inner_bore_load_pressure" in rendered
         assert "0.101" in rendered
+
+    def test_stage_evidence_matrix_does_not_balance_configured_boundaryload_probe(self, tmp_path):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        root = tmp_path / "runtime_smoke"
+        probe_dir = root / "bearing_boundaryload_configured" / "load_probe_configured_mph"
+        probe_dir.mkdir(parents=True)
+        (probe_dir / "load_probe_summary.json").write_text(json.dumps({
+            "success": True,
+            "kind": "bearing_3d_saved_mph_boundary_load_probe",
+            "mph_path": str(
+                root
+                / "bearing_boundaryload_configured"
+                / "stage_models"
+                / "single_solve_3_roller_boundary_load_0p101n_actual_area_configured.mph"
+            ),
+            "selection_name": "sel_inner_bore_load_surface",
+            "pressure_expression": "inner_bore_load_pressure",
+            "area_m2": 4.863178789249815e-3,
+            "integrated_load_n": 0.101,
+            "load_balance": {
+                "success": True,
+                "integrated_load_n": 0.101,
+                "applied_load_n": 0.101,
+                "integrated_to_load_ratio": 1.0,
+            },
+        }), encoding="utf-8")
+
+        matrix = demo.build_stage_evidence_matrix(search_root=root)
+
+        assert matrix["saved_boundary_load_probe_report_count"] == 1
+        assert matrix["saved_boundary_load_probe_balanced_count"] == 0
+        report = matrix["saved_boundary_load_probe_reports"][0]
+        assert report["balanced"] is False
+        assert report["mph_solution_context"]["kind"] == "configured_checkpoint"
+
+    def test_configured_boundaryload_actual_area_estimate_balances_static_input(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        estimate = demo._configured_boundary_load_estimate(
+            pressure_expression="inner_bore_load_pressure",
+            pressure_parameter={
+                "success": True,
+                "value": "radial_load/(4.863178789249815e-3[m^2])",
+            },
+            area_m2=4.863178789249815e-3,
+            applied_load_n=0.101,
+        )
+
+        assert estimate["success"] is True
+        assert estimate["role"] == "configured_parameter_expression_estimate_not_solution_field"
+        assert estimate["configured_pressure_pa"] == pytest.approx(20.76830903755033)
+        assert estimate["configured_integrated_load_n"] == pytest.approx(0.101)
+        assert estimate["configured_load_balance"]["success"] is True
 
     def test_boundary_load_probe_uses_last_saved_mph_parametric_value(self):
         from scripts import run_agent_3d_bearing_full_demo as demo

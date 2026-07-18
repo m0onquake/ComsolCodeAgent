@@ -79,12 +79,16 @@ Command:
 ```
 
 - Probe success: true for expression integration
+- MPH solution context: `configured_checkpoint`
 - Area: `0.004863178789249815 m^2`
+- Configured parameter expression: `inner_bore_load_pressure = radial_load/(4.863178789249815e-3[m^2])`
+- Static configured estimate: `20.76830903755033 Pa * 0.004863178789249815 m^2 = 0.101 N`
 - Pressure evaluated by solved-solution context: `44.65180347855952 Pa`
 - Integrated load evaluated by solved-solution context: `0.2171497035786822 N`
-- Load balance: fail, `missing_applied_boundary_load`
+- Solution-evaluation load balance: fail, ratio `2.149997065135467`
+- Public load-balance evidence gate: fail, `mph_context_not_valid_for_solved_load_balance`
 
-Interpretation: this configured MPH has the actual-area parameter expression in the parameter table, but it still carries the old nominal solved-solution context. The probe therefore reports the stale nominal final-solution load, not a completed actual-area solution. This is diagnostic evidence of the checkpoint state, not a valid actual-area load-closure result.
+Interpretation: this configured MPH has the actual-area parameter expression in the parameter table and the static configured estimate balances the intended `0.101 N` input. It still carries the old nominal solved-solution context, so the expression evaluation reports stale nominal final-solution load rather than a completed actual-area solution. This is diagnostic evidence of checkpoint configuration only, not valid solved load-closure evidence.
 
 ## Contact And Reaction Evidence
 

@@ -8282,18 +8282,26 @@ def _scan_saved_boundary_load_probe_reports(root: Path) -> dict[str, Any]:
             errors.append({"path": str(report_path), "error": str(exc)})
             continue
         balance = report.get("load_balance") if isinstance(report.get("load_balance"), dict) else {}
+        solution_context = (
+            report.get("mph_solution_context")
+            if isinstance(report.get("mph_solution_context"), dict)
+            else _classify_mph_solution_context(report.get("mph_path"))
+        )
+        balance_allowed = bool(solution_context.get("load_balance_evidence_allowed"))
         reports.append({
             "path": str(report_path),
             "artifact_root": str(report_path.parent),
             "mph_path": report.get("mph_path"),
+            "mph_solution_context": solution_context,
             "success": bool(report.get("success")),
             "selection_name": report.get("selection_name"),
             "pressure_expression": report.get("pressure_expression"),
             "area_m2": report.get("area_m2"),
             "integrated_load_n": report.get("integrated_load_n"),
+            "configured_parameter_load_estimate": report.get("configured_parameter_load_estimate"),
             "boundary_load_context": report.get("boundary_load_context"),
             "load_balance": balance,
-            "balanced": bool(balance.get("success")),
+            "balanced": bool(balance.get("success")) and balance_allowed,
             "feature_audit": report.get("feature_audit"),
             "error": report.get("error"),
             "warning": report.get("warning"),
@@ -8415,6 +8423,103 @@ def _boundary_load_input_balance_gate(
         "relative_tolerance": relative_tolerance,
         "absolute_tolerance_n": absolute_tolerance_n,
     }
+
+
+def _classify_mph_solution_context(mph_path: Any) -> dict[str, Any]:
+    """Classify whether an MPH path can prove solved load balance."""
+    path_text = str(mph_path or "")
+    normalized = path_text.replace("\\", "/")
+    filename = Path(path_text).name if path_text else ""
+    if not path_text:
+        return {
+            "kind": "unknown",
+            "load_balance_evidence_allowed": False,
+            "reason": "missing_mph_path",
+        }
+    if "/stage_models/" in normalized or filename.endswith("_configured.mph"):
+        return {
+            "kind": "configured_checkpoint",
+            "load_balance_evidence_allowed": False,
+            "reason": "configured_mph_can_verify_input_configuration_but_not_solved_load_balance",
+        }
+    if filename == "failed_3d_contact_model.mph" or "/failed_" in normalized:
+        return {
+            "kind": "failed_checkpoint",
+            "load_balance_evidence_allowed": False,
+            "reason": "failed_mph_checkpoint_is_not_a_converged_solved_result",
+        }
+    if "/result_packages/" in normalized:
+        return {
+            "kind": "solved_result_package",
+            "load_balance_evidence_allowed": True,
+            "reason": "result_package_mph_is_intended_as_solved_mph_evidence",
+        }
+    return {
+        "kind": "unknown",
+        "load_balance_evidence_allowed": False,
+        "reason": "mph_path_is_not_known_solved_result_package_evidence",
+    }
+
+
+def _configured_boundary_load_estimate(
+    *,
+    pressure_expression: Any,
+    pressure_parameter: dict[str, Any] | None,
+    area_m2: float | None,
+    applied_load_n: float | None,
+) -> dict[str, Any]:
+    """Estimate configured BoundaryLoad from parameter strings without treating it as solved evidence."""
+    expression = str(pressure_expression or "").strip()
+    parameter_name = None
+    parameter_expression = None
+    if re.fullmatch(r"[A-Za-z_]\w*", expression):
+        parameter_name = expression
+        if isinstance(pressure_parameter, dict) and pressure_parameter.get("success"):
+            parameter_expression = str(pressure_parameter.get("value") or "").strip()
+            expression = parameter_expression or expression
+    estimate: dict[str, Any] = {
+        "success": False,
+        "role": "configured_parameter_expression_estimate_not_solution_field",
+        "pressure_expression": pressure_expression,
+        "pressure_parameter_name": parameter_name,
+        "pressure_parameter_expression": parameter_expression,
+        "selection_area_m2": area_m2,
+        "applied_load_n": applied_load_n,
+    }
+    if area_m2 is None:
+        estimate["reason"] = "missing_selection_area"
+        return estimate
+    if applied_load_n is None:
+        estimate["reason"] = "missing_applied_boundary_load"
+        return estimate
+    denominator_match = re.fullmatch(
+        r"\s*radial_load\s*/\s*\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*\[m\^2\]\s*\)\s*",
+        expression,
+    )
+    if not denominator_match:
+        estimate["reason"] = "unsupported_pressure_expression_for_static_estimate"
+        estimate["resolved_expression"] = expression
+        return estimate
+    denominator_area_m2 = float(denominator_match.group(1))
+    if denominator_area_m2 <= 0.0:
+        estimate["reason"] = "nonpositive_denominator_area"
+        estimate["denominator_area_m2"] = denominator_area_m2
+        return estimate
+    configured_pressure_pa = applied_load_n / denominator_area_m2
+    configured_integrated_load_n = configured_pressure_pa * area_m2
+    estimate.update({
+        "success": True,
+        "resolved_expression": expression,
+        "denominator_area_m2": denominator_area_m2,
+        "configured_pressure_pa": configured_pressure_pa,
+        "configured_integrated_load_n": configured_integrated_load_n,
+        "configured_load_balance": _boundary_load_input_balance_gate(
+            integrated_load_n=configured_integrated_load_n,
+            applied_load_n=applied_load_n,
+        ),
+        "selection_area_to_denominator_ratio": area_m2 / denominator_area_m2,
+    })
+    return estimate
 
 
 def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
@@ -9734,6 +9839,7 @@ def probe_saved_boundary_load_mph(
         "markdown_path": str(markdown_path.resolve()),
         "policy": "load_solved_mph_and_probe_boundary_load_input_without_calling_solve",
         "solution_selection_policy": "use_last_parametric_solution_value_for_saved_mph_boundary_load_balance",
+        "mph_solution_context": _classify_mph_solution_context(mph_file),
     }
     try:
         client.start(
@@ -9753,6 +9859,11 @@ def probe_saved_boundary_load_mph(
         result["feature_audit"] = _audit_boundary_load_feature_via_java(
             model_name,
             feature_tag="load_inner_bore",
+        )
+        result["pressure_parameter"] = (
+            _get_model_parameter_value_via_java(model_name, parameter_name=pressure_expression)
+            if re.fullmatch(r"[A-Za-z_]\w*", str(pressure_expression or ""))
+            else {}
         )
         result["selection_entity_lookup"] = _get_selection_entities_via_java(
             model_name,
@@ -9782,10 +9893,27 @@ def probe_saved_boundary_load_mph(
         result["integrated_load_n"] = _runtime_numeric_max(result["pressure_integral"])
         result["pressure_pa"] = _runtime_numeric_max(result["pressure_value"])
         result["boundary_load_context"] = _infer_saved_reaction_boundary_load_context(json_path)
-        result["load_balance"] = _boundary_load_input_balance_gate(
+        result["configured_parameter_load_estimate"] = _configured_boundary_load_estimate(
+            pressure_expression=pressure_expression,
+            pressure_parameter=result.get("pressure_parameter"),
+            area_m2=result["area_m2"],
+            applied_load_n=(result["boundary_load_context"] or {}).get("applied_load_n"),
+        )
+        solution_evaluation_load_balance = _boundary_load_input_balance_gate(
             integrated_load_n=result["integrated_load_n"],
             applied_load_n=(result["boundary_load_context"] or {}).get("applied_load_n"),
         )
+        result["solution_evaluation_load_balance"] = solution_evaluation_load_balance
+        solution_context = result.get("mph_solution_context") or {}
+        if solution_context.get("load_balance_evidence_allowed"):
+            result["load_balance"] = solution_evaluation_load_balance
+        else:
+            result["load_balance"] = {
+                "success": False,
+                "reason": "mph_context_not_valid_for_solved_load_balance",
+                "mph_solution_context": solution_context,
+                "solution_evaluation_load_balance": solution_evaluation_load_balance,
+            }
         result["success"] = bool(result["selection_entity_lookup"].get("success")) and result["integrated_load_n"] is not None
         if not result["success"]:
             result["error"] = (
@@ -9892,6 +10020,40 @@ output.write({marker_end!r} + '\\n')
     audit["success"] = bool(runtime.get("success")) and bool(audit.get("exists"))
     audit["runtime"] = compact
     return audit
+
+
+def _get_model_parameter_value_via_java(model_name: str, *, parameter_name: str) -> dict[str, Any]:
+    marker_start = "MODEL_PARAMETER_VALUE_JSON_START"
+    marker_end = "MODEL_PARAMETER_VALUE_JSON_END"
+    code = f"""
+import json
+
+payload = {{'success': False, 'parameter_name': {parameter_name!r}}}
+try:
+    payload['value'] = str(model.param().get({parameter_name!r}))
+    payload['success'] = True
+except Exception as error:
+    payload['error'] = str(error)
+output.write({marker_start!r} + '\\n')
+output.write(json.dumps(payload, ensure_ascii=False, default=str))
+output.write('\\n' + {marker_end!r} + '\\n')
+"""
+    execution = comsol_execute_java(code, model_name=model_name)
+    parsed = _extract_marked_json_payload(
+        execution.get("stdout") or execution.get("output"),
+        start_marker=marker_start,
+        end_marker=marker_end,
+    )
+    payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
+    if not payload:
+        payload = {
+            "success": False,
+            "parameter_name": parameter_name,
+            "error": parsed.get("error") or execution.get("error") or "parameter value payload missing",
+        }
+    payload["execution"] = _compact_runtime_result(execution)
+    payload["success"] = bool(execution.get("success")) and bool(payload.get("success"))
+    return payload
 
 
 def probe_saved_contact_mph(
@@ -12281,6 +12443,7 @@ def _render_saved_boundary_load_probe_markdown(result: dict[str, Any]) -> str:
         f"- Success: `{result.get('success')}`",
         f"- Selection: `{result.get('selection_name')}`",
         f"- Pressure expression: `{result.get('pressure_expression')}`",
+        f"- MPH solution context: `{(result.get('mph_solution_context') or {}).get('kind')}`",
         f"- Area (m^2): `{result.get('area_m2')}`",
         f"- Integrated load (N): `{result.get('integrated_load_n')}`",
         f"- Pressure (Pa): `{result.get('pressure_pa')}`",
@@ -12291,7 +12454,10 @@ def _render_saved_boundary_load_probe_markdown(result: dict[str, Any]) -> str:
         "",
         "```json",
         json.dumps({
+            "mph_solution_context": result.get("mph_solution_context"),
             "boundary_load_context": result.get("boundary_load_context"),
+            "solution_evaluation_load_balance": result.get("solution_evaluation_load_balance"),
+            "configured_parameter_load_estimate": result.get("configured_parameter_load_estimate"),
             "load_balance": result.get("load_balance"),
         }, ensure_ascii=False, indent=2, default=str),
         "```",
@@ -14016,18 +14182,28 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
         "",
         "## Saved-MPH BoundaryLoad Probe Reports",
         "",
-        "| Report | Balanced | Applied load (N) | Integrated load (N) | Ratio | Area (m^2) | Pressure (Pa) | Pressure expression | Selection | MPH |",
-        "|---|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| Report | Context | Balanced | Applied load (N) | Integrated load (N) | Ratio | Configured estimate (N) | Area (m^2) | Pressure (Pa) | Pressure expression | Selection | MPH |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ])
     for report in saved_load_reports:
         balance = report.get("load_balance") or {}
+        display_balance = balance
+        if not display_balance.get("integrated_load_n") and isinstance(
+            balance.get("solution_evaluation_load_balance"),
+            dict,
+        ):
+            display_balance = balance["solution_evaluation_load_balance"]
+        solution_context = report.get("mph_solution_context") or {}
+        configured_estimate = report.get("configured_parameter_load_estimate") or {}
         lines.append(
-            "| `{report_path}` | {balanced} | {applied} | {integrated} | {ratio} | {area} | {pressure} | `{pressure_expression}` | `{selection}` | `{mph}` |".format(
+            "| `{report_path}` | {context} | {balanced} | {applied} | {integrated} | {ratio} | {configured_integrated} | {area} | {pressure} | `{pressure_expression}` | `{selection}` | `{mph}` |".format(
                 report_path=report.get("path"),
+                context=solution_context.get("kind"),
                 balanced=_md_bool(report.get("balanced")),
-                applied=balance.get("applied_load_n"),
-                integrated=balance.get("integrated_load_n") or report.get("integrated_load_n"),
-                ratio=balance.get("integrated_to_load_ratio"),
+                applied=display_balance.get("applied_load_n"),
+                integrated=display_balance.get("integrated_load_n") or report.get("integrated_load_n"),
+                ratio=display_balance.get("integrated_to_load_ratio"),
+                configured_integrated=configured_estimate.get("configured_integrated_load_n"),
                 area=report.get("area_m2"),
                 pressure=report.get("pressure_pa"),
                 pressure_expression=report.get("pressure_expression"),
