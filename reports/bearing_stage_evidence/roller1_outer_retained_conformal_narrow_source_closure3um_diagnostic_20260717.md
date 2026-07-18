@@ -150,6 +150,7 @@ plausibility gate failed.
 | Successful probes | `144` |
 | Nonzero probes | `104` |
 | Source/destination imbalance rollers | none |
+| Source unevaluable / destination nonzero rollers | `roller_1`, `roller_12`, `roller_2` |
 | Zero pair-specific pressure rollers | none |
 
 Pair-specific status:
@@ -169,11 +170,13 @@ For `roller_1` outer contact:
 - Pair-specific `gap`: `Infinity` on the probed source/destination fields.
 - Pair-specific `pn`/`gn`: mostly `selection_error`.
 - Source/destination imbalance diagnostic: `false`.
+- Pair-transfer source unevaluable / destination nonzero diagnostic: `true`.
 
 Thus, the narrow box preserves a nonzero destination-side transfer signal and
 does not introduce the previously observed source/destination imbalance, but it
 does not establish complete pair closure or finite contact-gap/pressure
-evidence.
+evidence. The saved-MPH pair-transfer probe still cannot evaluate source-side
+pair-specific `Tn` while destination-side `Tn` is nonzero.
 
 ### Saved-MPH reaction and load balance
 

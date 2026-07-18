@@ -5367,6 +5367,7 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         markdown = Path(report["markdown_path"]).read_text(encoding="utf-8")
         assert "all_12_roller_boundary_load_50n" in markdown
         assert "Saved-MPH Reaction Probe Reports" in markdown
+        assert "Source unevaluable / destination nonzero" in markdown
         assert "unknown_operator" not in markdown
         assert "reaction_probe_summary.json" in markdown
 
@@ -5692,6 +5693,13 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
                                 "source_abs_Tn_integral": None,
                                 "destination_abs_Tn_integral": 0.0,
                                 "source_zero_destination_nonzero": False,
+                                "source_unevaluable_destination_nonzero": False,
+                            },
+                            "outer": {
+                                "source_abs_Tn_integral": None,
+                                "destination_abs_Tn_integral": 12.5,
+                                "source_zero_destination_nonzero": False,
+                                "source_unevaluable_destination_nonzero": True,
                             },
                         },
                     },
@@ -5761,9 +5769,12 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert distribution["focus_rows"][0]["stage"] == "single_solve_3_roller_boundary_load_0p101n_probe_gate"
         assert distribution["stage_mph_diagnostic_report_count"] == 1
         assert distribution["saved_contact_probe_report_count"] == 1
+        assert matrix["saved_contact_probe_source_unevaluable_destination_nonzero_count"] == 1
         configured = distribution["focus_rows"][0]["configured_mph_diagnostic"]
         contact_probe = distribution["focus_rows"][0]["saved_contact_probe_diagnostic"]
         assert contact_probe["zero_carry_source_destination_imbalance"] == ["roller_1"]
+        assert contact_probe["source_unevaluable_destination_nonzero_rollers"] == ["roller_1"]
+        assert contact_probe["zero_carry_source_unevaluable_destination_nonzero"] == ["roller_1"]
         assert contact_probe["zero_carry_pair_specific_contact_pressure_zero"] == ["roller_1"]
         assert contact_probe["zero_carry_normal_orientation"]["roller_1"]["source_destination_radial_normal_alignment"]["inner"]["opposite_radial_sign"] is True
         assert contact_probe["zero_carry_pair_transfer"]["roller_1"]["destination_abs_tn_nonzero_count"] == 0

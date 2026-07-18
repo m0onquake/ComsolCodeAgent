@@ -7530,6 +7530,9 @@ def build_stage_evidence_matrix(
         "saved_reaction_probe_verified_count": saved_reaction_probe["verified_count"],
         "saved_contact_probe_report_count": saved_contact_probe["report_count"],
         "saved_contact_probe_source_destination_imbalance_count": saved_contact_probe["source_destination_imbalance_count"],
+        "saved_contact_probe_source_unevaluable_destination_nonzero_count": saved_contact_probe[
+            "source_unevaluable_destination_nonzero_count"
+        ],
         "errors": errors,
         "rows": rows,
         "preload_calibration": calibration,
@@ -7695,6 +7698,7 @@ def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
     reports: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     imbalance_count = 0
+    source_unevaluable_destination_nonzero_count = 0
     for report_path in sorted(root.glob("**/contact_probe_summary.json")):
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -7703,6 +7707,11 @@ def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
             continue
         probe = report.get("contact_probe") if isinstance(report.get("contact_probe"), dict) else {}
         by_roller = probe.get("by_roller") if isinstance(probe.get("by_roller"), dict) else {}
+        pair_transfer = (
+            probe.get("pair_transfer_by_roller")
+            if isinstance(probe.get("pair_transfer_by_roller"), dict)
+            else {}
+        )
         imbalance_rollers: list[str] = []
         for roller, roller_summary in by_roller.items():
             imbalance = (
@@ -7717,6 +7726,9 @@ def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
                 imbalance_rollers.append(str(roller))
         if imbalance_rollers:
             imbalance_count += 1
+        source_unevaluable_destination_nonzero_rollers = _pair_transfer_source_unevaluable_destination_nonzero_rollers(pair_transfer)
+        if source_unevaluable_destination_nonzero_rollers:
+            source_unevaluable_destination_nonzero_count += 1
         reports.append({
             "path": str(report_path),
             "artifact_root": str(report_path.parent),
@@ -7728,9 +7740,10 @@ def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
             "candidate_audit": probe.get("candidate_audit"),
             "contact_status_by_roller": probe.get("contact_status_by_roller"),
             "normal_orientation_by_roller": probe.get("normal_orientation_by_roller"),
-            "pair_transfer_by_roller": probe.get("pair_transfer_by_roller"),
+            "pair_transfer_by_roller": pair_transfer,
             "pair_enforcement_diagnostic": report.get("pair_enforcement_diagnostic"),
             "source_destination_imbalance_rollers": imbalance_rollers,
+            "source_unevaluable_destination_nonzero_rollers": source_unevaluable_destination_nonzero_rollers,
             "by_roller": by_roller,
             "warning": report.get("warning") or probe.get("warning"),
             "error": report.get("error"),
@@ -7738,9 +7751,27 @@ def _scan_saved_contact_probe_reports(root: Path) -> dict[str, Any]:
     return {
         "report_count": len(reports),
         "source_destination_imbalance_count": imbalance_count,
+        "source_unevaluable_destination_nonzero_count": source_unevaluable_destination_nonzero_count,
         "reports": reports,
         "errors": errors,
     }
+
+
+def _pair_transfer_source_unevaluable_destination_nonzero_rollers(pair_transfer: dict[str, Any]) -> list[str]:
+    rollers: list[str] = []
+    for roller, roller_summary in pair_transfer.items():
+        if not isinstance(roller_summary, dict):
+            continue
+        transfer = roller_summary.get("source_destination_transfer")
+        if not isinstance(transfer, dict):
+            continue
+        if any(
+            isinstance(side_summary, dict)
+            and side_summary.get("source_unevaluable_destination_nonzero") is True
+            for side_summary in transfer.values()
+        ):
+            rollers.append(str(roller))
+    return sorted(rollers)
 
 
 def _build_boundaryload_distribution_diagnostics(rows: list[dict[str, Any]], *, search_root: Path | None = None) -> dict[str, Any]:
@@ -8111,7 +8142,14 @@ def _saved_contact_probe_diagnostic_for_row(
         and (status.get("pair_specific_nonzero_count") or 0) == 0
     )
     imbalance_rollers = set(str(item) for item in report.get("source_destination_imbalance_rollers") or [])
+    source_unevaluable_destination_nonzero_rollers = set(
+        str(item)
+        for item in report.get("source_unevaluable_destination_nonzero_rollers") or []
+    )
     zero_imbalance = sorted(zero_rollers & imbalance_rollers)
+    zero_source_unevaluable_destination_nonzero = sorted(
+        zero_rollers & source_unevaluable_destination_nonzero_rollers
+    )
     return {
         "success": bool(report.get("success")),
         "path": report.get("path"),
@@ -8120,7 +8158,9 @@ def _saved_contact_probe_diagnostic_for_row(
         "success_count": report.get("success_count"),
         "nonzero_count": report.get("nonzero_count"),
         "source_destination_imbalance_rollers": sorted(imbalance_rollers),
+        "source_unevaluable_destination_nonzero_rollers": sorted(source_unevaluable_destination_nonzero_rollers),
         "zero_carry_source_destination_imbalance": zero_imbalance,
+        "zero_carry_source_unevaluable_destination_nonzero": zero_source_unevaluable_destination_nonzero,
         "zero_carry_pair_specific_contact_pressure_zero": zero_pair_pressure,
         "zero_carry_by_roller": zero_details,
         "zero_carry_contact_status": zero_status,
@@ -8731,6 +8771,9 @@ def write_stage_evidence_matrix_report(
         "saved_reaction_probe_verified_count": matrix["saved_reaction_probe_verified_count"],
         "saved_contact_probe_report_count": matrix["saved_contact_probe_report_count"],
         "saved_contact_probe_source_destination_imbalance_count": matrix["saved_contact_probe_source_destination_imbalance_count"],
+        "saved_contact_probe_source_unevaluable_destination_nonzero_count": matrix[
+            "saved_contact_probe_source_unevaluable_destination_nonzero_count"
+        ],
         "highest_trust_stage": matrix.get("highest_trust_stage"),
     }
 
@@ -12837,6 +12880,7 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
         f"- Saved-MPH reaction probe verified reports: `{matrix.get('saved_reaction_probe_verified_count')}`",
         f"- Saved-MPH contact probe reports: `{matrix.get('saved_contact_probe_report_count')}`",
         f"- Saved-MPH contact source/destination imbalance reports: `{matrix.get('saved_contact_probe_source_destination_imbalance_count')}`",
+        f"- Saved-MPH contact source unevaluable / destination nonzero reports: `{matrix.get('saved_contact_probe_source_unevaluable_destination_nonzero_count')}`",
         "",
         "## Highest Trust Stage",
         "",
@@ -12972,17 +13016,18 @@ def _render_stage_evidence_matrix_markdown(matrix: dict[str, Any]) -> str:
         "",
         "## Saved-MPH Contact Probe Reports",
         "",
-        "| Report | Success | Candidates | Nonzero | Imbalance rollers | MPH |",
-        "|---|---:|---:|---:|---|---|",
+        "| Report | Success | Candidates | Nonzero | Imbalance rollers | Source unevaluable / destination nonzero | MPH |",
+        "|---|---:|---:|---:|---|---|---|",
     ])
     for report in saved_contact_reports:
         lines.append(
-            "| `{report_path}` | {success} | {candidate_count} | {nonzero} | {imbalance} | `{mph}` |".format(
+            "| `{report_path}` | {success} | {candidate_count} | {nonzero} | {imbalance} | {source_unevaluable} | `{mph}` |".format(
                 report_path=report.get("path"),
                 success=_md_bool(report.get("success")),
                 candidate_count=report.get("candidate_count"),
                 nonzero=report.get("nonzero_count"),
                 imbalance=", ".join(report.get("source_destination_imbalance_rollers") or []),
+                source_unevaluable=", ".join(report.get("source_unevaluable_destination_nonzero_rollers") or []),
                 mph=report.get("mph_path"),
             )
         )

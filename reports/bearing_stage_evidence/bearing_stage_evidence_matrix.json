@@ -11,6 +11,7 @@
   "saved_reaction_probe_verified_count": 0,
   "saved_contact_probe_report_count": 52,
   "saved_contact_probe_source_destination_imbalance_count": 19,
+  "saved_contact_probe_source_unevaluable_destination_nonzero_count": 2,
   "errors": [],
   "rows": [
     {
@@ -28581,9 +28582,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -30310,9 +30313,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -32039,9 +32044,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -33768,9 +33775,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -35497,9 +35506,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -37548,9 +37559,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -39275,7 +39288,9 @@
           "success_count": 152,
           "nonzero_count": 102,
           "source_destination_imbalance_rollers": [],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -41123,9 +41138,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -43174,9 +43191,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -44903,9 +44922,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -46632,9 +46653,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -48361,9 +48384,11 @@
           "source_destination_imbalance_rollers": [
             "roller_1"
           ],
+          "source_unevaluable_destination_nonzero_rollers": [],
           "zero_carry_source_destination_imbalance": [
             "roller_1"
           ],
+          "zero_carry_source_unevaluable_destination_nonzero": [],
           "zero_carry_pair_specific_contact_pressure_zero": [
             "roller_1"
           ],
@@ -55293,6 +55318,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -60553,6 +60579,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -65813,6 +65840,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -71073,6 +71101,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -76333,6 +76362,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -81593,6 +81623,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -86853,6 +86884,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -91482,6 +91514,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -96752,6 +96785,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -102012,6 +102046,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -107272,6 +107307,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -112532,6 +112568,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -117792,6 +117829,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -123052,6 +123090,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -128312,6 +128351,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -133567,6 +133607,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -138832,6 +138873,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -144097,6 +144139,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -149422,6 +149465,11 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [
+        "roller_1",
+        "roller_12",
+        "roller_2"
+      ],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -154732,6 +154780,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -159997,6 +160046,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -165262,6 +165312,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -170587,6 +170638,11 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [
+        "roller_1",
+        "roller_12",
+        "roller_2"
+      ],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -175897,6 +175953,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -181162,6 +181219,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -186432,6 +186490,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -191692,6 +191751,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -196325,6 +196385,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -201580,6 +201641,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -206835,6 +206897,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -212090,6 +212153,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -217350,6 +217414,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -222610,6 +222675,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -227870,6 +227936,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -233130,6 +233197,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -238390,6 +238458,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -243650,6 +243719,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -248910,6 +248980,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -254170,6 +254241,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -259430,6 +259502,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -264690,6 +264763,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -269950,6 +270024,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -275210,6 +275285,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -280470,6 +280546,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -285730,6 +285807,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -290990,6 +291068,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -296250,6 +296329,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -301511,6 +301591,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -306781,6 +306862,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -312036,6 +312118,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -317301,6 +317384,7 @@
       "source_destination_imbalance_rollers": [
         "roller_1"
       ],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
@@ -319343,6 +319427,7 @@
         ]
       },
       "source_destination_imbalance_rollers": [],
+      "source_unevaluable_destination_nonzero_rollers": [],
       "by_roller": {
         "roller_1": {
           "candidate_count": 324,
