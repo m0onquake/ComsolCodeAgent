@@ -9,7 +9,7 @@
   "reaction_verified_stage_count": 0,
   "saved_reaction_probe_report_count": 6,
   "saved_reaction_probe_verified_count": 0,
-  "saved_boundary_load_probe_report_count": 5,
+  "saved_boundary_load_probe_report_count": 7,
   "saved_boundary_load_probe_balanced_count": 0,
   "saved_contact_probe_report_count": 60,
   "saved_contact_probe_source_destination_imbalance_count": 19,
@@ -51065,6 +51065,204 @@
         "absolute_residual_n": 0.09885000293486454,
         "relative_residual_to_load": 0.9787129003451934,
         "integrated_to_load_ratio": 0.02128709965480661,
+        "relative_tolerance": 0.05,
+        "absolute_tolerance_n": 1e-06
+      },
+      "balanced": false,
+      "feature_audit": {
+        "feature_tag": "load_inner_bore",
+        "exists": true,
+        "type": "BoundaryLoad",
+        "active": true,
+        "selection_named": {
+          "success": true,
+          "value": "sel_inner_bore_load_surface"
+        },
+        "selection_entities": {
+          "success": true,
+          "value": [
+            135,
+            136,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144
+          ]
+        },
+        "properties": {
+          "FperArea": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "inner_bore_load_pressure",
+              "0",
+              "0"
+            ]
+          },
+          "F": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "0",
+              "0",
+              "0"
+            ]
+          },
+          "LoadType": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "ForceArea"
+            ]
+          },
+          "BoundaryLoadType": {
+            "success": false,
+            "error": "getStringArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getString: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getDoubleArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n"
+          },
+          "Direction": {
+            "success": false,
+            "error": "getStringArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getString: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getDoubleArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n"
+          }
+        },
+        "success": true,
+        "runtime": {
+          "success": true,
+          "model_name": "bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um",
+          "stdout": "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_START\n{\"feature_tag\": \"load_inner_bore\", \"exists\": true, \"type\": \"BoundaryLoad\", \"active\": true, \"selection_named\": {\"success\": true, \"value\": \"sel_inner_bore_load_surface\"}, \"selection_entities\": {\"success\": true, \"value\": [135, 136, 139, 140, 141, 142, 143, 144]}, \"properties\": {\"FperArea\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"inner_bore_load_pressure\", \"0\", \"0\"]}, \"F\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"0\", \"0\", \"0\"]}, \"LoadType\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"ForceArea\"]}, \"BoundaryLoadType\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n\"}, \"Direction\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n\"}}}\nBOUNDARY_LOAD_FEATURE_AUDIT_JSON_END\n",
+          "output": "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_START\n{\"feature_tag\": \"load_inner_bore\", \"exists\": true, \"type\": \"BoundaryLoad\", \"active\": true, \"selection_named\": {\"success\": true, \"value\": \"sel_inner_bore_load_surface\"}, \"selection_entities\": {\"success\": true, \"value\": [135, 136, 139, 140, 141, 142, 143, 144]}, \"properties\": {\"FperArea\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"inner_bore_load_pressure\", \"0\", \"0\"]}, \"F\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"0\", \"0\", \"0\"]}, \"LoadType\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"ForceArea\"]}, \"BoundaryLoadType\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n\"}, \"Direction\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n\"}}}\nBOUNDARY_LOAD_FEATURE_AUDIT_JSON_END\n",
+          "error": null,
+          "error_type": null,
+          "exception_type": null
+        }
+      },
+      "error": null,
+      "warning": null
+    },
+    {
+      "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_20260719/load_probe_summary.json",
+      "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_20260719",
+      "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "success": true,
+      "selection_name": "sel_inner_bore_load_surface",
+      "pressure_expression": "inner_bore_load_pressure",
+      "area_m2": 0.004863178789249815,
+      "integrated_load_n": 0.0021499970651354676,
+      "boundary_load_context": {
+        "success": true,
+        "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
+        "stage": "single_solve_3_roller_boundary_load_0p101n_parametric",
+        "radial_load_value": "0.101[N]",
+        "applied_load_n": 0.101,
+        "reason": null
+      },
+      "load_balance": {
+        "success": false,
+        "integrated_load_n": 0.0021499970651354676,
+        "applied_load_n": 0.101,
+        "absolute_residual_n": 0.09885000293486454,
+        "relative_residual_to_load": 0.9787129003451934,
+        "integrated_to_load_ratio": 0.02128709965480661,
+        "relative_tolerance": 0.05,
+        "absolute_tolerance_n": 1e-06
+      },
+      "balanced": false,
+      "feature_audit": {
+        "feature_tag": "load_inner_bore",
+        "exists": true,
+        "type": "BoundaryLoad",
+        "active": true,
+        "selection_named": {
+          "success": true,
+          "value": "sel_inner_bore_load_surface"
+        },
+        "selection_entities": {
+          "success": true,
+          "value": [
+            135,
+            136,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144
+          ]
+        },
+        "properties": {
+          "FperArea": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "inner_bore_load_pressure",
+              "0",
+              "0"
+            ]
+          },
+          "F": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "0",
+              "0",
+              "0"
+            ]
+          },
+          "LoadType": {
+            "success": true,
+            "method": "getStringArray",
+            "value": [
+              "ForceArea"
+            ]
+          },
+          "BoundaryLoadType": {
+            "success": false,
+            "error": "getStringArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getString: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getDoubleArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\nMessages:\n\t未知参数 BoundaryLoadType。\n\t- 特征: 固体力学 (solid)\n"
+          },
+          "Direction": {
+            "success": false,
+            "error": "getStringArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getString: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getDoubleArray: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\n\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\nMessages:\n\t未知参数 Direction。\n\t- 特征: 固体力学 (solid)\n"
+          }
+        },
+        "success": true,
+        "runtime": {
+          "success": true,
+          "model_name": "bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um",
+          "stdout": "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_START\n{\"feature_tag\": \"load_inner_bore\", \"exists\": true, \"type\": \"BoundaryLoad\", \"active\": true, \"selection_named\": {\"success\": true, \"value\": \"sel_inner_bore_load_surface\"}, \"selection_entities\": {\"success\": true, \"value\": [135, 136, 139, 140, 141, 142, 143, 144]}, \"properties\": {\"FperArea\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"inner_bore_load_pressure\", \"0\", \"0\"]}, \"F\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"0\", \"0\", \"0\"]}, \"LoadType\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"ForceArea\"]}, \"BoundaryLoadType\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n\"}, \"Direction\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n\"}}}\nBOUNDARY_LOAD_FEATURE_AUDIT_JSON_END\n",
+          "output": "BOUNDARY_LOAD_FEATURE_AUDIT_JSON_START\n{\"feature_tag\": \"load_inner_bore\", \"exists\": true, \"type\": \"BoundaryLoad\", \"active\": true, \"selection_named\": {\"success\": true, \"value\": \"sel_inner_bore_load_surface\"}, \"selection_entities\": {\"success\": true, \"value\": [135, 136, 139, 140, 141, 142, 143, 144]}, \"properties\": {\"FperArea\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"inner_bore_load_pressure\", \"0\", \"0\"]}, \"F\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"0\", \"0\", \"0\"]}, \"LoadType\": {\"success\": true, \"method\": \"getStringArray\", \"value\": [\"ForceArea\"]}, \"BoundaryLoadType\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#BoundaryLoadType\\nMessages:\\n\\t未知参数 BoundaryLoadType。\\n\\t- 特征: 固体力学 (solid)\\n\"}, \"Direction\": {\"success\": false, \"error\": \"getStringArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getString: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDoubleArray: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n | getDouble: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getDouble' | getIntArray: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getIntArray' | getInt: 'com.comsol.clientapi.physics.impl.PhysicsFeatureClient' object has no attribute 'getInt' | getBoolean: Exception:\\n\\tcom.comsol.util.exceptions.FlException: Unknown parameter X#Direction\\nMessages:\\n\\t未知参数 Direction。\\n\\t- 特征: 固体力学 (solid)\\n\"}}}\nBOUNDARY_LOAD_FEATURE_AUDIT_JSON_END\n",
+          "error": null,
+          "error_type": null,
+          "exception_type": null
+        }
+      },
+      "error": null,
+      "warning": null
+    },
+    {
+      "path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_globals_20260719/load_probe_summary.json",
+      "artifact_root": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/load_probe_solved_mph_final_solution_globals_20260719",
+      "mph_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/result_packages/direct_3d_bearing_package_bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um_20260717_114524_700877/bearing3d_load_side_boundaryload_0p101_roller1_outer_retained_conformal_narrow_source_closure3um.mph",
+      "success": true,
+      "selection_name": "sel_inner_bore_load_surface",
+      "pressure_expression": "inner_bore_load_pressure",
+      "area_m2": 0.004863178789249815,
+      "integrated_load_n": 0.2171497035786822,
+      "boundary_load_context": {
+        "success": true,
+        "summary_path": "runtime_smoke/bearing_family_p12_boundaryload_roller1_outer_retained_conformal_narrow_source_closure3um/direct_3d_bearing_summary.json",
+        "stage": "single_solve_3_roller_boundary_load_0p101n_parametric",
+        "radial_load_value": "0.101[N]",
+        "applied_load_n": 0.101,
+        "reason": null
+      },
+      "load_balance": {
+        "success": false,
+        "integrated_load_n": 0.2171497035786822,
+        "applied_load_n": 0.101,
+        "absolute_residual_n": 0.1161497035786822,
+        "relative_residual_to_load": 1.1499970651354674,
+        "integrated_to_load_ratio": 2.149997065135467,
         "relative_tolerance": 0.05,
         "absolute_tolerance_n": 1e-06
       },

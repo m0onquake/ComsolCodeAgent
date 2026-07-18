@@ -7030,15 +7030,64 @@ def _parse_java_numeric_probe(stdout: str | None, *, marker: str) -> float | Non
         return None
 
 
+def _parse_java_numeric_list_probe(stdout: str | None, *, marker: str) -> list[float]:
+    if not stdout:
+        return []
+    pattern = re.compile(re.escape(marker) + r"(.*)")
+    match = pattern.search(stdout)
+    if not match:
+        return []
+    payload = match.group(1).strip()
+    try:
+        values = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(values, list):
+        return []
+    parsed: list[float] = []
+    for value in values:
+        try:
+            parsed.append(float(value))
+        except (TypeError, ValueError):
+            pass
+    return parsed
+
+
 def _evaluate_global_expression_via_java(
     model_name: str,
     expression: str,
     *,
     tag: str,
+    result_index: str = "first",
 ) -> dict[str, Any]:
     safe_tag = re.sub(r"[^A-Za-z0-9_]", "_", tag)[:60] or "reaction_probe"
     marker = f"REACTION_EXPR_VALUE|tag={safe_tag}|value="
+    values_marker = f"REACTION_EXPR_VALUES|tag={safe_tag}|values="
+    pick_last = result_index == "last"
     code = f"""
+import json
+
+def _flatten_numeric_values(value):
+    try:
+        if value is None:
+            return []
+        if isinstance(value, (str, bytes)):
+            return [value]
+        if isinstance(value, (int, float, bool)):
+            return [value]
+        try:
+            items = list(value)
+        except Exception:
+            return [value]
+        flattened = []
+        for item in items:
+            flattened.extend(_flatten_numeric_values(item))
+        return flattened
+    except Exception:
+        return []
+
+globals()['_flatten_numeric_values'] = _flatten_numeric_values
+
 try:
     if {safe_tag!r} in list(model.result().numerical().tags()):
         model.result().numerical().remove({safe_tag!r})
@@ -7053,22 +7102,39 @@ try:
         output.write('REACTION_EXPR_DATASET_WARNING|tag=' + {safe_tag!r} + '|error=' + str(error) + '\\n')
     raw = model.result().numerical({safe_tag!r}).getReal()
     value = raw
-    try:
-        value = raw[0][0]
-    except Exception:
+    raw_values = []
+    for raw_item in _flatten_numeric_values(raw):
         try:
-            value = raw[0]
+            raw_values.append(float(raw_item))
         except Exception:
             pass
+    if raw_values:
+        if {pick_last!r}:
+            value = raw_values[-1]
+        else:
+            value = raw_values[0]
+    else:
+        try:
+            value = raw[0][0]
+        except Exception:
+            try:
+                value = raw[0]
+            except Exception:
+                pass
     output.write({marker!r} + str(value) + '\\n')
+    output.write({values_marker!r} + json.dumps(raw_values, allow_nan=True) + '\\n')
 except Exception as error:
     output.write('REACTION_EXPR_ERROR|tag=' + {safe_tag!r} + '|expression=' + {expression!r} + '|error=' + str(error) + '\\n')
     raise
 """
     result = comsol_execute_java(code, model_name=model_name)
-    value = _parse_java_numeric_probe(result.get("stdout") or result.get("output"), marker=marker)
+    stdout = result.get("stdout") or result.get("output")
+    value = _parse_java_numeric_probe(stdout, marker=marker)
+    raw_values = _parse_java_numeric_list_probe(stdout, marker=values_marker)
     compact = _compact_runtime_result(result)
     compact["expression"] = expression
+    compact["result_index"] = result_index
+    compact["raw_values"] = raw_values
     if value is not None:
         compact["value"] = value
         compact["success"] = True
@@ -7083,10 +7149,36 @@ def _evaluate_surface_integral_expression_via_java(
     *,
     selection_name: str,
     tag: str,
+    result_index: str = "first",
 ) -> dict[str, Any]:
     safe_tag = re.sub(r"[^A-Za-z0-9_]", "_", tag)[:60] or "reaction_surface_probe"
     marker = f"REACTION_SURFACE_VALUE|tag={safe_tag}|value="
+    values_marker = f"REACTION_SURFACE_VALUES|tag={safe_tag}|values="
+    pick_last = result_index == "last"
     code = f"""
+import json
+
+def _flatten_numeric_values(value):
+    try:
+        if value is None:
+            return []
+        if isinstance(value, (str, bytes)):
+            return [value]
+        if isinstance(value, (int, float, bool)):
+            return [value]
+        try:
+            items = list(value)
+        except Exception:
+            return [value]
+        flattened = []
+        for item in items:
+            flattened.extend(_flatten_numeric_values(item))
+        return flattened
+    except Exception:
+        return []
+
+globals()['_flatten_numeric_values'] = _flatten_numeric_values
+
 try:
     if {safe_tag!r} in list(model.result().numerical().tags()):
         model.result().numerical().remove({safe_tag!r})
@@ -7102,24 +7194,41 @@ try:
         output.write('REACTION_SURFACE_DATASET_WARNING|tag=' + {safe_tag!r} + '|error=' + str(error) + '\\n')
     raw = model.result().numerical({safe_tag!r}).getReal()
     value = raw
-    try:
-        value = raw[0][0]
-    except Exception:
+    raw_values = []
+    for raw_item in _flatten_numeric_values(raw):
         try:
-            value = raw[0]
+            raw_values.append(float(raw_item))
         except Exception:
             pass
+    if raw_values:
+        if {pick_last!r}:
+            value = raw_values[-1]
+        else:
+            value = raw_values[0]
+    else:
+        try:
+            value = raw[0][0]
+        except Exception:
+            try:
+                value = raw[0]
+            except Exception:
+                pass
     output.write({marker!r} + str(value) + '\\n')
+    output.write({values_marker!r} + json.dumps(raw_values, allow_nan=True) + '\\n')
 except Exception as error:
     output.write('REACTION_SURFACE_ERROR|tag=' + {safe_tag!r} + '|selection=' + {selection_name!r} + '|expression=' + {expression!r} + '|error=' + str(error) + '\\n')
     raise
 """
     result = comsol_execute_java(code, model_name=model_name)
-    value = _parse_java_numeric_probe(result.get("stdout") or result.get("output"), marker=marker)
+    stdout = result.get("stdout") or result.get("output")
+    value = _parse_java_numeric_probe(stdout, marker=marker)
+    raw_values = _parse_java_numeric_list_probe(stdout, marker=values_marker)
     compact = _compact_runtime_result(result)
     compact["expression"] = expression
     compact["selection"] = selection_name
     compact["method"] = "java_intsurface"
+    compact["result_index"] = result_index
+    compact["raw_values"] = raw_values
     if value is not None:
         compact["value"] = value
         compact["success"] = True
@@ -9258,6 +9367,7 @@ def probe_saved_boundary_load_mph(
         "json_path": str(json_path.resolve()),
         "markdown_path": str(markdown_path.resolve()),
         "policy": "load_solved_mph_and_probe_boundary_load_input_without_calling_solve",
+        "solution_selection_policy": "use_last_parametric_solution_value_for_saved_mph_boundary_load_balance",
     }
     try:
         client.start(
@@ -9287,17 +9397,20 @@ def probe_saved_boundary_load_mph(
             "1",
             selection_name=selection_name,
             tag="boundary_load_area_probe",
+            result_index="last",
         )
         result["pressure_integral"] = _evaluate_surface_integral_expression_via_java(
             model_name,
             pressure_expression,
             selection_name=selection_name,
             tag="boundary_load_pressure_integral_probe",
+            result_index="last",
         )
         result["pressure_value"] = _evaluate_global_expression_via_java(
             model_name,
             pressure_expression,
             tag="boundary_load_pressure_value_probe",
+            result_index="last",
         )
         result["area_m2"] = _runtime_numeric_max(result["area_integral"])
         result["integrated_load_n"] = _runtime_numeric_max(result["pressure_integral"])

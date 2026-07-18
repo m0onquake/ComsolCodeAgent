@@ -5681,6 +5681,25 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "inner_bore_load_pressure" in rendered
         assert "0.101" in rendered
 
+    def test_boundary_load_probe_uses_last_saved_mph_parametric_value(self):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        output = "REACTION_SURFACE_VALUES|tag=load|values=[1e-05, 0.001, 0.101]\n"
+
+        assert demo._parse_java_numeric_list_probe(
+            output,
+            marker="REACTION_SURFACE_VALUES|tag=load|values=",
+        ) == [1e-05, 0.001, 0.101]
+
+        source = Path("scripts/run_agent_3d_bearing_full_demo.py").read_text(encoding="utf-8")
+        assert "globals()['_flatten_numeric_values'] = _flatten_numeric_values" in source
+        boundary_load_section = source.split("def probe_saved_boundary_load_mph(", 1)[1].split(
+            "def _audit_boundary_load_feature_via_java",
+            1,
+        )[0]
+        assert "solution_selection_policy" in boundary_load_section
+        assert 'result_index="last"' in boundary_load_section
+
     def test_stage_evidence_matrix_flags_boundaryload_stress_plateau(self, tmp_path):
         from scripts import run_agent_3d_bearing_full_demo as demo
 
