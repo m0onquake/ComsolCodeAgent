@@ -6369,6 +6369,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
     rebuild_solver_sequence: bool = False,
     load_ramp_steps: str | None = None,
     contact_zero_init_gap_value: str | None = None,
+    disable_active_roller_stabilization: bool = False,
 ) -> dict[str, Any]:
     """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
     mph_file = Path(source_mph)
@@ -6433,6 +6434,29 @@ def run_actual_area_resume_from_solved_nominal_mph(
         resume_policy = f"{resume_policy}_with_contact_zero_init_gap_{safe_zero_init_gap}"
         run_id = f"{run_id}_zero_init_gap{safe_zero_init_gap}"
         model_label = f"{model_label}_zero_init_gap{safe_zero_init_gap}"
+    if disable_active_roller_stabilization:
+        stage["name"] = f"{stage['name']}_no_active_stabilization"
+        stage["contact_scope"] = f"{stage['contact_scope']}_no_active_stabilization"
+        stage["active_roller_stabilization_active"] = False
+        stage["temporary_active_roller_stabilization_active"] = False
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_from_solved_nominal_disable_active_roller_stabilization_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_no_active_stabilization_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_no_active_stabilization"
+        resume_policy = f"{resume_policy}_with_no_active_roller_stabilization"
+        run_id = f"{run_id}_no_active_stabilization"
+        model_label = f"{model_label}_no_active_stabilization"
+    diagnostic_warnings = [
+        "This experiment uses weak roller foundation and cage-inactive scope.",
+        "This checkpoint-resume path is diagnostic only and must not be marked production-ready.",
+    ]
+    if stage.get("weak_inner_guidance_active"):
+        diagnostic_warnings.insert(0, "This experiment still uses weak inner guidance.")
+    if stage.get("active_roller_stabilization_active"):
+        diagnostic_warnings.insert(0, "This experiment still uses temporary active-roller spring stabilization.")
     summary: dict[str, Any] = {
         "summary_path": str(summary_path),
         "template_run": {
@@ -6470,10 +6494,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
             "success": False,
             "quality_level": "diagnostic_pending",
             "errors": [],
-            "warnings": [
-                "This experiment still uses weak inner guidance, weak roller foundation, temporary active-roller spring stabilization, and cage-inactive scope.",
-                "This checkpoint-resume path is diagnostic only and must not be marked production-ready.",
-            ],
+            "warnings": diagnostic_warnings,
         },
     }
 
@@ -6687,10 +6708,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
                 "success": False,
                 "quality_level": "diagnostic_solved_not_production" if not errors else "diagnostic_failed",
                 "errors": errors,
-                "warnings": [
-                    "This experiment still uses weak inner guidance, weak roller foundation, temporary active-roller spring stabilization, and cage-inactive scope.",
-                    "Even if solved, this checkpoint-resume path is diagnostic and must not be marked production-ready.",
-                ],
+                "warnings": diagnostic_warnings,
             }
         else:
             failure_path = artifact_root / "failed_3d_contact_model.mph"
@@ -15475,6 +15493,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resume-actual-area-disable-active-stabilization",
+        action="store_true",
+        help=(
+            "Disable temporary active-roller stabilization in the resumed actual-area pressure stage. "
+            "Diagnostic only; weak guidance/foundation and cage-inactive scope are otherwise unchanged."
+        ),
+    )
+    parser.add_argument(
         "--probe-geometry-partition-api",
         action="store_true",
         help="Create a tiny COMSOL geometry and probe supported partition/imprint feature APIs.",
@@ -15688,6 +15714,7 @@ def main() -> None:
             rebuild_solver_sequence=bool(args.resume_actual_area_rebuild_solver),
             load_ramp_steps=(args.resume_actual_area_load_ramp.strip() or None),
             contact_zero_init_gap_value=(args.resume_actual_area_contact_zero_init_gap.strip() or None),
+            disable_active_roller_stabilization=bool(args.resume_actual_area_disable_active_stabilization),
         )
         staged = report.get("staged_contact_solve") or {}
         final_solve = staged.get("final_solve") or report.get("solve") or {}

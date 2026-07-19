@@ -6751,6 +6751,109 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
             "Saved-MPH support reaction/load balance did not pass."
         ]
 
+    def test_actual_area_resume_can_disable_active_roller_stabilization_only(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "nominal_solved.mph"
+        source_mph.write_text("fake nominal solved mph", encoding="utf-8")
+        output_dir = tmp_path / "actual_area_resume_zero_init_gap_no_active_stabilization"
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        configured: dict[str, object] = {}
+
+        def fake_set_state(model_name: str, **kwargs):
+            configured["model_name"] = model_name
+            configured.update(kwargs)
+            return {"success": True, "model_name": model_name, "stdout": "configured no active stabilization"}
+
+        def fake_save_stage(model_name: str, *, stage_name: str, output_dir: Path | None):
+            path = Path(output_dir) / f"{stage_name}_configured.mph"
+            path.write_text("configured mph", encoding="utf-8")
+            return {"success": True, "model_name": model_name, "stage": stage_name, "saved_to": str(path)}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_nominal_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_remove_model_solver_sequences_via_java",
+            lambda model_name: pytest.fail("no-active-stabilization diagnostic must not rebuild solver sequences"),
+        )
+        monkeypatch.setattr(demo, "_set_3d_staged_contact_state", fake_set_state)
+        monkeypatch.setattr(demo, "_save_stage_configured_mph", fake_save_stage)
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": False, "error": "Solve failed: timed out"})
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=output_dir,
+            cores=1,
+            contact_zero_init_gap_value="1",
+            disable_active_roller_stabilization=True,
+        )
+
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert configured["reuse_existing_solver"] is True
+        assert configured["use_parametric_sweep"] is False
+        assert configured["radial_load_value"] == "0.101[N]"
+        assert configured["active_roller_stabilization_active"] is False
+        assert configured["active_roller_stabilization_mode"] == "spring"
+        assert configured["weak_roller_foundation_active"] is True
+        assert configured["weak_roller_foundation_k"] == "1e8[N/m^3]"
+        assert configured["weak_inner_guidance_active"] is True
+        assert configured["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert configured["contact_feature_property_overrides"] == {
+            "contact_roller_1_inner": {"zeroInitGap": "1"},
+            "contact_roller_1_outer": {"zeroInitGap": "1"},
+            "contact_roller_2_inner": {"zeroInitGap": "1"},
+            "contact_roller_2_outer": {"zeroInitGap": "1"},
+            "contact_roller_12_inner": {"zeroInitGap": "1"},
+            "contact_roller_12_outer": {"zeroInitGap": "1"},
+        }
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["name"].endswith("_zero_init_gap1_no_active_stabilization")
+        assert stage["active_roller_stabilization_active"] is False
+        assert stage["temporary_active_roller_stabilization_active"] is False
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "actual_area_pressure_resume_from_solved_nominal_disable_active_roller_stabilization_only"
+        )
+        assert summary["staged_contact_solve"]["policy"] == (
+            "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint"
+            "_with_contact_zero_init_gap_1_with_no_active_roller_stabilization"
+        )
+        assert "temporary active-roller spring stabilization" not in " ".join(
+            summary["physical_contact_validation"]["warnings"]
+        )
+        assert summary["solve"]["success"] is False
+
     def test_saved_mph_reaction_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
