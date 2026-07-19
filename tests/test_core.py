@@ -6562,6 +6562,195 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert summary["staged_contact_solve"]["contact_stage_mode"].endswith("_load_ramp")
         assert summary["solve"]["success"] is False
 
+    def test_actual_area_resume_from_solved_nominal_can_override_contact_zero_init_gap(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "nominal_solved.mph"
+        source_mph.write_text("fake nominal solved mph", encoding="utf-8")
+        output_dir = tmp_path / "actual_area_resume_zero_init_gap"
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        configured: dict[str, object] = {}
+
+        def fake_set_state(model_name: str, **kwargs):
+            configured["model_name"] = model_name
+            configured.update(kwargs)
+            return {"success": True, "model_name": model_name, "stdout": "configured actual area zeroInitGap"}
+
+        def fake_save_stage(model_name: str, *, stage_name: str, output_dir: Path | None):
+            path = Path(output_dir) / f"{stage_name}_configured.mph"
+            path.write_text("configured mph", encoding="utf-8")
+            return {"success": True, "model_name": model_name, "stage": stage_name, "saved_to": str(path)}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_nominal_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_remove_model_solver_sequences_via_java",
+            lambda model_name: pytest.fail("zeroInitGap-only diagnostic must not rebuild solver sequences"),
+        )
+        monkeypatch.setattr(demo, "_set_3d_staged_contact_state", fake_set_state)
+        monkeypatch.setattr(demo, "_save_stage_configured_mph", fake_save_stage)
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": False, "error": "Solve failed: timed out"})
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=output_dir,
+            cores=1,
+            contact_zero_init_gap_value="1",
+        )
+
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert configured["reuse_existing_solver"] is True
+        assert configured["use_parametric_sweep"] is False
+        assert configured["radial_load_value"] == "0.101[N]"
+        assert configured["inner_bore_load_pressure_expression"] == "radial_load/(4.863178789249815e-3[m^2])"
+        assert configured["contact_feature_property_overrides"] == {
+            "contact_roller_1_inner": {"zeroInitGap": "1"},
+            "contact_roller_1_outer": {"zeroInitGap": "1"},
+            "contact_roller_2_inner": {"zeroInitGap": "1"},
+            "contact_roller_2_outer": {"zeroInitGap": "1"},
+            "contact_roller_12_inner": {"zeroInitGap": "1"},
+            "contact_roller_12_outer": {"zeroInitGap": "1"},
+        }
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["name"].endswith("_zero_init_gap1")
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "actual_area_pressure_resume_from_solved_nominal_contact_zero_init_gap_only"
+        )
+        assert summary["staged_contact_solve"]["policy"] == (
+            "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint_with_contact_zero_init_gap_1"
+        )
+        assert summary["staged_contact_solve"]["contact_stage_mode"].endswith("_zero_init_gap1")
+        assert summary["solve"]["success"] is False
+
+    def test_actual_area_resume_saved_probes_receive_boundary_load_context(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "nominal_solved.mph"
+        source_mph.write_text("fake nominal solved mph", encoding="utf-8")
+        output_dir = tmp_path / "actual_area_resume_solved_probe_context"
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+
+            def start(self, **kwargs):
+                self.is_running = True
+
+            def stop(self):
+                self.is_running = False
+
+        probe_contexts: dict[str, dict[str, object]] = {}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: FakeClient()))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_nominal_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_set_3d_staged_contact_state",
+            lambda model_name, **kwargs: {"success": True, "model_name": model_name, "stdout": "configured"},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_save_stage_configured_mph",
+            lambda model_name, *, stage_name, output_dir: {"success": True, "model_name": model_name, "saved_to": str(Path(output_dir) / f"{stage_name}.mph")},
+        )
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": True, "model_name": model_name})
+        monkeypatch.setattr(
+            demo,
+            "comsol_evaluate",
+            lambda model_name, expression: {"success": True, "model_name": model_name, "expression": expression, "statistics": {"max": 1.0}},
+        )
+        monkeypatch.setattr(demo, "_evaluate_per_roller_probe_results", lambda model_name: [])
+        monkeypatch.setattr(
+            demo,
+            "_active_roller_load_distribution_audit",
+            lambda per_roller, *, active_rollers, boundary_load_active: {"success": True},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_export_native_3d_stage_volume_plot",
+            lambda model_name, *, stage_name, output_dir: {"success": True, "filepath": str(Path(output_dir) / f"{stage_name}.png")},
+        )
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True})
+
+        def fake_boundary_probe(**kwargs):
+            probe_contexts["boundary"] = kwargs["boundary_load_context"]
+            return {"success": True, "load_balance": {"success": True}}
+
+        def fake_contact_probe(**kwargs):
+            return {"success": True}
+
+        def fake_reaction_probe(**kwargs):
+            probe_contexts["reaction"] = kwargs["boundary_load_context"]
+            return {"success": True, "reaction_load_balance": {"success": False}}
+
+        monkeypatch.setattr(demo, "probe_saved_boundary_load_mph", fake_boundary_probe)
+        monkeypatch.setattr(demo, "probe_saved_contact_mph", fake_contact_probe)
+        monkeypatch.setattr(demo, "probe_saved_reaction_mph", fake_reaction_probe)
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=output_dir,
+            cores=1,
+            contact_zero_init_gap_value="1",
+        )
+
+        assert summary["solve"]["success"] is True
+        assert probe_contexts["boundary"] == probe_contexts["reaction"]
+        assert probe_contexts["boundary"]["success"] is True
+        assert probe_contexts["boundary"]["applied_load_n"] == pytest.approx(0.101)
+        assert probe_contexts["boundary"]["radial_load_value"] == "0.101[N]"
+        assert probe_contexts["boundary"]["stage"].endswith("_zero_init_gap1")
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["saved_boundary_load_probe"]["load_balance"]["success"] is True
+        assert stage["saved_reaction_probe"]["reaction_load_balance"]["success"] is False
+        assert summary["physical_contact_validation"]["errors"] == [
+            "Saved-MPH support reaction/load balance did not pass."
+        ]
+
     def test_saved_mph_reaction_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 

@@ -6368,6 +6368,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
     run_saved_probes: bool = True,
     rebuild_solver_sequence: bool = False,
     load_ramp_steps: str | None = None,
+    contact_zero_init_gap_value: str | None = None,
 ) -> dict[str, Any]:
     """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
     mph_file = Path(source_mph)
@@ -6413,6 +6414,25 @@ def run_actual_area_resume_from_solved_nominal_mph(
         resume_policy = f"{resume_policy}_with_controlled_actual_area_load_ramp"
         run_id = f"{run_id}_load_ramp"
         model_label = f"{model_label}_load_ramp"
+    if contact_zero_init_gap_value:
+        safe_zero_init_gap = re.sub(r"[^A-Za-z0-9]+", "", contact_zero_init_gap_value) or "custom"
+        stage["name"] = f"{stage['name']}_zero_init_gap{safe_zero_init_gap}"
+        stage["contact_scope"] = f"{stage['contact_scope']}_zero_init_gap{safe_zero_init_gap}"
+        stage["contact_feature_property_overrides"] = {
+            f"contact_roller_{roller}_{side}": {"zeroInitGap": contact_zero_init_gap_value}
+            for roller in stage["active_rollers"]
+            for side in ("inner", "outer")
+        }
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_from_solved_nominal_contact_zero_init_gap_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_zero_init_gap_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_zero_init_gap{safe_zero_init_gap}"
+        resume_policy = f"{resume_policy}_with_contact_zero_init_gap_{safe_zero_init_gap}"
+        run_id = f"{run_id}_zero_init_gap{safe_zero_init_gap}"
+        model_label = f"{model_label}_zero_init_gap{safe_zero_init_gap}"
     summary: dict[str, Any] = {
         "summary_path": str(summary_path),
         "template_run": {
@@ -6553,6 +6573,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
             displacement_preload_selection=stage["displacement_preload_selection"],
             reuse_existing_solver=stage["reuse_existing_solver"],
             use_parametric_sweep=stage["use_parametric_sweep"],
+            contact_feature_property_overrides=stage.get("contact_feature_property_overrides"),
         )
         stage_result["setup"] = _compact_runtime_result(setup)
         if not setup.get("success"):
@@ -6609,6 +6630,17 @@ def run_actual_area_resume_from_solved_nominal_mph(
                 summary["staged_contact_solve"]
             )
             solved_mph = solved_save.get("saved_to") or solved_save.get("filepath") or str(solved_path.resolve())
+            boundary_load_context = {
+                "success": True,
+                "summary_path": str(summary_path),
+                "stage": stage["name"],
+                "radial_load_value": stage["radial_load_value"],
+                "applied_load_n": _parse_unit_value_to_float(stage["radial_load_value"], unit="N"),
+                "reason": None,
+            }
+            if boundary_load_context["applied_load_n"] is None:
+                boundary_load_context["success"] = False
+                boundary_load_context["reason"] = "missing_numeric_radial_load_value"
             if run_saved_probes and solved_save.get("success"):
                 stage_result["saved_boundary_load_probe"] = _compact_runtime_result(
                     probe_saved_boundary_load_mph(
@@ -6617,6 +6649,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
                         selection_name="sel_inner_bore_load_surface",
                         pressure_expression="inner_bore_load_pressure",
                         cores=cores,
+                        boundary_load_context=boundary_load_context,
                     )
                 )
                 stage_result["saved_contact_probe"] = _compact_runtime_result(
@@ -6637,6 +6670,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
                         output_dir=artifact_root / "support_reaction_probe_solved_mph",
                         selection_name="sel_outer_support_surface",
                         cores=cores,
+                        boundary_load_context=boundary_load_context,
                     )
                 )
             load_balance = ((stage_result.get("saved_boundary_load_probe") or {}).get("load_balance") or {})
@@ -7435,6 +7469,12 @@ def _compact_runtime_result(result: dict | None) -> dict | None:
         "plot_path",
         "metrics",
         "png_quality",
+        "boundary_load_context",
+        "load_balance",
+        "solution_evaluation_load_balance",
+        "configured_parameter_load_estimate",
+        "reaction_load_balance",
+        "reaction_verified",
         "stdout",
         "output",
         "error",
@@ -9833,6 +9873,7 @@ def probe_saved_reaction_mph(
     output_dir: str | Path,
     selection_name: str = "sel_inner_bore_load_surface",
     cores: int = 1,
+    boundary_load_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load a solved MPH and run the reaction-equivalent probe without re-solving."""
     mph_file = Path(mph_path)
@@ -9883,7 +9924,11 @@ def probe_saved_reaction_mph(
         result["reaction_candidate_nonzero"] = bool(reaction.get("success")) and (
             reaction_force_abs_numeric is not None and abs(reaction_force_abs_numeric) > 1.0e-9
         )
-        result["boundary_load_context"] = _infer_saved_reaction_boundary_load_context(json_path)
+        result["boundary_load_context"] = (
+            boundary_load_context
+            if isinstance(boundary_load_context, dict)
+            else _infer_saved_reaction_boundary_load_context(json_path)
+        )
         result["reaction_load_balance"] = _reaction_load_balance_gate(
             reaction_force_abs_n=reaction_force_abs_numeric,
             applied_load_n=(result["boundary_load_context"] or {}).get("applied_load_n"),
@@ -9910,6 +9955,7 @@ def probe_saved_boundary_load_mph(
     selection_name: str = "sel_inner_bore_load_surface",
     pressure_expression: str = "inner_bore_load_pressure",
     cores: int = 1,
+    boundary_load_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load a solved MPH and audit the actual integrated BoundaryLoad input."""
     mph_file = Path(mph_path)
@@ -9985,7 +10031,11 @@ def probe_saved_boundary_load_mph(
         result["area_m2"] = _runtime_numeric_max(result["area_integral"])
         result["integrated_load_n"] = _runtime_numeric_max(result["pressure_integral"])
         result["pressure_pa"] = _runtime_numeric_max(result["pressure_value"])
-        result["boundary_load_context"] = _infer_saved_reaction_boundary_load_context(json_path)
+        result["boundary_load_context"] = (
+            boundary_load_context
+            if isinstance(boundary_load_context, dict)
+            else _infer_saved_reaction_boundary_load_context(json_path)
+        )
         result["configured_parameter_load_estimate"] = _configured_boundary_load_estimate(
             pressure_expression=pressure_expression,
             pressure_parameter=result.get("pressure_parameter"),
@@ -15417,6 +15467,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resume-actual-area-contact-zero-init-gap",
+        default="",
+        help=(
+            "Explicitly override zeroInitGap on the active rollers' inner/outer raceway Contact features "
+            "for the resumed actual-area pressure stage, for example '1'. Diagnostic only."
+        ),
+    )
+    parser.add_argument(
         "--probe-geometry-partition-api",
         action="store_true",
         help="Create a tiny COMSOL geometry and probe supported partition/imprint feature APIs.",
@@ -15629,6 +15687,7 @@ def main() -> None:
             run_saved_probes=not bool(args.resume_actual_area_skip_saved_probes),
             rebuild_solver_sequence=bool(args.resume_actual_area_rebuild_solver),
             load_ramp_steps=(args.resume_actual_area_load_ramp.strip() or None),
+            contact_zero_init_gap_value=(args.resume_actual_area_contact_zero_init_gap.strip() or None),
         )
         staged = report.get("staged_contact_solve") or {}
         final_solve = staged.get("final_solve") or report.get("solve") or {}
