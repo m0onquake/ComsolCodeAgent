@@ -65,6 +65,35 @@ def _difference_slot_contains_radius(java_code: str, feature_tag: str, slot: str
     return any(radii.get(tag) == expected for tag in _difference_input_tags(java_code, feature_tag, slot))
 
 
+def _contact_feature_variable_names(java_code: str) -> set[str]:
+    return {
+        variable
+        for variable in re.findall(
+            r"(?m)^\s*(\w+)\s*=\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
+            r"\.feature\(\)\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
+            java_code,
+            flags=re.IGNORECASE,
+        )
+    }
+
+
+def _has_pair_bound_contact_selection_edit(java_code: str) -> bool:
+    if re.search(
+        r"feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\(",
+        java_code,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return any(
+        re.search(
+            rf"(?m)^\s*{re.escape(variable)}\.selection\(\)\.(?:named|set)\(",
+            java_code,
+            flags=re.IGNORECASE,
+        )
+        for variable in _contact_feature_variable_names(java_code)
+    )
+
+
 @dataclass(frozen=True)
 class Segmented3DCodeSpec:
     """Local contract for one generated 3D bearing code segment."""
@@ -835,10 +864,7 @@ def validate_segmented_3d_segment(
             errors.append(f"{spec.segment_id}: roller stabilization must use the audited 1e6 N/m^3 surface stiffness.")
         if not re.search(r"set\(\s*['\"]zeroinitgap['\"]\s*,\s*['\"]1['\"]\s*\)", lowered):
             errors.append(f"{spec.segment_id}: split global contacts must enable zeroInitGap='1'.")
-        if re.search(
-            r"feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\(",
-            lowered,
-        ):
+        if _has_pair_bound_contact_selection_edit(normalized):
             errors.append(
                 f"{spec.segment_id}: pair-bound Solid Mechanics Contact features must bind only with set('pairs', ...); "
                 "their selection is not editable in this COMSOL runtime."
@@ -924,6 +950,8 @@ def validate_segmented_3d_segment(
             errors.append(f"{spec.segment_id}: setup segment must not run the study.")
         if "'evalpoint'" in lowered or '"evalpoint"' in lowered:
             errors.append(f"{spec.segment_id}: maxop result probes must use EvalGlobal, not EvalPoint.")
+        if re.search(r"\.set\(\s*['\"]method['\"]\s*,\s*['\"](?:max|maximum)['\"]\s*\)", lowered):
+            errors.append(f"{spec.segment_id}: EvalGlobal does not support method='max' or method='maximum'.")
         for key in ("pname", "plistarr", "punit"):
             if not re.search(rf"set\(\s*['\"]{key}['\"]\s*,\s*\[", lowered):
                 errors.append(f"{spec.segment_id}: auxiliary continuation {key} must use a one-element string array.")
@@ -1281,7 +1309,9 @@ def validate_3d_bearing_code_draft(
             errors.append("Production steel properties must be assigned through propertyGroup('def').")
         if re.search(r"\.create\([^,\n]+,\s*['\"](?:contact|fixed|boundaryload|displacement2|springfoundation2)['\"]\s*,\s*1\s*\)", lowered):
             errors.append("All 3D Solid Mechanics boundary features must use entity dimension 2, not 1.")
-        if re.search(r"feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\(", lowered):
+        if re.search(r"\.set\(\s*['\"]method['\"]\s*,\s*['\"](?:max|maximum)['\"]\s*\)", lowered):
+            errors.append("EvalGlobal does not support method='max' or method='maximum'.")
+        if _has_pair_bound_contact_selection_edit(code_for_validation):
             errors.append(
                 "Pair-bound Solid Mechanics Contact features must bind only with set('pairs', ...); "
                 "their selection is not editable in this COMSOL runtime."

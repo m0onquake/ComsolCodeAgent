@@ -21,6 +21,7 @@ All LLM calls were run with local proxy variables unset because the local `127.0
 | `PARAM8-X-1N-FREEGEN-FORMAL-REGEN1-20260803` | 8 rollers, `+X`, 1 N, inner/outer diameter 42/82 mm, roller 7 x 18 mm, 10 deg offset | Passed static segmented generation. First A attempt was rejected by Boolean-order gate, retry passed. | `template_run.success=true`; pre-solve selection audit passed. | Completed in 340.76 s; initialization and force solve passed; final strict audit failed only on outer contact resultant: 2.106840863% vs 2% gate. Existing artifact also failed mirror gate, but after the new applicability rule the 10 deg offset should skip exact mirror symmetry. |
 | `PARAM8-Y-1N-FREEGEN-FORMAL-REGEN4-20260803` | 8 rollers, `+Y`, 1 N, same 42/82 mm parameter set and 10 deg offset | Passed regenerated static segmented generation after Contact-selection and Boolean-order fixes. | `template_run.success=true`; pre-solve selection audit passed; initialization passed. | Watchdog timed out at 900.13 s. Checkpoint reached `force_continuation_finished` with `force_solve_success=false`; summary reports `Solve failed: java.lang.NullPointerException`. No final audit was produced. |
 | `param10_dims_static` | 10 rollers, `+X`, inner/outer diameter 45/90 mm, bearing width 20 mm, roller 7.5 x 17 mm, cage clearance 0.3 mm, 7.5 deg offset | Initial run failed in D because generated code retrieved `comp.mesh('mesh1')` before creating it. After the D prompt/gate fix, rerun passed A/B/C/D segmented generation and assembly quality gate. | COMSOL solve intentionally skipped for this static code-generation check. | Static production candidate passed. Assembled code contains `roller_count=10`, `roller_10`/`probe_roller_10` evidence, and `comp.mesh().create('mesh1', 'geom1')`. |
+| `PARAM10-DIMS-1N-FREEGEN-FORMAL-REGEN3-20260803` | 10 rollers, `+X`, same 45/90 mm parameter set, 1 N, 7.5 deg offset | Reused the passed `param10_dims_static` assembled code. Runtime normalizer removed two pair-bound Contact selection edits and one invalid `EvalGlobal.method` property. | `template_run.success=true`; pre-solve selection audit passed; initialization passed. | Full physical solve completed in 654.07 s and strict audit passed. All gates were true: load area, applied load, support reaction, outer-contact resultant, spring leakage, loaded-zone direction, mirror-applicability, and native PNG. Outer-contact balance relative error was 0.2005%, well inside the 2% gate. |
 
 Key artifacts:
 
@@ -30,10 +31,13 @@ Key artifacts:
 - `runtime_smoke/bearing_variant_param8_y_1n_freegen_20260803/formal_regen4/strict_watchdog_manifest.json`
 - `runtime_smoke/bearing_variant_param10_dims_freegen_20260803/static_regen1/segmented_generation/assembled_code.pyfrag`
 - `runtime_smoke/bearing_variant_param10_dims_freegen_20260803/static_regen1/segmented_generation/assembled_manifest.json`
+- `runtime_smoke/bearing_variant_param10_dims_freegen_20260803/formal_regen3/direct_3d_bearing_summary.json`
+- `runtime_smoke/bearing_variant_param10_dims_freegen_20260803/formal_regen3/strict_global_contact_solved.mph`
+- `runtime_smoke/bearing_variant_param10_dims_freegen_20260803/formal_regen3/target_1p0N_native_volume.png`
 
 ## Current interpretation
 
-The agent can now generate different parameterized bearing structures without reverting to the baseline 12-roller fixture: 8-roller changed-dimension models reached COMSOL setup/selection/solve, and a 10-roller changed-dimension model passed the full static segmented generation pipeline.
+The agent can now generate different parameterized bearing structures without reverting to the baseline 12-roller fixture: 8-roller changed-dimension models reached COMSOL setup/selection/solve, and a 10-roller changed-dimension model passed the full static segmented generation pipeline and the full strict physical solve.
 
 `-X` and `+Y` are not yet stable for different reasons:
 

@@ -3409,6 +3409,44 @@ for i in range(num_rollers):
             "remove_pair_bound_contact_feature_selection:1" in report.get("changes", [])
             for report in strict_reports
         )
+        strict_contact_variable_code = (
+            "contact_all_rollers_inner = solid.feature().create('contact_all_rollers_inner', 'Contact', 2)\n"
+            "contact_all_rollers_inner.selection().named('sel_all_roller_inner_contacts')\n"
+            "contact_all_rollers_inner.set('pairs', ['cp_all_rollers_inner'])\n"
+        )
+        strict_variable_quality = validate_3d_bearing_code_draft(
+            strict_contact_variable_code,
+            require_named_selections=True,
+        )
+        assert any("Pair-bound Solid Mechanics Contact features" in error for error in strict_variable_quality["errors"])
+        strict_variable_repaired, strict_variable_reports, strict_variable_quality_after = apply_strict_freegen_syntax_normalization(
+            strict_contact_variable_code,
+            {"success": True, "errors": [], "warnings": []},
+            quality_gate=lambda code: {"success": True, "errors": [], "warnings": []},
+        )
+        assert "contact_all_rollers_inner.selection().named" not in strict_variable_repaired
+        assert "contact_all_rollers_inner.set('pairs', ['cp_all_rollers_inner'])" in strict_variable_repaired
+        assert strict_variable_quality_after["success"] is True
+        assert any(
+            "remove_pair_bound_contact_feature_selection:1" in report.get("changes", [])
+            for report in strict_variable_reports
+        )
+        invalid_evalglobal_method_code = (
+            "model.result().numerical().create('max_von_mises', 'EvalGlobal')\n"
+            "model.result().numerical('max_von_mises').set('expr', 'solid.mises')\n"
+            "model.result().numerical('max_von_mises').set('method', 'max')\n"
+        )
+        method_repaired, method_reports, method_quality = apply_strict_freegen_syntax_normalization(
+            invalid_evalglobal_method_code,
+            {"success": True, "errors": [], "warnings": []},
+            quality_gate=lambda code: {"success": True, "errors": [], "warnings": []},
+        )
+        assert ".set('method', 'max')" not in method_repaired
+        assert method_quality["success"] is True
+        assert any(
+            "remove_invalid_evalglobal_method_property:1" in report.get("changes", [])
+            for report in method_reports
+        )
 
         double_quote_code = VERIFIED_3D_FULL_BEARING_CODE.replace(
             "geom().create('geom1', 3)",

@@ -1431,6 +1431,33 @@ def apply_runtime_preflight_3d_repairs(
     return repaired_code, reports, quality_before
 
 
+def _remove_pair_bound_contact_feature_selection_edits(java_code: str) -> tuple[str, int]:
+    """Remove generated Contact selection edits that COMSOL rejects after pair binding."""
+    repaired, direct_count = re.subn(
+        r"(?m)^\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
+        r"\.feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
+        "",
+        java_code,
+    )
+    contact_vars = set(
+        re.findall(
+            r"(?m)^\s*(\w+)\s*=\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
+            r"\.feature\(\)\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
+            repaired,
+            flags=re.IGNORECASE,
+        )
+    )
+    variable_count = 0
+    for variable in sorted(contact_vars, key=len, reverse=True):
+        repaired, count = re.subn(
+            rf"(?m)^\s*{re.escape(variable)}\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
+            "",
+            repaired,
+        )
+        variable_count += count
+    return repaired, direct_count + variable_count
+
+
 def apply_strict_freegen_syntax_normalization(
     java_code: str,
     initial_quality: dict[str, Any] | None = None,
@@ -1465,7 +1492,7 @@ def apply_strict_freegen_syntax_normalization(
     if early_dataset_count:
         changes.append(f"remove_setup_stage_variable_dataset_binding:{early_dataset_count}")
     repaired, invalid_numerical_method_count = re.subn(
-        r"(?m)^\s*[^\n]*\.set\(\s*['\"]method['\"]\s*,\s*['\"]maximum['\"]\s*\)\s*;?\s*$\n?",
+        r"(?m)^\s*[^\n]*\.set\(\s*['\"]method['\"]\s*,\s*['\"](?:max|maximum)['\"]\s*\)\s*;?\s*$\n?",
         "",
         repaired,
     )
@@ -1473,12 +1500,7 @@ def apply_strict_freegen_syntax_normalization(
         changes.append(
             f"remove_invalid_evalglobal_method_property:{invalid_numerical_method_count}"
         )
-    repaired, contact_selection_count = re.subn(
-        r"(?m)^\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
-        r"\.feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
-        "",
-        repaired,
-    )
+    repaired, contact_selection_count = _remove_pair_bound_contact_feature_selection_edits(repaired)
     if contact_selection_count:
         changes.append(f"remove_pair_bound_contact_feature_selection:{contact_selection_count}")
     repaired, entitydim_count = re.subn(
@@ -1882,12 +1904,7 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
     )
     if count:
         changes.append(f"contact_pair_property_to_pairs_list:{count}")
-    repaired, count = re.subn(
-        r"(?m)^\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
-        r"\.feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
-        "",
-        repaired,
-    )
+    repaired, count = _remove_pair_bound_contact_feature_selection_edits(repaired)
     if count:
         changes.append(f"remove_pair_bound_contact_feature_selection:{count}")
     repaired, count = re.subn(
