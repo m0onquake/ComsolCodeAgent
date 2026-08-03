@@ -7,6 +7,7 @@ COMSOL-specific tests require a local COMSOL installation and are marked accordi
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -2528,6 +2529,95 @@ class TestSimulationSkills:
         assert validate_multiroller_code_draft(bad_code)["success"] is False
         assert validate_multiroller_code_draft(bad_introspection)["success"] is False
         assert validate_multiroller_code_draft(bad_difference)["success"] is False
+
+    def test_strict_bearing_variant_helpers_are_direction_and_geometry_aware(self):
+        from scripts.run_agent_3d_bearing_full_demo import (
+            _bearing_load_area_m2,
+            _signed_axis_vector,
+            _strict_force_continuation_chunks,
+            _unsigned_axis_direction,
+        )
+
+        assert _signed_axis_vector("x", -1, "inner_radial_displacement") == [
+            "-inner_radial_displacement",
+            "0",
+            "0",
+        ]
+        assert _signed_axis_vector("y", 1, "radial_load/(pi*inner_diameter*bearing_width)") == [
+            "0",
+            "radial_load/(pi*inner_diameter*bearing_width)",
+            "0",
+        ]
+        assert _unsigned_axis_direction("y") == ["0", "1", "0"]
+        assert math.isclose(
+            _bearing_load_area_m2(inner_diameter_mm=50.0, bearing_width_mm=20.0),
+            math.pi * 0.05 * 0.02,
+        )
+
+        regular_steps, regular_chunks = _strict_force_continuation_chunks(
+            target_load_n=10.0,
+            reaction_force_n=None,
+            directional_variant=False,
+        )
+        directional_steps, directional_chunks = _strict_force_continuation_chunks(
+            target_load_n=10.0,
+            reaction_force_n=None,
+            directional_variant=True,
+        )
+        assert 0.005 not in regular_steps
+        assert 0.005 in directional_steps
+        assert regular_chunks[-1][-1] == 10.0
+        assert directional_chunks[-1][-1] == 10.0
+
+    def test_segment_validation_uses_variant_terminal_roller_count(self):
+        from comsol_agent.simulation.bearing_3d import (
+            SEGMENTED_3D_CODE_SPECS,
+            validate_segmented_3d_segment,
+        )
+
+        spec = next(item for item in SEGMENTED_3D_CODE_SPECS if item.segment_id == "B_cage_pockets_and_rollers")
+        code = """
+        pitch_radius_mm = 31.0
+        roller_count = 8
+        for i in range(roller_count):
+            pocket_tag = f'cage_pocket_{i+1}'
+            roller_tag = f'roller_{i+1}'
+            split_tag = f'roller_split_tool_{i+1}'
+            partition_tag = f'roller_partition_{i+1}'
+            model.component('comp1').geom('geom1').create(pocket_tag, 'Cylinder')
+            model.component('comp1').geom('geom1').create(roller_tag, 'Cylinder')
+            model.component('comp1').geom('geom1').create(split_tag, 'Block')
+            model.component('comp1').geom('geom1').create(partition_tag, 'Partition')
+            model.component('comp1').geom('geom1').feature(partition_tag).selection('tool').set([split_tag])
+        model.component('comp1').geom('geom1').create('cage', 'Difference')
+        """
+        manifest = {
+            "segment_id": "B_cage_pockets_and_rollers",
+            "depends_on": ["A_base_geometry"],
+            "creates": [
+                "cage_pocket_1",
+                "cage_pocket_8",
+                "cage",
+                "roller_1",
+                "roller_8",
+                "roller_split_tool_1",
+                "roller_split_tool_8",
+                "roller_partition_1",
+                "roller_partition_8",
+            ],
+        }
+
+        validation = validate_segmented_3d_segment(
+            spec,
+            manifest,
+            code,
+            completed_manifests=[{"segment_id": "A_base_geometry"}],
+            existing_tags=set(),
+            roller_count=8,
+        )
+
+        assert not any("roller_12" in error or "cage_pocket_12" in error for error in validation["errors"])
+        assert not any("roller_partition_12" in error or "roller_split_tool_12" in error for error in validation["errors"])
 
     def test_3d_full_bearing_demo_prompt_fixture_and_quality_gate(self):
         from comsol_agent.simulation.bearing_3d import (

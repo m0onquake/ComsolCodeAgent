@@ -17,6 +17,25 @@ SELECTION_BINDING_PROBE_START = "SELECTION_BINDING_PROBE_START"
 SELECTION_BINDING_PROBE_END = "SELECTION_BINDING_PROBE_END"
 
 
+def _variant_terminal_tag(tag: str, *, roller_count: int) -> str:
+    return re.sub(r"(?<!\d)12(?!\d)", str(roller_count), tag)
+
+
+def _required_creates_for_variant(spec: "Segmented3DCodeSpec", *, roller_count: int) -> tuple[str, ...]:
+    if int(roller_count) == VERIFIED_ROLLER_COUNT:
+        return spec.required_creates
+    if spec.segment_id not in {"B_cage_pockets_and_rollers", "C_selections_contacts_physics", "D_mesh_study_results"}:
+        return spec.required_creates
+    return tuple(_variant_terminal_tag(tag, roller_count=int(roller_count)) for tag in spec.required_creates)
+
+
+def _format_mm_bound(value: float) -> str:
+    text = f"{float(value):.12g}".lower()
+    if "e" not in text and "." not in text:
+        text += ".0"
+    return f"{text}[mm]"
+
+
 @dataclass(frozen=True)
 class Segmented3DCodeSpec:
     """Local contract for one generated 3D bearing code segment."""
@@ -564,6 +583,15 @@ def validate_segmented_3d_segment(
     load_axis: str = "x",
     load_sign: int = 1,
     cage_pocket_clearance_mm: float = 0.2,
+    roller_count: int = VERIFIED_ROLLER_COUNT,
+    inner_diameter_mm: float = 40.0,
+    outer_diameter_mm: float = 80.0,
+    bearing_width_mm: float = 18.0,
+    roller_diameter_mm: float = 8.0,
+    roller_length_mm: float = 16.0,
+    pitch_radius_mm: float = 31.0,
+    inner_race_outer_radius_mm: float = 27.0,
+    outer_race_inner_radius_mm: float = 35.0,
 ) -> dict[str, Any]:
     """Validate one segmented generation result before local assembly."""
     errors: list[str] = []
@@ -592,7 +620,7 @@ def validate_segmented_3d_segment(
     if duplicate_tags:
         errors.append(f"{spec.segment_id}: duplicate created tags from previous segments: {duplicate_tags}.")
     creates = set(str(item) for item in (manifest.get("creates") or []))
-    for tag in spec.required_creates:
+    for tag in _required_creates_for_variant(spec, roller_count=roller_count):
         if tag not in creates:
             errors.append(f"{spec.segment_id}: manifest is missing required create tag: {tag}.")
         if tag not in created_tags and tag not in normalized and not _has_required_tag_loop_evidence(normalized, tag):
@@ -616,8 +644,8 @@ def validate_segmented_3d_segment(
                 errors.append(f"{spec.segment_id}: Boolean output must be created with exact feature tag {tag}.")
     if spec.segment_id == "B_cage_pockets_and_rollers":
         expected_numeric_locals = {
-            "roller_diameter": 8.0,
-            "roller_length": 16.0,
+            "roller_diameter": float(roller_diameter_mm),
+            "roller_length": float(roller_length_mm),
             "cage_pocket_clearance": float(cage_pocket_clearance_mm),
         }
         for name, expected in expected_numeric_locals.items():
@@ -682,7 +710,14 @@ def validate_segmented_3d_segment(
             lowered,
         ):
             errors.append(f"{spec.segment_id}: outer support cannot alias the complete outer-ring boundary selection.")
-        for bound in ("26.9[mm]", "27.1[mm]", "34.9[mm]", "35.1[mm]", "39.9[mm]", "40.1[mm]"):
+        for bound in (
+            _format_mm_bound(inner_race_outer_radius_mm - 0.1),
+            _format_mm_bound(inner_race_outer_radius_mm + 0.1),
+            _format_mm_bound(outer_race_inner_radius_mm - 0.1),
+            _format_mm_bound(outer_race_inner_radius_mm + 0.1),
+            _format_mm_bound(outer_diameter_mm / 2.0 - 0.1),
+            _format_mm_bound(outer_diameter_mm / 2.0 + 0.1),
+        ):
             if bound not in lowered:
                 errors.append(f"{spec.segment_id}: missing audited raceway/support cylinder locator bound {bound}.")
         if lowered.count("entitydim") < 9:
@@ -713,7 +748,11 @@ def validate_segmented_3d_segment(
             errors.append(f"{spec.segment_id}: per-roller selections must use physically partitioned inner/outer source faces.")
         if re.search(r"cp_all_rollers_(?:inner|outer)[\s\S]{0,500}source\(\)\.named\(\s*['\"]sel_all_roller_boundaries", lowered):
             errors.append(f"{spec.segment_id}: global pairs cannot both source the unsplit full roller boundary union.")
-        for name, expected in (("pitch_radius_mm", 31.0), ("roller_diameter_mm", 8.0), ("roller_length_mm", 16.0)):
+        for name, expected in (
+            ("pitch_radius_mm", float(pitch_radius_mm)),
+            ("roller_diameter_mm", float(roller_diameter_mm)),
+            ("roller_length_mm", float(roller_length_mm)),
+        ):
             match = re.search(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered)
             if not match or abs(float(match.group(1)) - expected) > 1.0e-12:
                 errors.append(f"{spec.segment_id}: {name} must be the literal {expected:g} for spatial selection boxes.")
@@ -734,6 +773,16 @@ def validate_segmented_3d_segment(
         if not re.search(direction_pattern, lowered):
             errors.append(
                 f"{spec.segment_id}: displacement preload Direction must be {expected_direction} for the {load_axis.upper()}-axis variant."
+            )
+        signed_displacement = "inner_radial_displacement"
+        if int(load_sign) < 0:
+            signed_displacement = "-" + signed_displacement
+        expected_preload_vector = ["0", "0", "0"]
+        expected_preload_vector[0 if load_axis.lower() == "x" else 1] = signed_displacement
+        compact_expected_preload = "[" + ",".join(f"'{value}'" for value in expected_preload_vector) + "]"
+        if compact_expected_preload not in re.sub(r"\s+", "", lowered).replace('"', "'"):
+            errors.append(
+                f"{spec.segment_id}: Displacement2 U0 must use the signed {load_axis.upper()}-axis vector {expected_preload_vector}."
             )
         expected_guidance = ["1[n/m^3]", "1[n/m^3]", "1[n/m^3]"]
         expected_guidance[0 if load_axis.lower() == "x" else 1] = "1e4[n/m^3]"
@@ -848,6 +897,17 @@ def assemble_segmented_3d_code(
     segment_results: list[dict[str, Any]],
     *,
     cage_pocket_clearance_mm: float = 0.2,
+    load_axis: str = "x",
+    load_sign: int = 1,
+    roller_count: int = VERIFIED_ROLLER_COUNT,
+    inner_diameter_mm: float = 40.0,
+    outer_diameter_mm: float = 80.0,
+    bearing_width_mm: float = 18.0,
+    roller_diameter_mm: float = 8.0,
+    roller_length_mm: float = 16.0,
+    pitch_radius_mm: float = 31.0,
+    inner_race_outer_radius_mm: float = 27.0,
+    outer_race_inner_radius_mm: float = 35.0,
 ) -> tuple[str, dict[str, Any]]:
     """Assemble validated segment code and run final full-bearing quality gates."""
     code = "\n\n".join(str(item.get("code") or "").strip() for item in segment_results if item.get("code"))
@@ -855,6 +915,17 @@ def assemble_segmented_3d_code(
         code,
         require_named_selections=True,
         cage_pocket_clearance_mm=cage_pocket_clearance_mm,
+        load_axis=load_axis,
+        load_sign=load_sign,
+        roller_count=roller_count,
+        inner_diameter_mm=inner_diameter_mm,
+        outer_diameter_mm=outer_diameter_mm,
+        bearing_width_mm=bearing_width_mm,
+        roller_diameter_mm=roller_diameter_mm,
+        roller_length_mm=roller_length_mm,
+        pitch_radius_mm=pitch_radius_mm,
+        inner_race_outer_radius_mm=inner_race_outer_radius_mm,
+        outer_race_inner_radius_mm=outer_race_inner_radius_mm,
     )
     manifest = {
         "segment_count": len(segment_results),
@@ -876,6 +947,17 @@ def validate_3d_bearing_code_draft(
     *,
     require_named_selections: bool = False,
     cage_pocket_clearance_mm: float = 0.2,
+    load_axis: str = "x",
+    load_sign: int = 1,
+    roller_count: int = VERIFIED_ROLLER_COUNT,
+    inner_diameter_mm: float = 40.0,
+    outer_diameter_mm: float = 80.0,
+    bearing_width_mm: float = 18.0,
+    roller_diameter_mm: float = 8.0,
+    roller_length_mm: float = 16.0,
+    pitch_radius_mm: float = 31.0,
+    inner_race_outer_radius_mm: float = 27.0,
+    outer_race_inner_radius_mm: float = 35.0,
 ) -> dict[str, Any]:
     """Apply 3D full-bearing gates before launching COMSOL."""
     code_for_validation = _strip_hash_comments(_strip_line_comments(_strip_code_fence(textwrap.dedent(java_code))))
@@ -908,22 +990,48 @@ def validate_3d_bearing_code_draft(
     roller_features = _count_3d_roller_feature_tags(compact)
     pocket_features = _count_3d_cage_pocket_feature_tags(compact)
     if _has_segmented_loop_tag_evidence(code_for_validation, "roller_"):
-        roller_features = max(roller_features, VERIFIED_ROLLER_COUNT)
+        roller_features = max(roller_features, roller_count)
     if _has_segmented_loop_tag_evidence(code_for_validation, "cage_pocket_"):
-        pocket_features = max(pocket_features, VERIFIED_ROLLER_COUNT)
-    if roller_features < VERIFIED_ROLLER_COUNT and not any(token in compact for token in ("roller_12", "cyl_r12", "roller12", "rol12", "rol_11")):
-        errors.append("Generated code is missing expected twelfth roller geometry for full demo scale: roller_12/cyl_r12/rol12/rol_11")
-    if pocket_features < VERIFIED_ROLLER_COUNT and not any(token in compact for token in ("pocket_12", "pocket12", "cage_pocket_12", "pkt12", "pkt_11")):
-        errors.append("Generated code is missing expected twelfth cage pocket representation: pocket_12/pocket12/cage_pocket_12/pkt12/pkt_11")
+        pocket_features = max(pocket_features, roller_count)
+    terminal_roller_tokens = (
+        f"roller_{roller_count}",
+        f"cyl_r{roller_count}",
+        f"roller{roller_count}",
+        f"rol{roller_count}",
+        f"rol_{roller_count - 1}",
+    )
+    terminal_pocket_tokens = (
+        f"pocket_{roller_count}",
+        f"pocket{roller_count}",
+        f"cage_pocket_{roller_count}",
+        f"pkt{roller_count}",
+        f"pkt_{roller_count - 1}",
+    )
+    if roller_features < roller_count and not any(token in compact for token in terminal_roller_tokens):
+        if roller_count == VERIFIED_ROLLER_COUNT:
+            errors.append("Generated code is missing expected twelfth roller geometry for full demo scale: roller_12/cyl_r12/roller12/rol12/rol_11")
+        else:
+            errors.append(
+                f"Generated code is missing expected terminal roller geometry for {roller_count}-roller demo scale: "
+                + "/".join(terminal_roller_tokens)
+            )
+    if pocket_features < roller_count and not any(token in compact for token in terminal_pocket_tokens):
+        if roller_count == VERIFIED_ROLLER_COUNT:
+            errors.append("Generated code is missing expected twelfth cage pocket representation: pocket_12/pocket12/cage_pocket_12/pkt12/pkt_11")
+        else:
+            errors.append(
+                f"Generated code is missing expected terminal cage pocket representation for {roller_count}-roller demo scale: "
+                + "/".join(terminal_pocket_tokens)
+            )
     for pattern, label in required_patterns.items():
-        if pattern == "pocket" and pocket_features >= VERIFIED_ROLLER_COUNT:
+        if pattern == "pocket" and pocket_features >= roller_count:
             continue
         if pattern not in compact:
             errors.append(f"Generated code is missing expected {label}: {pattern}")
-    if roller_features < VERIFIED_ROLLER_COUNT:
-        errors.append(f"3D full-bearing demo must create or reference at least {VERIFIED_ROLLER_COUNT} rollers.")
-    if pocket_features < VERIFIED_ROLLER_COUNT:
-        errors.append(f"3D full-bearing demo must create or reference at least {VERIFIED_ROLLER_COUNT} cage pockets/constraints.")
+    if roller_features < roller_count:
+        errors.append(f"3D full-bearing demo must create or reference at least {roller_count} rollers.")
+    if pocket_features < roller_count:
+        errors.append(f"3D full-bearing demo must create or reference at least {roller_count} cage pockets/constraints.")
     cage_boolean_direct = re.search(r"feature\(['\"]cage['\"]\).*selection\(['\"]input2['\"]\).*cage_pocket_", compact)
     cage_boolean_via_list = bool(
         re.search(r"(?:pocket_list|pocket_tags|cage_pockets)=?\[?f?['\"]cage_pocket_", compact)
@@ -981,6 +1089,28 @@ def validate_3d_bearing_code_draft(
     ):
         if token not in compact:
             errors.append(f"Generated 3D bearing code is missing expected {label}: {token}")
+    if require_named_selections:
+        axis_index = 0 if load_axis.lower() == "x" else 1
+        signed_pressure = "radial_load/(pi*inner_diameter*bearing_width)"
+        signed_displacement = "inner_radial_displacement"
+        if int(load_sign) < 0:
+            signed_pressure = "-" + signed_pressure
+            signed_displacement = "-" + signed_displacement
+        expected_load_vector = ["0", "0", "0"]
+        expected_load_vector[axis_index] = signed_pressure
+        expected_preload_vector = ["0", "0", "0"]
+        expected_preload_vector[axis_index] = signed_displacement
+        compact_code = re.sub(r"\s+", "", lowered).replace('"', "'")
+        compact_expected_load = "[" + ",".join(f"'{value}'" for value in expected_load_vector) + "]"
+        compact_expected_preload = "[" + ",".join(f"'{value}'" for value in expected_preload_vector) + "]"
+        if compact_expected_load not in compact_code:
+            errors.append(
+                f"Production BoundaryLoad FperArea must use signed {load_axis.upper()} vector {expected_load_vector}."
+            )
+        if compact_expected_preload not in compact_code:
+            errors.append(
+                f"Production displacement preload U0 must use signed {load_axis.upper()} vector {expected_preload_vector}."
+            )
     if "set('activate',['solid','on'])" not in compact and 'set("activate",["solid","on"])' not in compact:
         errors.append("Generated 3D bearing code must explicitly activate Solid Mechanics in the stationary study.")
     for token, label in (
@@ -1025,8 +1155,8 @@ def validate_3d_bearing_code_draft(
         if "pitch_radius+cage_width/2" in compact or "pitch_radius-cage_width/2" in compact:
             errors.append("Cage radii must be 27.2/34.8 mm parameters, not pitch_radius +/- cage_width/2.")
         for name, expected in (
-            ("roller_diameter", 8.0),
-            ("roller_length", 16.0),
+            ("roller_diameter", float(roller_diameter_mm)),
+            ("roller_length", float(roller_length_mm)),
             ("cage_pocket_clearance", float(cage_pocket_clearance_mm)),
         ):
             for match in re.finditer(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered):
@@ -1079,7 +1209,7 @@ def validate_3d_bearing_code_draft(
         ):
             if token not in lowered:
                 errors.append(f"Production 3D bearing code is missing named selection: {token}")
-        for index in range(1, VERIFIED_ROLLER_COUNT + 1):
+        for index in range(1, roller_count + 1):
             if f"sel_roller_{index}_body" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_body"):
                 errors.append(f"Production 3D bearing code is missing per-roller body selection: sel_roller_{index}_body")
             if f"sel_roller_{index}_boundary" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_boundary"):

@@ -52,6 +52,153 @@ from comsol_agent.tools.simulation import (
 )
 
 
+@dataclass(frozen=True)
+class StrictBearingVariant:
+    roller_count: int = VERIFIED_ROLLER_COUNT
+    inner_diameter_mm: float = 40.0
+    outer_diameter_mm: float = 80.0
+    bearing_width_mm: float = 18.0
+    roller_diameter_mm: float = 8.0
+    roller_length_mm: float = 16.0
+    pitch_radius_mm: float = 31.0
+    inner_race_outer_radius_mm: float = 27.0
+    outer_race_inner_radius_mm: float = 35.0
+    cage_inner_radius_mm: float = 27.2
+    cage_outer_radius_mm: float = 34.8
+
+
+def _strict_bearing_variant_from_args(args: argparse.Namespace) -> StrictBearingVariant:
+    return StrictBearingVariant(
+        roller_count=int(getattr(args, "strict_roller_count", VERIFIED_ROLLER_COUNT)),
+        inner_diameter_mm=float(getattr(args, "strict_inner_diameter_mm", 40.0)),
+        outer_diameter_mm=float(getattr(args, "strict_outer_diameter_mm", 80.0)),
+        bearing_width_mm=float(getattr(args, "strict_bearing_width_mm", 18.0)),
+        roller_diameter_mm=float(getattr(args, "strict_roller_diameter_mm", 8.0)),
+        roller_length_mm=float(getattr(args, "strict_roller_length_mm", 16.0)),
+        pitch_radius_mm=float(getattr(args, "strict_pitch_radius_mm", 31.0)),
+        inner_race_outer_radius_mm=float(getattr(args, "strict_inner_race_outer_radius_mm", 27.0)),
+        outer_race_inner_radius_mm=float(getattr(args, "strict_outer_race_inner_radius_mm", 35.0)),
+        cage_inner_radius_mm=float(getattr(args, "strict_cage_inner_radius_mm", 27.2)),
+        cage_outer_radius_mm=float(getattr(args, "strict_cage_outer_radius_mm", 34.8)),
+    )
+
+
+def _axis_index(load_axis: str) -> int:
+    axis = str(load_axis).lower()
+    if axis not in {"x", "y"}:
+        raise ValueError(f"load_axis must be 'x' or 'y', got {load_axis!r}")
+    return 0 if axis == "x" else 1
+
+
+def _signed_axis_vector(load_axis: str, load_sign: int, expression: str) -> list[str]:
+    signed_expression = str(expression)
+    if int(load_sign) < 0:
+        signed_expression = "-" + signed_expression
+    vector = ["0", "0", "0"]
+    vector[_axis_index(load_axis)] = signed_expression
+    return vector
+
+
+def _unsigned_axis_direction(load_axis: str) -> list[str]:
+    vector = ["0", "0", "0"]
+    vector[_axis_index(load_axis)] = "1"
+    return vector
+
+
+def _axis_guidance_vector(load_axis: str) -> list[str]:
+    vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
+    vector[_axis_index(load_axis)] = "1e4[N/m^3]"
+    return vector
+
+
+def _bearing_load_area_m2(*, inner_diameter_mm: float, bearing_width_mm: float) -> float:
+    return math.pi * (float(inner_diameter_mm) / 1000.0) * (float(bearing_width_mm) / 1000.0)
+
+
+def _strict_force_continuation_chunks(
+    *,
+    target_load_n: float,
+    reaction_force_n: float | None,
+    directional_variant: bool = False,
+) -> tuple[list[float], list[list[float]]]:
+    # Directional variants need extra resolution at first force transfer because
+    # the active load-side roller set can rotate or change sign relative to the
+    # original +X tuning.
+    official_force_steps = [
+        1.0e-6,
+        1.0e-4,
+        0.005,
+        0.01,
+        0.015,
+        0.02,
+        0.035,
+        0.05,
+        0.08,
+        0.1,
+        0.1001,
+        0.1005,
+        0.101,
+        0.2,
+        0.5,
+        1.0,
+    ] if directional_variant else [
+        1.0e-6,
+        1.0e-4,
+        0.01,
+        0.02,
+        0.05,
+        0.08,
+        0.1,
+        0.1001,
+        0.1005,
+        0.101,
+        0.2,
+        0.5,
+        1.0,
+    ]
+    while official_force_steps[-1] * 2.0 < target_load_n * (1.0 - 1.0e-12):
+        official_force_steps.append(official_force_steps[-1] * 2.0)
+    if target_load_n > official_force_steps[-1] * (1.0 + 1.0e-12):
+        official_force_steps.append(float(target_load_n))
+    else:
+        official_force_steps[-1] = float(target_load_n)
+
+    reaction_force = float(reaction_force_n or 0.0)
+    reaction_force_is_valid = math.isfinite(reaction_force) and reaction_force > 1.0e-6
+    if reaction_force_is_valid and reaction_force < target_load_n:
+        transfer_force_steps = [reaction_force]
+        transfer_force_steps.extend(
+            value
+            for value in official_force_steps
+            if value > reaction_force * (1.0 + 1.0e-12)
+        )
+    elif reaction_force_is_valid and reaction_force > target_load_n:
+        transfer_force_steps = [reaction_force]
+        while transfer_force_steps[-1] / 2.0 > target_load_n * (1.0 + 1.0e-12):
+            transfer_force_steps.append(transfer_force_steps[-1] / 2.0)
+        transfer_force_steps.append(float(target_load_n))
+    else:
+        transfer_force_steps = official_force_steps
+
+    combined_force_steps: list[float] = []
+    for value in transfer_force_steps:
+        if not combined_force_steps or not math.isclose(value, combined_force_steps[-1], rel_tol=1e-12, abs_tol=1e-15):
+            combined_force_steps.append(float(value))
+
+    low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
+    if not low_contact_chunk:
+        low_contact_chunk = [combined_force_steps[0]]
+    high_design_chunk: list[float] = []
+    for value in (1.0, float(target_load_n)):
+        preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
+        if value > preceding_value * (1.0 + 1.0e-12):
+            high_design_chunk.append(float(value))
+    chunks = [low_contact_chunk]
+    if high_design_chunk:
+        chunks.append(high_design_chunk)
+    return combined_force_steps, chunks
+
+
 def _fmt_mm(value: float) -> str:
     if abs(value) < 1e-9:
         value = 0.0
@@ -934,20 +1081,15 @@ async def generate_segmented_3d_bearing_code(
     variant_load_sign = int(getattr(args, "strict_load_sign", 1))
     variant_clearance_mm = float(getattr(args, "strict_cage_pocket_clearance_mm", 0.2))
     variant_offset_deg = float(getattr(args, "strict_roller_angular_offset_deg", 0.0))
-    axis_index = 0 if variant_load_axis == "x" else 1
-    signed_pressure = "radial_load/(pi*inner_diameter*bearing_width)"
-    signed_displacement = "inner_radial_displacement"
-    if variant_load_sign < 0:
-        signed_pressure = "-" + signed_pressure
-        signed_displacement = "-" + signed_displacement
-    load_vector = ["0", "0", "0"]
-    preload_vector = ["0", "0", "0"]
-    direction_vector = ["0", "0", "0"]
-    guidance_vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
-    load_vector[axis_index] = signed_pressure
-    preload_vector[axis_index] = signed_displacement
-    direction_vector[axis_index] = "1"
-    guidance_vector[axis_index] = "1e4[N/m^3]"
+    variant = _strict_bearing_variant_from_args(args)
+    load_vector = _signed_axis_vector(
+        variant_load_axis,
+        variant_load_sign,
+        "radial_load/(pi*inner_diameter*bearing_width)",
+    )
+    preload_vector = _signed_axis_vector(variant_load_axis, variant_load_sign, "inner_radial_displacement")
+    direction_vector = _unsigned_axis_direction(variant_load_axis)
+    guidance_vector = _axis_guidance_vector(variant_load_axis)
     for index, spec in enumerate(SEGMENTED_3D_CODE_SPECS):
         validation: dict[str, Any] | None = None
         raw_text = ""
@@ -974,20 +1116,45 @@ async def generate_segmented_3d_bearing_code(
             ]
             if spec.segment_id == "A_base_geometry":
                 variant_lines.extend([
+                    f"- Set roller_count exactly to {variant.roller_count} and use it for all roller, pocket, split-tool, selection, probe, and audit loops.",
+                    f"- Set inner_diameter exactly to {variant.inner_diameter_mm:.12g}[mm].",
+                    f"- Set inner_race_outer_radius exactly to {variant.inner_race_outer_radius_mm:.12g}[mm].",
+                    f"- Set pitch_radius exactly to {variant.pitch_radius_mm:.12g}[mm].",
+                    f"- Set outer_race_inner_radius exactly to {variant.outer_race_inner_radius_mm:.12g}[mm].",
+                    f"- Set outer_diameter exactly to {variant.outer_diameter_mm:.12g}[mm].",
+                    f"- Set bearing_width exactly to {variant.bearing_width_mm:.12g}[mm].",
+                    f"- Set roller_diameter exactly to {variant.roller_diameter_mm:.12g}[mm].",
+                    f"- Set roller_length exactly to {variant.roller_length_mm:.12g}[mm].",
+                    f"- Set cage_inner_radius exactly to {variant.cage_inner_radius_mm:.12g}[mm] and cage_outer_radius exactly to {variant.cage_outer_radius_mm:.12g}[mm].",
                     f"- Set cage_pocket_clearance exactly to {variant_clearance_mm:.12g}[mm].",
                     f"- Set roller_angular_offset_deg exactly to {variant_offset_deg:.12g}[deg] as an explicit model parameter.",
                 ])
             elif spec.segment_id == "B_cage_pockets_and_rollers":
                 variant_lines.extend([
+                    f"- Create exactly {variant.roller_count} rollers, cage pockets, split tools, and roller partitions; the terminal tags are roller_{variant.roller_count}, cage_pocket_{variant.roller_count}, roller_split_tool_{variant.roller_count}, and roller_partition_{variant.roller_count}.",
+                    f"- Use pitch_radius_mm={variant.pitch_radius_mm:.12g}, roller_diameter_mm={variant.roller_diameter_mm:.12g}, and roller_length_mm={variant.roller_length_mm:.12g} as Python numeric constants for placement.",
                     f"- Use the existing {variant_clearance_mm:.12g}[mm] cage_pocket_clearance parameter in every pocket radius; do not reset it.",
-                    f"- Place roller i at angle radians({variant_offset_deg:.12g}) + 2*pi*i/12; apply the same {variant_offset_deg:.12g} degree offset to pockets and split tools.",
+                    f"- Place roller i at angle radians({variant_offset_deg:.12g}) + 2*pi*i/{variant.roller_count}; apply the same {variant_offset_deg:.12g} degree offset to pockets and split tools.",
                 ])
             elif spec.segment_id == "C_selections_contacts_physics":
+                inner_bore_half = variant.inner_diameter_mm / 2.0 + 0.1
+                z_half_load = variant.bearing_width_mm / 2.0 + 0.1
                 variant_lines.extend([
+                    f"- Create and bind per-roller selections/coupling operators for exactly {variant.roller_count} rollers; the terminal per-roller tags use suffix _{variant.roller_count}, not _12 unless roller_count is 12.",
+                    f"- Use pitch_radius_mm={variant.pitch_radius_mm:.12g}, roller_diameter_mm={variant.roller_diameter_mm:.12g}, and roller_length_mm={variant.roller_length_mm:.12g} for spatial contact-point Box coordinates.",
+                    f"- Build box_inner_bore with x/y bounds +/-{inner_bore_half:.12g}[mm] and z bounds +/-{z_half_load:.12g}[mm], then intersect it with geom1_inner_ring_bnd.",
+                    f"- Locate sel_inner_raceway_contact at x={variant.inner_race_outer_radius_mm - 0.1:.12g}..{variant.inner_race_outer_radius_mm + 0.1:.12g} mm, y=-0.1..0.1 mm.",
+                    f"- Locate sel_outer_raceway_contact at x={variant.outer_race_inner_radius_mm - 0.1:.12g}..{variant.outer_race_inner_radius_mm + 0.1:.12g} mm, y=-0.1..0.1 mm.",
+                    f"- Locate sel_outer_support_surface at x={variant.outer_diameter_mm / 2.0 - 0.1:.12g}..{variant.outer_diameter_mm / 2.0 + 0.1:.12g} mm, y=-0.1..0.1 mm.",
                     f"- The signed radial loading axis is {variant_load_axis.upper()} with sign {variant_load_sign:+d}.",
                     f"- BoundaryLoad FperArea must be exactly {load_vector!r}.",
                     f"- Displacement2 U0 must be exactly {preload_vector!r}; Direction must be exactly {direction_vector!r}.",
                     f"- Weak inner-ring guidance kPerArea must be exactly {guidance_vector!r}, leaving the load axis unstiffened.",
+                ])
+            elif spec.segment_id == "D_mesh_study_results":
+                variant_lines.extend([
+                    f"- Create probe_roller_1_max_mises..probe_roller_{variant.roller_count}_max_mises for exactly {variant.roller_count} rollers.",
+                    f"- Do not require probe_roller_12_max_mises unless roller_count is 12.",
                 ])
             variant_lines.append("- Do not silently revert these variant values to the baseline.")
             prompt += "\n".join(variant_lines) + "\n" + retry_note
@@ -1023,6 +1190,15 @@ async def generate_segmented_3d_bearing_code(
                     load_axis=variant_load_axis,
                     load_sign=variant_load_sign,
                     cage_pocket_clearance_mm=variant_clearance_mm,
+                    roller_count=variant.roller_count,
+                    inner_diameter_mm=variant.inner_diameter_mm,
+                    outer_diameter_mm=variant.outer_diameter_mm,
+                    bearing_width_mm=variant.bearing_width_mm,
+                    roller_diameter_mm=variant.roller_diameter_mm,
+                    roller_length_mm=variant.roller_length_mm,
+                    pitch_radius_mm=variant.pitch_radius_mm,
+                    inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
+                    outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
                 )
                 validation.update({
                     "stage": "segmented_generation",
@@ -1099,6 +1275,17 @@ async def generate_segmented_3d_bearing_code(
     assembled_code, assembly_manifest = assemble_segmented_3d_code(
         segment_results,
         cage_pocket_clearance_mm=variant_clearance_mm,
+        load_axis=variant_load_axis,
+        load_sign=variant_load_sign,
+        roller_count=variant.roller_count,
+        inner_diameter_mm=variant.inner_diameter_mm,
+        outer_diameter_mm=variant.outer_diameter_mm,
+        bearing_width_mm=variant.bearing_width_mm,
+        roller_diameter_mm=variant.roller_diameter_mm,
+        roller_length_mm=variant.roller_length_mm,
+        pitch_radius_mm=variant.pitch_radius_mm,
+        inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
+        outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
     )
     assembly_manifest["strict_variant"] = {
         "case_id": str(getattr(args, "strict_case_id", "default")),
@@ -1106,6 +1293,17 @@ async def generate_segmented_3d_bearing_code(
         "load_sign": variant_load_sign,
         "cage_pocket_clearance_mm": variant_clearance_mm,
         "roller_angular_offset_deg": variant_offset_deg,
+        "roller_count": variant.roller_count,
+        "inner_diameter_mm": variant.inner_diameter_mm,
+        "outer_diameter_mm": variant.outer_diameter_mm,
+        "bearing_width_mm": variant.bearing_width_mm,
+        "roller_diameter_mm": variant.roller_diameter_mm,
+        "roller_length_mm": variant.roller_length_mm,
+        "pitch_radius_mm": variant.pitch_radius_mm,
+        "inner_race_outer_radius_mm": variant.inner_race_outer_radius_mm,
+        "outer_race_inner_radius_mm": variant.outer_race_inner_radius_mm,
+        "cage_inner_radius_mm": variant.cage_inner_radius_mm,
+        "cage_outer_radius_mm": variant.cage_outer_radius_mm,
     }
     (segment_dir / "assembled_manifest.json").write_text(
         json.dumps(assembly_manifest, ensure_ascii=False, indent=2, default=str),
@@ -7951,9 +8149,11 @@ def _run_strict_generated_global_contact_solve(
     load_axis: str = "x",
     load_sign: int = 1,
     roller_angular_offset_deg: float = 0.0,
+    variant: StrictBearingVariant | None = None,
     case_id: str = "default",
 ) -> dict[str, Any]:
     """Solve the Agent-authored two-global-contact model without legacy fixture staging."""
+    variant = variant or StrictBearingVariant()
     configured_mph = artifact_root / "strict_global_contact_configured.mph"
     solved_mph = artifact_root / "strict_global_contact_solved.mph"
     failed_mph = artifact_root / "strict_global_contact_failed.mph"
@@ -7966,6 +8166,17 @@ def _run_strict_generated_global_contact_solve(
         "load_axis": load_axis.lower(),
         "load_sign": int(load_sign),
         "roller_angular_offset_deg": float(roller_angular_offset_deg),
+        "variant_geometry": {
+            "roller_count": variant.roller_count,
+            "inner_diameter_mm": variant.inner_diameter_mm,
+            "outer_diameter_mm": variant.outer_diameter_mm,
+            "bearing_width_mm": variant.bearing_width_mm,
+            "roller_diameter_mm": variant.roller_diameter_mm,
+            "roller_length_mm": variant.roller_length_mm,
+            "pitch_radius_mm": variant.pitch_radius_mm,
+            "inner_race_outer_radius_mm": variant.inner_race_outer_radius_mm,
+            "outer_race_inner_radius_mm": variant.outer_race_inner_radius_mm,
+        },
     }
     checkpoint_path = artifact_root / "strict_run_checkpoint.json"
 
@@ -7989,9 +8200,9 @@ def _run_strict_generated_global_contact_solve(
 
     checkpoint("selection_audit_start")
     load_axis = load_axis.lower()
-    load_axis_index = 0 if load_axis == "x" else 1
-    preload_direction = ["0", "0", "0"]
-    preload_direction[load_axis_index] = "1"
+    preload_direction = _unsigned_axis_direction(load_axis)
+    signed_preload_vector = _signed_axis_vector(load_axis, load_sign, "inner_radial_displacement")
+    directional_variant = load_axis != "x" or int(load_sign) < 0 or abs(float(roller_angular_offset_deg)) > 1.0e-12
     selection_marker_start = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_START"
     selection_marker_end = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_END"
     selection_audit_code = f"""
@@ -8002,7 +8213,7 @@ selection_tags = [
     'sel_all_roller_inner_contacts', 'sel_all_roller_outer_contacts',
     'sel_inner_bore_load_surface', 'sel_outer_support_surface',
 ]
-for audit_roller_id in range(1, 13):
+for audit_roller_id in range(1, {variant.roller_count + 1}):
     selection_tags.extend([
         'sel_roller_' + str(audit_roller_id) + '_body',
         'sel_roller_' + str(audit_roller_id) + '_boundary',
@@ -8076,7 +8287,7 @@ output.write('\\n' + {selection_marker_end!r} + '\\n')
         report["success"] = False
         return report
     conditioning_code = f"""
-for diagnostic_roller_id in range(1, 13):
+for diagnostic_roller_id in range(1, {variant.roller_count + 1}):
     model.component('comp1').physics('solid').feature(
         'spring_roller_' + str(diagnostic_roller_id)
     ).set('kPerArea', ['1e6[N/m^3]', '1e6[N/m^3]', '1e6[N/m^3]'])
@@ -8089,11 +8300,12 @@ for diagnostic_load_tag in ['load_inner_bore_audit', 'load_inner_bore']:
         pass
 for diagnostic_preload_tag in [
     'disp_inner_preload', 'disp_preload_inner', 'preload_inner_radial',
-    'preload_inner_displacement',
+    'preload_inner_displacement', 'preload_inner_bore',
 ]:
     try:
         diagnostic_preload = model.component('comp1').physics('solid').feature(diagnostic_preload_tag)
         diagnostic_preload.set('Direction', {preload_direction!r})
+        diagnostic_preload.set('U0', {signed_preload_vector!r})
         diagnostic_preload.active(True)
     except Exception:
         pass
@@ -8146,6 +8358,7 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
         "changes": [
             "roller SpringFoundation2 kPerArea: 1e2 -> 1e6 N/m^3",
             "split-source global Contact zeroInitGap: 0 -> 1",
+            f"signed {load_axis.upper()}{int(load_sign):+d} displacement preload U0: {signed_preload_vector}",
             "single inherited contact initialization state: 1e-4 um",
             "segregated iteration ceiling: 150",
             "iterative linear ceiling/restart: 1000/200",
@@ -8184,70 +8397,13 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
     report["initialization_reaction"] = initialization_reaction
     checkpoint("initialization_reaction_audited")
     reaction_force = float(initialization_reaction.get("best_reaction_force_abs_n") or 0.0)
-    reaction_force_is_valid = math.isfinite(reaction_force) and reaction_force > 1.0e-6
-    # Contact status changes around 0.1 N for rotated radial-load variants.  A
-    # direct 0.01 -> 0.101 N jump can exhaust the Newton iteration budget even
-    # when both endpoint states are valid, so resolve that transition and keep
-    # the following decade similarly bounded.  Every item is still solved as a
-    # separate study that inherits the immediately preceding solution.
-    official_force_steps = [
-        1.0e-6,
-        1.0e-4,
-        0.01,
-        0.02,
-        0.05,
-        0.08,
-        0.1,
-        0.1001,
-        0.1005,
-        0.101,
-        0.2,
-        0.5,
-        1.0,
-    ]
-    while official_force_steps[-1] * 2.0 < target_load_n * (1.0 - 1.0e-12):
-        official_force_steps.append(official_force_steps[-1] * 2.0)
-    if target_load_n > official_force_steps[-1] * (1.0 + 1.0e-12):
-        official_force_steps.append(float(target_load_n))
-    else:
-        official_force_steps[-1] = float(target_load_n)
-    if reaction_force_is_valid and reaction_force < target_load_n:
-        # Switch from displacement to force control at the force represented by
-        # the converged initialization state.  Unloading that state to 1e-6 N
-        # first both wastes stages and can reopen contacts that must immediately
-        # be closed again on the upward ramp.
-        transfer_force_steps = [reaction_force]
-        transfer_force_steps.extend(
-            value
-            for value in official_force_steps
-            if value > reaction_force * (1.0 + 1.0e-12)
-        )
-    elif reaction_force_is_valid and reaction_force > target_load_n:
-        # Unload monotonically when a requested target is below the
-        # displacement-initialization equivalent force.
-        transfer_force_steps = [reaction_force]
-        while transfer_force_steps[-1] / 2.0 > target_load_n * (1.0 + 1.0e-12):
-            transfer_force_steps.append(transfer_force_steps[-1] / 2.0)
-        transfer_force_steps.append(float(target_load_n))
-    else:
-        transfer_force_steps = official_force_steps
-    combined_force_steps = []
-    for value in transfer_force_steps:
-        if not combined_force_steps or not math.isclose(value, combined_force_steps[-1], rel_tol=1e-12, abs_tol=1e-15):
-            combined_force_steps.append(value)
+    combined_force_steps, force_continuation_chunks = _strict_force_continuation_chunks(
+        target_load_n=target_load_n,
+        reaction_force_n=reaction_force,
+        directional_variant=directional_variant,
+    )
     report["force_continuation_requested_checkpoints_n"] = list(combined_force_steps)
-    low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
-    if not low_contact_chunk:
-        low_contact_chunk = [combined_force_steps[0]]
-    high_design_chunk = []
-    for value in (1.0, float(target_load_n)):
-        preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
-        if value > preceding_value * (1.0 + 1.0e-12):
-            high_design_chunk.append(value)
-    force_continuation_chunks = [low_contact_chunk]
-    if high_design_chunk:
-        force_continuation_chunks.append(high_design_chunk)
-    combined_force_steps = low_contact_chunk
+    combined_force_steps = force_continuation_chunks[0]
     force_step_text = " ".join(f"{value:.15g}" for value in combined_force_steps)
     report["force_continuation_chunks_n"] = force_continuation_chunks
     report["force_continuation_schedule_n"] = [
@@ -8256,7 +8412,7 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
     force_transfer_code = f"""
 for force_preload_tag in [
     'disp_inner_preload', 'disp_preload_inner', 'preload_inner_radial',
-    'preload_inner_displacement',
+    'preload_inner_displacement', 'preload_inner_bore',
 ]:
     try:
         model.component('comp1').physics('solid').feature(force_preload_tag).active(False)
@@ -8420,8 +8576,8 @@ for force_solver_path, force_solver_key, force_solver_value in [
         for axis, expression in {"x": "solid.RFx", "y": "solid.RFy", "z": "solid.RFz"}.items()
     }
     roller_rows: list[dict[str, Any]] = []
-    for roller_id in range(1, 13):
-        angle_deg = float(roller_angular_offset_deg) + 30.0 * (roller_id - 1)
+    for roller_id in range(1, variant.roller_count + 1):
+        angle_deg = float(roller_angular_offset_deg) + 360.0 * (roller_id - 1) / variant.roller_count
         angle = math.radians(angle_deg)
         row: dict[str, Any] = {"roller": roller_id, "angle_deg": angle_deg % 360.0}
         for side in ("inner", "outer"):
@@ -8451,7 +8607,7 @@ for force_solver_path, force_solver_key, force_solver_value in [
         roller_rows.append(row)
     spring_rows: list[dict[str, Any]] = []
     spring_totals = {"x": 0.0, "y": 0.0, "z": 0.0}
-    for roller_id in range(1, 13):
+    for roller_id in range(1, variant.roller_count + 1):
         row = {"roller": roller_id}
         for axis, displacement_expression in (("x", "u"), ("y", "v"), ("z", "w")):
             evaluation = _evaluate_surface_integral_expression_via_java(
@@ -8482,7 +8638,10 @@ for force_solver_path, force_solver_key, force_solver_value in [
         inner_guidance_row[f"f{axis}_n"] = value
         inner_guidance_row[f"{axis}_evaluation"] = evaluation
         spring_totals[axis] += value
-    expected_area_m2 = math.pi * 0.04 * 0.018
+    expected_area_m2 = _bearing_load_area_m2(
+        inner_diameter_mm=variant.inner_diameter_mm,
+        bearing_width_mm=variant.bearing_width_mm,
+    )
     load_area_m2 = _runtime_numeric_max(load_area)
     applied_load_n = _runtime_numeric_max(applied_load)
     support_vector = {
@@ -8536,8 +8695,8 @@ for force_solver_path, force_solver_key, force_solver_value in [
     )
     final_audit = report.get("final_audit") or {}
     roller_angles = {
-        roller_id: (float(roller_angular_offset_deg) + 30.0 * (roller_id - 1)) % 360.0
-        for roller_id in range(1, 13)
+        roller_id: (float(roller_angular_offset_deg) + 360.0 * (roller_id - 1) / variant.roller_count) % 360.0
+        for roller_id in range(1, variant.roller_count + 1)
     }
     mirror_pairs_set: set[tuple[int, int]] = set()
     for roller_id, angle_deg in roller_angles.items():
@@ -8706,6 +8865,7 @@ def run_direct_fixture_smoke(
         str(item.get("stage", "")).startswith("segmented_generation")
         for item in repair_history
     )
+    strict_variant = _strict_bearing_variant_from_args(args)
     summary: dict[str, Any] = {
         "fixture_quality": (
             {
@@ -8752,7 +8912,7 @@ def run_direct_fixture_smoke(
             java_code=generated_code,
             params={
                 "model_dimension": "3d_full_bearing",
-                "roller_count": str(VERIFIED_ROLLER_COUNT),
+                "roller_count": str(strict_variant.roller_count),
                 "cage_included": "raceway_only_visual" if legacy_raceway_highload_direct else "true",
                 "radial_load": (
                     f"{float(getattr(args, 'strict_target_load_n', 10.099982438539563)):.15g}[N]"
@@ -8760,6 +8920,11 @@ def run_direct_fixture_smoke(
                     else "3000[N]"
                 ),
                 "cage_pocket_clearance": f"{float(getattr(args, 'strict_cage_pocket_clearance_mm', 0.2)):.12g}[mm]",
+                "inner_diameter": f"{strict_variant.inner_diameter_mm:.12g}[mm]",
+                "outer_diameter": f"{strict_variant.outer_diameter_mm:.12g}[mm]",
+                "bearing_width": f"{strict_variant.bearing_width_mm:.12g}[mm]",
+                "roller_diameter": f"{strict_variant.roller_diameter_mm:.12g}[mm]",
+                "roller_length": f"{strict_variant.roller_length_mm:.12g}[mm]",
             },
             execution_context=execution_context,
             create_model_name=args.model_name,
@@ -8794,6 +8959,7 @@ def run_direct_fixture_smoke(
                 load_axis=str(getattr(args, "strict_load_axis", "x")),
                 load_sign=int(getattr(args, "strict_load_sign", 1)),
                 roller_angular_offset_deg=float(getattr(args, "strict_roller_angular_offset_deg", 0.0)),
+                variant=strict_variant,
                 case_id=str(getattr(args, "strict_case_id", "default")),
             )
             summary["strict_global_contact_solve"] = global_result
@@ -17058,6 +17224,17 @@ def main() -> None:
     parser.add_argument("--strict-load-sign", type=int, choices=(-1, 1), default=1)
     parser.add_argument("--strict-cage-pocket-clearance-mm", type=float, default=0.2)
     parser.add_argument("--strict-roller-angular-offset-deg", type=float, default=0.0)
+    parser.add_argument("--strict-roller-count", type=int, default=VERIFIED_ROLLER_COUNT)
+    parser.add_argument("--strict-inner-diameter-mm", type=float, default=40.0)
+    parser.add_argument("--strict-outer-diameter-mm", type=float, default=80.0)
+    parser.add_argument("--strict-bearing-width-mm", type=float, default=18.0)
+    parser.add_argument("--strict-roller-diameter-mm", type=float, default=8.0)
+    parser.add_argument("--strict-roller-length-mm", type=float, default=16.0)
+    parser.add_argument("--strict-pitch-radius-mm", type=float, default=31.0)
+    parser.add_argument("--strict-inner-race-outer-radius-mm", type=float, default=27.0)
+    parser.add_argument("--strict-outer-race-inner-radius-mm", type=float, default=35.0)
+    parser.add_argument("--strict-cage-inner-radius-mm", type=float, default=27.2)
+    parser.add_argument("--strict-cage-outer-radius-mm", type=float, default=34.8)
     parser.add_argument(
         "--strict-run-timeout-seconds",
         type=float,
@@ -17470,6 +17647,14 @@ def main() -> None:
     )
     parser.add_argument("--print-prompts", action="store_true")
     args = parser.parse_args()
+    if args.strict_roller_count < 3:
+        parser.error("--strict-roller-count must be at least 3")
+    if args.strict_inner_diameter_mm <= 0 or args.strict_outer_diameter_mm <= 0:
+        parser.error("--strict-inner-diameter-mm and --strict-outer-diameter-mm must be positive")
+    if args.strict_inner_diameter_mm >= args.strict_outer_diameter_mm:
+        parser.error("--strict-inner-diameter-mm must be smaller than --strict-outer-diameter-mm")
+    if args.strict_bearing_width_mm <= 0 or args.strict_roller_diameter_mm <= 0 or args.strict_roller_length_mm <= 0:
+        parser.error("--strict-bearing-width-mm, --strict-roller-diameter-mm, and --strict-roller-length-mm must be positive")
     if args.physical_all_roller_boundary_load:
         args.contact_stage_mode = "physical_all_roller_boundary_load"
 
