@@ -35,8 +35,19 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
         segment_id="A_base_geometry",
         title="parameters, component, base ring and cage annulus geometry",
         goal=(
-            "Create parameters, comp1, geom1, inner_ring, outer_ring, and cage_annulus only. "
-            "Define shared downstream parameters pitch_dia, pocket_dia, radial_load, mesh_bulk_size, and mesh_contact_size. "
+            "Create parameters, comp1, geom1, and Boolean Difference outputs tagged exactly inner_ring, "
+            "outer_ring, and cage_annulus; enable selresult and set selresultshow='all' on each of those three "
+            "outputs so geom1_inner_ring_bnd, geom1_outer_ring_bnd, and geom1_cage_dom are created. Use a zero-clearance reference "
+            "with inner_diameter=40[mm], inner_race_outer_radius=27[mm], pitch_radius=31[mm], "
+            "outer_race_inner_radius=35[mm], outer_diameter=80[mm], bearing_width=18[mm], "
+            "roller_diameter=8[mm], roller_length=16[mm], cage_width=16[mm], "
+            "cage_inner_radius=27.2[mm], and cage_outer_radius=34.8[mm]. Build cage_annulus from those explicit "
+            "cage radii with height cage_width and z position -cage_width/2; never derive cage radii from "
+            "pitch_radius +/- cage_width/2. "
+            "Define radial_load=10.099982438539563[N], inner_radial_displacement=0[um], "
+            "cage_pocket_clearance=0.2[mm], mesh_bulk_size=5[mm], and mesh_contact_size=2.4[mm]. "
+            "Immediately after creating geom1 call model.component('comp1').geom('geom1').lengthUnit('mm'). "
+            "All dimensional expressions passed to COMSOL must be unit-aware strings. "
             "Do not create rollers, cage pockets, physics, mesh, study, result, or geom.run()."
         ),
         depends_on=(),
@@ -59,6 +70,11 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             ".create('roller_",
             '.create("roller_',
             "pair().create",
+            ".set('name'",
+            '.set("name"',
+            ".set('resulting'",
+            '.set("resulting"',
+            "model.param().evaluate(",
         ),
     ),
     Segmented3DCodeSpec(
@@ -66,11 +82,25 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
         title="cage Boolean pocket cutters, cage Difference, and twelve rollers",
         goal=(
             "Continue from segment A. Create cage_pocket_1..cage_pocket_12, cage Difference, "
-            "and roller_1..roller_12 only. Do not recreate comp1/geom1 or create physics/mesh/study/result."
+            "and roller_1..roller_12 only. Place every roller and pocket from Python numeric millimetre constants "
+            "computed with pitch_radius_mm=31.0 and angle=2*pi*i/12; pass positions as homogeneous string lists "
+            "such as [f'{cx:.12g}[mm]', f'{cy:.12g}[mm]', '-roller_length/2']. Use r='roller_diameter/2' "
+            "for rollers and r='roller_diameter/2+cage_pocket_clearance' for pockets. "
+            "Use h='roller_length' and pos z='-roller_length/2' for both rollers and pocket cutters; do not call "
+            "model.param().get/evaluate and do not convert COMSOL parameter strings with float(). "
+            "Enable selresult on each roller and on the final cage Difference output; set selresultshow='all' "
+            "wherever selresult is enabled. "
+            "After all geometry objects exist, set the existing geom1 finalization feature with "
+            "model.component('comp1').geom('geom1').feature('fin').set('action','assembly') and call geom1.run() "
+            "so automatic geom1_*_dom/bnd selections exist before segment C. Do not create a new fin/FormAssembly "
+            "feature. Do not recreate comp1/geom1 or create physics/mesh/study/result."
         ),
         depends_on=("A_base_geometry",),
-        required_creates=("cage_pocket_1", "cage_pocket_12", "cage", "roller_1", "roller_12"),
-        allowed_prefixes=("cage_pocket_", "cage", "roller_"),
+        required_creates=(
+            "cage_pocket_1", "cage_pocket_12", "cage", "roller_1", "roller_12",
+            "roller_split_tool_1", "roller_split_tool_12", "roller_partition_1", "roller_partition_12",
+        ),
+        allowed_prefixes=("cage_pocket_", "cage", "roller_", "roller_split_tool_", "roller_partition_"),
         forbidden_snippets=(
             "model.parameter(",
             "model = mph.Model",
@@ -79,21 +109,26 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             "model.component.create",
             "geom().create('geom1'",
             'geom().create("geom1"',
-            "geom('geom1').run",
             "study()",
             "result()",
             "physics()",
             "mesh()",
             "pair().create",
+            "model.param().evaluate(",
+            "model.param().get(",
+            ".set('name'",
+            '.set("name"',
+            ".set('resulting'",
+            '.set("resulting"',
         ),
     ),
     Segmented3DCodeSpec(
         segment_id="C_selections_contacts_physics",
-        title="named selections, materials, Solid Mechanics, inner-bore preload, and 36 Contact Pairs",
+        title="named selections, materials, Solid Mechanics, load, stabilization, and two global Contact Pairs",
         goal=(
             "Continue from segments A and B. Create named Box/Intersection selections, materials, "
-            "SolidMechanics, fixed support, inner-bore BoundaryLoad audit plus displacement-controlled preload, 24 explicit roller/raceway Contact Pair features, "
-            "12 explicit roller/cage-pocket Contact Pair features, Contact physics features, per-roller Maximum coupling operators, "
+            "SolidMechanics, fixed support, inner-bore BoundaryLoad audit plus displacement-controlled preload, exactly two global roller/raceway Contact Pair features, "
+            "two Contact physics features, per-roller Maximum and Integration coupling operators, "
             "and a cage Maximum coupling operator using component cpl() API. "
             "Do not create mesh/study/result."
         ),
@@ -104,29 +139,34 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             "sel_outer_support_surface",
             "sel_inner_bore_load_surface",
             "sel_cage_body",
+            "sel_cage_boundary",
             "sel_roller_1_body",
             "sel_roller_12_body",
+            "sel_roller_1_boundary",
+            "sel_roller_12_boundary",
             "sel_roller_1_inner_contact",
+            "sel_roller_12_inner_contact",
+            "sel_roller_1_outer_contact",
             "sel_roller_12_outer_contact",
-            "sel_roller_1_cage_contact",
-            "sel_roller_12_cage_contact",
-            "sel_inner_raceway_1_contact",
-            "sel_outer_raceway_12_contact",
-            "sel_cage_pocket_1_contact",
-            "sel_cage_pocket_12_contact",
-            "cp_roller_1_inner_raceway",
-            "cp_roller_12_outer_raceway",
-            "cp_roller_1_cage_pocket",
-            "cp_roller_12_cage_pocket",
-            "contact_roller_1_inner",
-            "contact_roller_12_outer",
-            "contact_roller_1_cage",
-            "contact_roller_12_cage",
+            "sel_all_roller_inner_contacts",
+            "sel_all_roller_outer_contacts",
+            "sel_all_roller_boundaries",
+            "cp_all_rollers_inner",
+            "cp_all_rollers_outer",
+            "contact_all_rollers_inner",
+            "contact_all_rollers_outer",
+            "fix_outer",
+            "load_inner_bore",
+            "preload_inner_radial",
+            "spring_inner_ring_guidance",
             "maxop_roller_1",
             "maxop_roller_12",
+            "intop_roller_1",
+            "intop_roller_12",
             "maxop_cage",
+            "fix_cage_stabilization",
         ),
-        allowed_prefixes=("sel_", "box_", "cp_", "contact_", "solid", "mat_", "maxop_", "load_", "fix_"),
+        allowed_prefixes=("sel_", "box_", "cp_", "contact_", "solid", "mat_", "maxop_", "intop_", "load_", "fix_", "spring_"),
         forbidden_snippets=(
             "model.parameter(",
             "model = mph.Model",
@@ -139,15 +179,29 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             "study()",
             "result()",
             "mesh()",
+            ".set('include'",
+            '.set("include"',
+            ".set('rmin'",
+            '.set("rmin"',
+            ".set('rmax'",
+            '.set("rmax"',
+            "model.param().evaluate(",
+            "model.param().get(",
+            "geom.create(",
+            "geom.feature(",
+            "'Explicit'",
+            '"Explicit"',
+            ".selection('input').set(",
+            '.selection("input").set(',
         ),
     ),
     Segmented3DCodeSpec(
         segment_id="D_mesh_study_results",
         title="assembly finalization, mesh, stationary study, 3D result, and probes",
         goal=(
-            "Continue from segments A-C. Finalize geometry as assembly, create mesh, stationary study, "
+            "Continue from segments A-C. Geometry is already finalized and run as an assembly. Create mesh, stationary study, "
             "PlotGroup3D solid.mises, global max/contact pressure numerical outputs, and "
-            "probe_roller_1_max_mises..probe_roller_12_max_mises. This is the only segment allowed to call geom.run()."
+            "probe_roller_1_max_mises..probe_roller_12_max_mises. Do not create or replace the fin feature."
         ),
         depends_on=("A_base_geometry", "B_cage_pockets_and_rollers", "C_selections_contacts_physics"),
         required_creates=(
@@ -172,6 +226,10 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             'geom().create("geom1"',
             "physics()",
             "pair().create",
+            "geom.node(",
+            "FormAssembly",
+            "feature().create('fin'",
+            'feature().create("fin"',
         ),
     ),
 )
@@ -190,36 +248,176 @@ def build_segmented_3d_generation_prompt(
     forbidden = "\n".join(f"- {item}" for item in spec.forbidden_snippets)
     depends_on = ", ".join(spec.depends_on) or "none"
     segment_extra_contract = ""
-    if spec.segment_id == "C_selections_contacts_physics":
+    if spec.segment_id == "B_cage_pockets_and_rollers":
+        segment_extra_contract = (
+            "\nSEGMENT_EXTRA_CONTRACT:\n"
+            "- Do not import comsol, mph, or any COMSOL Python module. The existing model object is the only API entry point.\n"
+            "- Create the mesh with the exact API call model.component('comp1').mesh().create('mesh1', 'geom1') "
+            "or comp.mesh().create('mesh1', 'geom1'). The second argument MUST be the existing geometry tag geom1, "
+            "never mesh1. Then set autoMeshSize and call mesh1.run().\n"
+            "- Do not introduce roller_diameter_mm, roller_length_mm, roller_diameter_str, roller_length_str, "
+            "cage_pocket_clearance_mm, cage_pocket_clearance_str, roller_radius, or pocket_radius. The parameters "
+            "already exist in COMSOL from segment A.\n"
+            "- For every pocket Cylinder use the exact literal call .set('r', 'roller_diameter/2+cage_pocket_clearance') "
+            "and .set('h', 'roller_length'). For every roller Cylinder use the exact literal call "
+            ".set('r', 'roller_diameter/2') and .set('h', 'roller_length'). Do not build these expressions with "
+            "Python f-strings or helper variables.\n"
+            "- Use pitch_radius_mm=31.0 only for computing the twelve x/y center coordinates in Python. Use "
+            "z position '-roller_length/2'.\n"
+            "- In the loop create exact tags cage_pocket_{i+1} and roller_{i+1}; set selresult=True and "
+            "selresultshow='all' on every roller inside the loop.\n"
+            "- Also split every roller radially into inner-facing and outer-facing boundary entities before finalization. "
+            "For roller n create Block tool roller_split_tool_n covering only its outward half (one block face passes "
+            "through the roller axis, other block faces stay outside the cylinder), then create Partition feature "
+            "roller_partition_n with selection('input').set([roller_n]) and selection('tool').set([roller_split_tool_n]). "
+            "Set keepinput='off', keeptool='off', selresult=True, selresultshow='all'. Compute the block center and z-axis "
+            "rotation from the same roller angle. The partition must leave two bonded subdomains in one partition output "
+            "and two distinct cylindrical half-boundary entities; do not create overlapping duplicate roller solids.\n"
+            "- Use exact split-tool dimensions ['6[mm]','12[mm]','18[mm]'], base='center', scalar rot equal to the "
+            "roller angle in degrees, and position [cx+3*cos(angle), cy+3*sin(angle), 0] mm. Do not pass rot as a "
+            "three-element list. This makes the local-x minus face pass through the roller axis and encloses only the "
+            "outward half.\n"
+            "- Create cage exactly as Difference tag 'cage' after the loop, subtract all pocket tags from "
+            "cage_annulus, and set selresult=True and selresultshow='all'. Configure existing fin action='assembly', "
+            "createpairs=True, pairtype='contact', then call geom.run().\n"
+        )
+    elif spec.segment_id == "C_selections_contacts_physics":
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
             "- Create global named selections exactly: sel_inner_raceway_contact, sel_outer_raceway_contact, "
             "sel_outer_support_surface, sel_inner_bore_load_surface, sel_cage_body.\n"
-            "- Apply loading on sel_inner_bore_load_surface, not as a domain BodyLoad/FperVol on the whole inner ring: "
-            "create a BoundaryLoad/FperArea audit feature and a displacement-controlled preload feature type 'Displacement2' with U0.\n"
+            "- Never create Explicit selections and never call selection('input').set on a component selection. "
+            "For a pure alias of an automatic geometry selection, create a Union and call "
+            "comp.selection(tag).set('input', ['geom1_object_dom_or_bnd']). For Intersection/Union inputs always "
+            "call comp.selection(tag).set('input', [...]).\n"
+            "- Never set include, rmin, or rmax on a component Box selection. To bind a spatial box to one "
+            "geometry object, create box_<final_tag> as a Box and create <final_tag> as an Intersection whose "
+            "input is [box_<final_tag>, geom1_<object_tag>_bnd] for boundaries or "
+            "[box_<final_tag>, geom1_<object_tag>_dom] for domains. The automatic geometry selections are "
+            "available because segments A-B enable selresult on final objects.\n"
+            "- Every selection in this segment must be created through comp.selection().create(...) or "
+            "model.component('comp1').selection().create(...). Never use geom.create/geom.feature for Box, "
+            "Intersection, Union, or Difference selections; those are component selections, not geometry features.\n"
+            "- Immediately set entitydim='2' on every boundary Union, Box, and Intersection selection, including "
+            "sel_inner_raceway_contact, sel_outer_raceway_contact, sel_outer_support_surface, box_inner_bore, "
+            "sel_inner_bore_load_surface, sel_roller_<n>_boundary, sel_roller_<n>_inner_contact, "
+            "sel_roller_<n>_outer_contact, sel_all_roller_inner_contacts, sel_all_roller_outer_contacts, and "
+            "sel_all_roller_boundaries. Set entitydim='3' "
+            "on sel_cage_body and every sel_roller_<n>_body. Also create boundary Union sel_cage_boundary with "
+            "entitydim='2' as an alias of geom1_cage_bnd. Use selection.set('entitydim', '2' or '3') before set('input', ...). "
+            "The value MUST be a Python string because passing integer 2/3 is ambiguous with COMSOL's boolean Java overload.\n"
+            "- Build sel_inner_bore_load_surface exactly as an Intersection of an inside-condition Box bounded "
+            "by x/y = +/-20.1[mm], z = +/-9.1[mm], and geom1_inner_ring_bnd. This excludes the annular end faces.\n"
+            "- The automatic geom1_inner_ring_bnd and geom1_outer_ring_bnd selections contain every boundary of "
+            "their Boolean ring, so NEVER alias either one directly as a raceway or support selection. Build three "
+            "object-bound Box+Intersection selections at interior points of the desired continuous cylinders: "
+            "sel_inner_raceway_contact at x=26.9..27.1 mm, y=-0.1..0.1 mm; sel_outer_raceway_contact at "
+            "x=34.9..35.1 mm, y=-0.1..0.1 mm; and sel_outer_support_surface at x=39.9..40.1 mm, "
+            "y=-0.1..0.1 mm. Use z=-8.9..8.9 mm and condition='intersects' for each Box, then intersect with "
+            "geom1_inner_ring_bnd or geom1_outer_ring_bnd as appropriate. These three final selections must be "
+            "distinct; the fixed support must contain only the outer-diameter cylinder and must never include the "
+            "outer raceway, ring end faces, or the whole geom1_outer_ring_bnd selection. Do not reference undefined "
+            "outer_radius or evaluate/get COMSOL parameters in Python.\n"
+            "- Never localize a continuous cylindrical raceway boundary with Box selections: COMSOL returns the "
+            "whole connected raceway entity. The roller lateral surfaces were physically split by roller_partition_n. "
+            "For each roller create tight contact-point Box selections intersected with geom1_roller_partition_n_bnd: "
+            "sel_roller_n_inner_contact selects only the inner-facing cylindrical half and "
+            "sel_roller_n_outer_contact only the outer-facing cylindrical half. The tight box is centered at radius "
+            "pitch_radius-roller_diameter/2 or pitch_radius+roller_diameter/2 along that roller angle, spans full roller "
+            "length, and must not touch the axial end faces or internal partition plane. Create sel_all_roller_boundaries "
+            "from geom1_roller_partition_1_bnd..geom1_roller_partition_12_bnd, plus separate Unions "
+            "sel_all_roller_inner_contacts and sel_all_roller_outer_contacts. Create exactly two global searches: "
+            "cp_all_rollers_inner from sel_all_roller_inner_contacts to sel_inner_raceway_contact and "
+            "cp_all_rollers_outer from sel_all_roller_outer_contacts to sel_outer_raceway_contact. Never use the same "
+            "full roller boundary selection as source for both pairs. Immediately call manualSelection(True) on each "
+            "ContactPair before source().named(...) and destination().named(...); otherwise COMSOL can ignore the named "
+            "pair selections during contact search. Do not create per-roller raceway pairs.\n"
+            "- In Python use only pitch_radius_mm=31.0, roller_diameter_mm=8.0, roller_length_mm=16.0 for spatial "
+            "contact-point Box coordinates. Each contact-point Box must use condition='intersects', x/y bounds only "
+            "+/-0.15 mm around the exact contact point, and z bounds -7.9..+7.9 mm so it intersects the split lateral "
+            "half but neither axial end face nor the internal radial partition plane. Never use 15/4/8 mm locals.\n"
+            "- Apply loading on sel_inner_bore_load_surface, not as a domain BodyLoad/FperVol on the whole inner ring. "
+            "Create exact Solid Mechanics feature tags fix_outer (Fixed), load_inner_bore (BoundaryLoad), "
+            "preload_inner_radial (Displacement2), and spring_inner_ring_guidance (SpringFoundation2). "
+            "Do not invent aliases such as preload_inner_bore or spring_inner_ring because the inherited initialization "
+            "and audit stages address these exact tags. The preload feature must define U0. "
+            "The Displacement2 feature is initialization-only and must be inactive in the final force-control stage.\n"
+            "- Construct sel_inner_bore_load_surface from cylindrical bore faces only. Do not leave a broad Box "
+            "condition='intersects' that also captures ring end faces. Use an object-bound Intersection plus an "
+            "inside radial box or explicit runtime-verified bore entities; verify area against "
+            "pi*inner_diameter*bearing_width before normalizing FperArea.\n"
+            "- Final radial-load constraints: fixed outer support, no prescribed X displacement on the bore, "
+            "weak inner guidance with 1e4[N/m^3] on the load axis and 1[N/m^3] transversely, all roller/raceway contacts active, and "
+            "negligible roller regularization only.\n"
+            "- Set BoundaryLoad FperArea to "
+            "['radial_load/(pi*inner_diameter*bearing_width)', '0', '0']. Set preload U0 to "
+            "['inner_radial_displacement', '0', '0'], explicitly set Direction=['1','0','0'], and disable it with feature(...).active(False), never by "
+            "setting an 'active' property.\n"
+            "- Stabilize each roller only with a SpringFoundation2 on geom1_roller_<n>_bnd using "
+            "kPerArea=['1e6[N/m^3]','1e6[N/m^3]','1e6[N/m^3]']; add weak inner-ring guidance "
+            "on geom1_inner_ring_bnd using ['1e4[N/m^3]','1[N/m^3]','1[N/m^3]'] for the baseline +X case. "
+            "The signed-axis variant contract may rotate this vector but must keep 1e4 on the load axis. Cage contact is disabled: "
+            "create no cage ContactPair and no cage Contact physics feature; fix the unloaded cage only for stabilization. "
+            "The boundary Fixed feature fix_cage_stabilization MUST select sel_cage_boundary, never the domain selection sel_cage_body.\n"
             "- In a 12-iteration loop, create/use literal f-string families exactly: "
-            "sel_roller_{i+1}_body, sel_roller_{i+1}_inner_contact, sel_roller_{i+1}_outer_contact, "
-            "sel_roller_{i+1}_cage_contact, sel_inner_raceway_{i+1}_contact, "
-            "sel_outer_raceway_{i+1}_contact, sel_cage_pocket_{i+1}_contact.\n"
-            "- Create Contact Pair tags exactly cp_roller_{i+1}_inner_raceway and "
-            "cp_roller_{i+1}_outer_raceway, with source/destination named to the corresponding contact patch selections.\n"
-            "- Also create Contact Pair tags cp_roller_{i+1}_cage_pocket from "
-            "sel_roller_{i+1}_cage_contact to sel_cage_pocket_{i+1}_contact so cage pocket walls can transfer contact load.\n"
-            "- Create Solid Mechanics Contact features contact_roller_{i+1}_inner, contact_roller_{i+1}_outer, "
-            "and contact_roller_{i+1}_cage, "
-            "and set('pairs', [pair_tag]) on each Contact feature.\n"
+            "sel_roller_{i+1}_body and sel_roller_{i+1}_boundary as aliases of "
+            "geom1_roller_partition_<n>_dom/bnd. Create maxop_roller_{i+1} on the body and intop_roller_{i+1} on the "
+            "full boundary, plus intop_roller_{i+1}_inner and intop_roller_{i+1}_outer on the two contact selections "
+            "for independent contact-force audits.\n"
+            "- Create Solid Mechanics boundary-dimension-2 features contact_all_rollers_inner and "
+            "contact_all_rollers_outer, bind each to its global pair with set('pairs', [pair_tag]), and set "
+            "zeroInitGap='1' on both. The split source patches are created on zero-clearance reference cylinders, and "
+            "the initialization search must zero the discretization-level initial gap before displacement preload.\n"
+            "- Create mat_steel with material type 'Common', select all domains, and set properties through exactly "
+            "model.component('comp1').material('mat_steel').selection().all(). Never call the material selection's "
+            "set(...) with geometry object-name strings because SelectionClient.set accepts integer entity IDs only. "
+            "model.component('comp1').material('mat_steel').propertyGroup('def').set(...): "
+            "youngsmodulus=210[GPa], poissonsratio=0.30, and density=7850[kg/m^3]. Never call mat_steel.set(...) "
+            "for these properties and never create material type 'Steel'.\n"
+            "The creation line must literally be comp.material().create('mat_steel', 'Common') (or the equivalent "
+            "full model.component call); create('mat_steel') without 'Common' is invalid.\n"
             "- Create maxop_cage as a component Maximum coupling operator scoped to sel_cage_body.\n"
             "- Use Solid Mechanics fixed support feature type 'Fixed', not 'FixedConstraint'.\n"
+            "- Every Fixed, BoundaryLoad, Displacement2, SpringFoundation2, and Contact feature is a 3D boundary "
+            "feature and must be created with entity dimension 2. Do not set solid.prop('d').\n"
+            "Any emitted line containing solid.prop('d') or solid.prop(\"d\") is a fatal validation error; "
+            "SolidMechanics already derives the 3D space dimension from geom1.\n"
         )
     elif spec.segment_id == "D_mesh_study_results":
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
+            "- Create mesh1 on geom1 and use comp.mesh('mesh1').autoMeshSize(4) for the bulk. Then create four "
+            "an explicit global Size feature size_bulk with custom='on', hmax='5[mm]', hmin='0.5[mm]'. Then create "
+            "four mesh Size features size_roller_inner_contacts, size_roller_outer_contacts, size_inner_raceway, and "
+            "size_outer_raceway, bind them respectively to sel_all_roller_inner_contacts, "
+            "sel_all_roller_outer_contacts, sel_inner_raceway_contact, and sel_outer_raceway_contact with "
+            "feature.selection().geom('geom1', 2) followed by feature.selection().named(...). The explicit geometry "
+            "and boundary dimension are mandatory; named(...) alone raises 'No entity dimension specified'. On "
+            "every local Size set custom='on', hmax='1.5[mm]', and "
+            "hmin='0.15[mm]'. After all Size features create ftet1 as type 'FreeTet', then call mesh1.run(). "
+            "Creating Size features switches the mesh to user-controlled mode, so omitting FreeTet produces no valid "
+            "volume mesh and is forbidden. This contact-local refinement is required for the twelve-roller traction audit; "
+            "global autoMeshSize(3) is forbidden because it made the nonlinear force continuation impractically "
+            "large and failed to return all parameter steps.\n"
             "- Use model.component('comp1').cpl().create(maxop_tag, 'Maximum') for Maximum operators; do not use coupling().\n"
             "- After creating std1/stat, call model.study('std1').feature('stat').set('activate', ['solid', 'on']).\n"
+            "- Configure radial_load as an AUXILIARY continuation sweep directly on the Stationary feature stat; "
+            "do not create a separate study Parametric Sweep feature. Set useparam='on', pname=['radial_load'], "
+            "plistarr=['1e-6 1e-4 0.01 0.02 0.05 0.08 0.1 0.1001 0.1005 0.101 0.2 0.5 1 2 4 8 "
+            "10.099982438539563'], punit=['N'], pcontinuationmode='manual', pcontinuation='radial_load', and "
+            "preusesol='yes' on model.study('std1').feature('stat'). These exact Stationary Study Extensions "
+            "properties make COMSOL reuse the preceding converged load state and allow automatic intermediate "
+            "continuation steps. pname/plistarr/punit require one-element string arrays.\n"
+            "- Geometry was already finalized and run as an assembly in segment B. Do not create FormAssembly, "
+            "do not call geom.node(), and do not create a new fin feature; a plain geom.run() is sufficient if needed.\n"
             "- Create probe_roller_{i+1}_max_mises in a 12-iteration loop and scope it through "
             "maxop_roller_{i+1}(solid.mises).\n"
             "- Create probe_cage_max_mises and probe_cage_max_displacement scoped through maxop_cage.\n"
             "- Add model.param().set('probe_scope_verified', 'true') or equivalent model parameter evidence.\n"
+            "- Setup code must not solve: do not call std1.run(), model.study(...).run(), result.run(), or numerical.run(). "
+            "The downstream strict runner owns the solve and native plot export. Use EvalGlobal, not EvalPoint, "
+            "for expressions containing maxop_*. Create the surface using "
+            "model.result('pg_stress3d').feature().create('surf_stress', 'Surface').\n"
         )
     return (
         "Generate only one bounded COMSOL Python/MPh setup-code segment for a 12-roller 3D "
@@ -363,6 +561,9 @@ def validate_segmented_3d_segment(
     *,
     completed_manifests: list[dict[str, Any]],
     existing_tags: set[str],
+    load_axis: str = "x",
+    load_sign: int = 1,
+    cage_pocket_clearance_mm: float = 0.2,
 ) -> dict[str, Any]:
     """Validate one segmented generation result before local assembly."""
     errors: list[str] = []
@@ -405,6 +606,231 @@ def validate_segmented_3d_segment(
     )
     if suspicious:
         warnings.append(f"{spec.segment_id}: created tags outside preferred namespace: {suspicious}.")
+    if spec.segment_id == "A_base_geometry" and lowered.count("selresultshow") < 3:
+        errors.append(
+            f"{spec.segment_id}: inner_ring, outer_ring, and cage_annulus must each set selresultshow='all'."
+        )
+    if spec.segment_id == "A_base_geometry":
+        for tag in ("inner_ring", "outer_ring", "cage_annulus"):
+            if not re.search(rf"\.create\(\s*['\"]{tag}['\"]\s*,\s*['\"]difference['\"]\s*\)", lowered):
+                errors.append(f"{spec.segment_id}: Boolean output must be created with exact feature tag {tag}.")
+    if spec.segment_id == "B_cage_pockets_and_rollers":
+        expected_numeric_locals = {
+            "roller_diameter": 8.0,
+            "roller_length": 16.0,
+            "cage_pocket_clearance": float(cage_pocket_clearance_mm),
+        }
+        for name, expected in expected_numeric_locals.items():
+            match = re.search(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered)
+            if match and abs(float(match.group(1)) - expected) > 1.0e-12:
+                errors.append(
+                    f"{spec.segment_id}: local {name}={match.group(1)} contradicts required {expected:g} mm."
+                )
+        for expression in ("roller_diameter/2", "roller_diameter/2+cage_pocket_clearance", "roller_length"):
+            if expression not in re.sub(r"\s+", "", lowered):
+                errors.append(f"{spec.segment_id}: geometry must retain COMSOL parameter expression {expression}.")
+        compact_segment = re.sub(r"\s+", "", lowered)
+        for required_create in (
+            ".create(pocket_tag,'cylinder')",
+            ".create(roller_tag,'cylinder')",
+            ".create('cage','difference')",
+        ):
+            if required_create not in compact_segment:
+                errors.append(
+                    f"{spec.segment_id}: geometry must create exact pocket/roller/cage feature tags; missing {required_create}."
+                )
+        for token in ("roller_split_tool_", "roller_partition_", "'partition'", "selection('tool').set"):
+            if token not in lowered:
+                errors.append(f"{spec.segment_id}: missing radial roller partition evidence: {token}.")
+        if re.search(r"\.set\(\s*['\"]rot['\"]\s*,\s*\[", lowered):
+            errors.append(f"{spec.segment_id}: split-tool Block rot must be a scalar angle, not an array.")
+    if spec.segment_id == "C_selections_contacts_physics":
+        if re.search(
+            r"\.create\([^,\n]+,\s*['\"](?:contact|fixed|boundaryload|displacement2|springfoundation2)['\"]\s*,\s*1\s*\)",
+            lowered,
+        ):
+            errors.append(f"{spec.segment_id}: 3D boundary physics feature uses entity dimension 1; use 2.")
+        if ".prop('d')" in lowered or '.prop("d")' in lowered:
+            errors.append(f"{spec.segment_id}: do not set the Solid Mechanics d property.")
+        for required_token in ("common", "youngsmodulus", "poissonsratio", "density"):
+            if required_token not in lowered:
+                errors.append(f"{spec.segment_id}: missing Common steel material evidence: {required_token}.")
+        if "propertygroup('def')" not in lowered and 'propertygroup("def")' not in lowered:
+            errors.append(f"{spec.segment_id}: steel properties must be assigned through propertyGroup('def').")
+        if not re.search(r"material\([^\n]+\)\.selection\(\)\.all\(\)", lowered) and not re.search(r"mat_steel[^\n]*selection\(\)\.all\(\)", lowered):
+            errors.append(f"{spec.segment_id}: mat_steel must select all domains with selection().all().")
+        if re.search(r"mat_steel[^\n]*selection\(\)\.set\(", lowered):
+            errors.append(f"{spec.segment_id}: material SelectionClient.set cannot receive geometry object-name strings.")
+        if "outer_radius" in lowered:
+            errors.append(f"{spec.segment_id}: undefined outer_radius is forbidden; use literal audited support-box bounds.")
+        for tag in ("sel_inner_raceway_contact", "sel_outer_raceway_contact", "sel_outer_support_surface"):
+            if not re.search(rf"create\(\s*['\"]{tag}['\"]\s*,\s*['\"]intersection['\"]\s*\)", lowered):
+                errors.append(f"{spec.segment_id}: {tag} must be an object-bound Box Intersection, not a whole-ring alias.")
+        inner_bore_uses_inside = bool(
+            re.search(
+                r"(?:selection\(\s*['\"]box_inner_bore['\"]\s*\)|\bbox_inner_bore)"
+                r"[\s\S]{0,300}?set\(\s*['\"]condition['\"]\s*,\s*['\"]inside['\"]\s*\)",
+                lowered,
+            )
+        )
+        if not inner_bore_uses_inside:
+            errors.append(
+                f"{spec.segment_id}: box_inner_bore must use condition='inside' so the load selection excludes ring end faces."
+            )
+        if re.search(
+            r"sel_outer_support_surface[^\n]*\n(?:[^\n]*\n){0,4}[^\n]*set\(\s*['\"]input['\"]\s*,\s*\[\s*['\"]geom1_outer_ring_bnd['\"]\s*\]",
+            lowered,
+        ):
+            errors.append(f"{spec.segment_id}: outer support cannot alias the complete outer-ring boundary selection.")
+        for bound in ("26.9[mm]", "27.1[mm]", "34.9[mm]", "35.1[mm]", "39.9[mm]", "40.1[mm]"):
+            if bound not in lowered:
+                errors.append(f"{spec.segment_id}: missing audited raceway/support cylinder locator bound {bound}.")
+        if lowered.count("entitydim") < 9:
+            errors.append(
+                f"{spec.segment_id}: every component selection family must declare boundary/domain entitydim."
+            )
+        if re.search(r"set\(\s*['\"]entitydim['\"]\s*,\s*[23]\s*\)", lowered):
+            errors.append(
+                f"{spec.segment_id}: entitydim 2/3 must be passed as strings to avoid the Python-Java boolean/int overload ambiguity."
+            )
+        if not re.search(r"create\(\s*['\"]fix_cage_stabilization['\"]\s*,\s*['\"]fixed['\"]\s*,\s*2\s*\)", lowered):
+            errors.append(f"{spec.segment_id}: unloaded cage must use a boundary Fixed stabilization feature.")
+        if re.search(
+            r"fix_cage_stabilization[^\n]*\n(?:[^\n]*\n){0,3}[^\n]*named\(\s*['\"]sel_cage_body['\"]",
+            lowered,
+        ):
+            errors.append(f"{spec.segment_id}: cage boundary Fixed cannot select domain-level sel_cage_body.")
+        if "sel_cage_boundary" not in lowered:
+            errors.append(f"{spec.segment_id}: missing boundary-level sel_cage_boundary for cage stabilization.")
+        for source_tag in ("sel_all_roller_inner_contacts", "sel_all_roller_outer_contacts"):
+            if source_tag not in lowered:
+                errors.append(f"{spec.segment_id}: missing split global contact source {source_tag}.")
+        if len(re.findall(r"manualselection\(\s*true\s*\)", lowered)) < 2:
+            errors.append(
+                f"{spec.segment_id}: both global ContactPair features must call manualSelection(True) before named binding."
+            )
+        if not all(token in lowered for token in ("geom1_roller_partition_", "_inner_contact", "_outer_contact")):
+            errors.append(f"{spec.segment_id}: per-roller selections must use physically partitioned inner/outer source faces.")
+        if re.search(r"cp_all_rollers_(?:inner|outer)[\s\S]{0,500}source\(\)\.named\(\s*['\"]sel_all_roller_boundaries", lowered):
+            errors.append(f"{spec.segment_id}: global pairs cannot both source the unsplit full roller boundary union.")
+        for name, expected in (("pitch_radius_mm", 31.0), ("roller_diameter_mm", 8.0), ("roller_length_mm", 16.0)):
+            match = re.search(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered)
+            if not match or abs(float(match.group(1)) - expected) > 1.0e-12:
+                errors.append(f"{spec.segment_id}: {name} must be the literal {expected:g} for spatial selection boxes.")
+        for forbidden_local in ("pitch_radius =", "roller_diameter =", "roller_length ="):
+            if forbidden_local in lowered:
+                errors.append(f"{spec.segment_id}: ambiguous/wrong local is forbidden; use *_mm exact locals: {forbidden_local}")
+        if "condition', 'intersects" not in lowered and 'condition", "intersects' not in lowered:
+            errors.append(f"{spec.segment_id}: split contact-point boxes must use condition='intersects'.")
+        if "1e6[n/m^3]" not in lowered:
+            errors.append(f"{spec.segment_id}: roller stabilization must use the audited 1e6 N/m^3 surface stiffness.")
+        if not re.search(r"set\(\s*['\"]zeroinitgap['\"]\s*,\s*['\"]1['\"]\s*\)", lowered):
+            errors.append(f"{spec.segment_id}: split global contacts must enable zeroInitGap='1'.")
+        expected_direction = ["0", "0", "0"]
+        expected_direction[0 if load_axis.lower() == "x" else 1] = "1"
+        direction_pattern = r"set\(\s*['\"]direction['\"]\s*,\s*\[\s*" + r"\s*,\s*".join(
+            rf"['\"]{value}['\"]" for value in expected_direction
+        ) + r"\s*\]"
+        if not re.search(direction_pattern, lowered):
+            errors.append(
+                f"{spec.segment_id}: displacement preload Direction must be {expected_direction} for the {load_axis.upper()}-axis variant."
+            )
+        expected_guidance = ["1[n/m^3]", "1[n/m^3]", "1[n/m^3]"]
+        expected_guidance[0 if load_axis.lower() == "x" else 1] = "1e4[n/m^3]"
+        compact_guidance = "[" + ",".join(f"'{value}'" for value in expected_guidance) + "]"
+        if compact_guidance not in re.sub(r"\s+", "", lowered).replace('"', "'"):
+            errors.append(
+                f"{spec.segment_id}: spring_inner_ring_guidance kPerArea must be {expected_guidance}."
+            )
+        signed_pressure = "radial_load/(pi*inner_diameter*bearing_width)"
+        if int(load_sign) < 0:
+            signed_pressure = "-" + signed_pressure
+        expected_load_vector = ["0", "0", "0"]
+        expected_load_vector[0 if load_axis.lower() == "x" else 1] = signed_pressure
+        compact_expected_vector = "[" + ",".join(f"'{value}'" for value in expected_load_vector) + "]"
+        if compact_expected_vector not in re.sub(r"\s+", "", lowered).replace('"', "'"):
+            errors.append(
+                f"{spec.segment_id}: BoundaryLoad FperArea must use the signed {load_axis.upper()}-axis vector {expected_load_vector}."
+            )
+        if re.search(r"cpl\([^\n]+\)\.selection\(\)\.set\(", lowered):
+            errors.append(f"{spec.segment_id}: coupling operators must bind named component selections with selection().named(...).")
+    if spec.segment_id == "D_mesh_study_results":
+        compact_segment = re.sub(r"\s+", "", lowered)
+        if "mesh().create('mesh1','geom1')" not in compact_segment and 'mesh().create("mesh1","geom1")' not in compact_segment:
+            errors.append(f"{spec.segment_id}: mesh1 must be created on existing geometry geom1.")
+        if ".automeshsize(4)" not in compact_segment:
+            errors.append(f"{spec.segment_id}: contact-local mesh strategy requires bulk mesh1.autoMeshSize(4).")
+        if ".automeshsize(3)" in compact_segment:
+            errors.append(f"{spec.segment_id}: global autoMeshSize(3) is forbidden; refine only the audited contact surfaces.")
+        if not re.search(r"create\(\s*['\"]size_bulk['\"]\s*,\s*['\"]size['\"]\s*\)", lowered):
+            errors.append(f"{spec.segment_id}: user-controlled mesh requires explicit global size_bulk.")
+        if not re.search(r"create\(\s*['\"]ftet1['\"]\s*,\s*['\"]freetet['\"]\s*\)", lowered):
+            errors.append(f"{spec.segment_id}: user-controlled local Size features require an explicit FreeTet volume mesh.")
+        for size_tag, selection_tag in (
+            ("size_roller_inner_contacts", "sel_all_roller_inner_contacts"),
+            ("size_roller_outer_contacts", "sel_all_roller_outer_contacts"),
+            ("size_inner_raceway", "sel_inner_raceway_contact"),
+            ("size_outer_raceway", "sel_outer_raceway_contact"),
+        ):
+            if size_tag not in lowered or selection_tag not in lowered:
+                errors.append(f"{spec.segment_id}: missing local mesh Size {size_tag} on {selection_tag}.")
+        explicit_geom_bind_count = lowered.count("selection().geom('geom1', 2)") + lowered.count('selection().geom("geom1", 2)')
+        loop_binds_all_local_sizes = bool(
+            re.search(r"for\s+\w+\s*,\s*\w+\s+in\s+\w+", lowered)
+            and all(tag in lowered for tag in (
+                "size_roller_inner_contacts",
+                "size_roller_outer_contacts",
+                "size_inner_raceway",
+                "size_outer_raceway",
+            ))
+            and re.search(r"\w+\.selection\(\)\.geom\(\s*['\"]geom1['\"]\s*,\s*2\s*\)", lowered)
+            and re.search(r"\w+\.selection\(\)\.named\(", lowered)
+        )
+        if explicit_geom_bind_count < 4 and not loop_binds_all_local_sizes:
+            errors.append(f"{spec.segment_id}: every local boundary Size must declare selection().geom('geom1', 2) before named selection binding.")
+        for mesh_bound in ("5[mm]", "0.5[mm]", "1.5[mm]", "0.15[mm]"):
+            if mesh_bound not in lowered:
+                errors.append(f"{spec.segment_id}: local contact mesh is missing required bound {mesh_bound}.")
+        if re.search(r"(?m)^\s*(?:import\s+comsol|from\s+comsol)", lowered):
+            errors.append(f"{spec.segment_id}: unsupported comsol Python import is forbidden.")
+        if re.search(r"\bstd\w*\.run\s*\(", lowered) or re.search(r"model\.study\([^)]*\)\.run\s*\(", lowered):
+            errors.append(f"{spec.segment_id}: setup segment must not run the study.")
+        if "'evalpoint'" in lowered or '"evalpoint"' in lowered:
+            errors.append(f"{spec.segment_id}: maxop result probes must use EvalGlobal, not EvalPoint.")
+        for key in ("pname", "plistarr", "punit"):
+            if not re.search(rf"set\(\s*['\"]{key}['\"]\s*,\s*\[", lowered):
+                errors.append(f"{spec.segment_id}: auxiliary continuation {key} must use a one-element string array.")
+        if re.search(r"study\(\s*['\"]std1['\"]\s*\)\.create\([^\n]+['\"]parametric['\"]", lowered):
+            errors.append(f"{spec.segment_id}: use Stationary auxiliary continuation, not a separate Parametric Sweep study feature.")
+        for key, value in (
+            ("useparam", "on"),
+            ("pcontinuationmode", "manual"),
+            ("pcontinuation", "radial_load"),
+            ("preusesol", "yes"),
+        ):
+            if not re.search(rf"set\(\s*['\"]{key}['\"]\s*,\s*['\"]{value}['\"]\s*\)", lowered):
+                errors.append(f"{spec.segment_id}: Stationary auxiliary continuation must set {key}={value!r}.")
+        assigned_plot_group_surface = bool(
+            re.search(
+                r"(?P<var>\w+)\s*=\s*model\.result\(\)\.create\(\s*['\"]pg_stress3d['\"]\s*,\s*['\"]plotgroup3d['\"]\s*\)"
+                r"[\s\S]{0,500}?(?P=var)\.feature\(\)\.create\(\s*['\"]surf_stress['\"]\s*,\s*['\"]surface['\"]\s*\)",
+                lowered,
+            )
+            or re.search(
+                r"(?P<var>\w+)\s*=\s*model\.result\(\s*['\"]pg_stress3d['\"]\s*\)"
+                r"[\s\S]{0,500}?(?P=var)\.feature\(\)\.create\(\s*['\"]surf_stress['\"]\s*,\s*['\"]surface['\"]\s*\)",
+                lowered,
+            )
+        )
+        if not (
+            re.search(r"result\(\s*['\"]pg_stress3d['\"]\s*\)\.feature\(\)\.create", lowered)
+            or assigned_plot_group_surface
+            or (
+                re.search(r"\bpg_stress3d\s*=\s*model\.result\(\)\.create\(", lowered)
+                and "pg_stress3d.feature().create(" in re.sub(r"\s+", "", lowered)
+            )
+        ):
+            errors.append(f"{spec.segment_id}: stress Surface must be created through PlotGroup.feature().create().")
     syntax_error = _python_syntax_error(normalized)
     if syntax_error:
         errors.append(f"{spec.segment_id}: generated code is not Python/MPh executable syntax: {syntax_error}")
@@ -418,10 +844,18 @@ def validate_segmented_3d_segment(
     }
 
 
-def assemble_segmented_3d_code(segment_results: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def assemble_segmented_3d_code(
+    segment_results: list[dict[str, Any]],
+    *,
+    cage_pocket_clearance_mm: float = 0.2,
+) -> tuple[str, dict[str, Any]]:
     """Assemble validated segment code and run final full-bearing quality gates."""
     code = "\n\n".join(str(item.get("code") or "").strip() for item in segment_results if item.get("code"))
-    quality = validate_3d_bearing_code_draft(code, require_named_selections=True)
+    quality = validate_3d_bearing_code_draft(
+        code,
+        require_named_selections=True,
+        cage_pocket_clearance_mm=cage_pocket_clearance_mm,
+    )
     manifest = {
         "segment_count": len(segment_results),
         "segments": [
@@ -437,7 +871,12 @@ def assemble_segmented_3d_code(segment_results: list[dict[str, Any]]) -> tuple[s
     return code, manifest
 
 
-def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: bool = False) -> dict[str, Any]:
+def validate_3d_bearing_code_draft(
+    java_code: str,
+    *,
+    require_named_selections: bool = False,
+    cage_pocket_clearance_mm: float = 0.2,
+) -> dict[str, Any]:
     """Apply 3D full-bearing gates before launching COMSOL."""
     code_for_validation = _strip_hash_comments(_strip_line_comments(_strip_code_fence(textwrap.dedent(java_code))))
     compact = re.sub(r"\s+", "", code_for_validation).lower()
@@ -490,11 +929,15 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
         re.search(r"(?:pocket_list|pocket_tags|cage_pockets)=?\[?f?['\"]cage_pocket_", compact)
         and re.search(r"feature\(['\"]cage['\"]\).*selection\(['\"]input2['\"]\)\.set\((?:pocket_list|pocket_tags|cage_pockets)\)", compact)
     )
-    if "cage" in compact and not (cage_boolean_direct or cage_boolean_via_list):
+    cage_boolean_via_variable = bool(
+        re.search(r"create\(['\"]cage['\"],['\"]difference['\"]\)", compact)
+        and re.search(r"(?:cage\.)?selection\(['\"]input2['\"]\)\.set\((?:pocket_list|pocket_tags|cage_pockets)\)", compact)
+    )
+    if "cage" in compact and not (cage_boolean_direct or cage_boolean_via_list or cage_boolean_via_variable):
         errors.append("Cage must use Boolean pocket cutouts via cage Difference input2 selections, not only point/constraint markers.")
     if "cage is omitted" in lowered or "cage geometry is omitted" in lowered:
         errors.append("Cage must be included in the 3D main demo, not omitted.")
-    if any(pattern in compact for pattern in ("model.sol(", "study().run", "result().run", ".solve(")):
+    if any(pattern in compact for pattern in ("model.sol(", "study().run", "result().run", ".solve(")) or re.search(r"\bstd\w*\.run\(", compact):
         errors.append("Generated setup code must not solve or run plot/solver nodes; downstream tools own solving.")
     for pattern in ("new int", "new string", "string ", "model.output()", "getinfo", "getboundaries", "getndobjects"):
         if pattern in lowered:
@@ -521,6 +964,14 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
             "on sel_inner_bore_load_surface, not as a domain BodyLoad/FperVol on sel_inner_load_region: "
             + ", ".join(legacy_inner_domain_load_hits)
         )
+    if "box_inner_bore" in lowered and re.search(
+        r"(?:selection\(\s*['\"]box_inner_bore(?:_load_surface)?['\"]\s*\)|\bbox_inner_bore(?:_load_surface)?)"
+        r"[\s\S]{0,300}?set\(\s*['\"]condition['\"]\s*,\s*['\"]intersects['\"]\s*\)",
+        lowered,
+    ):
+        errors.append(
+            "Inner-bore Box selection must use condition='inside'; intersects includes ring end faces and corrupts load area."
+        )
     for token, label in (
         ("boundaryload", "inner-bore BoundaryLoad feature"),
         ("fperarea", "FperArea boundary traction vector"),
@@ -539,44 +990,86 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
     ):
         if token not in lowered:
             errors.append(f"Generated 3D bearing code is missing expected cage participation audit: {label} ({token})")
-    cage_contact_pair_count = _count_3d_cage_contact_pair_tags(compact)
-    cage_contact_feature_count = _count_3d_cage_contact_feature_tags(compact)
-    roller_cage_selection_count = _count_3d_roller_cage_contact_selection_tags(compact)
-    cage_pocket_selection_count = _count_3d_cage_pocket_contact_selection_tags(compact)
-    has_loop_cage_pair_evidence = _has_segmented_loop_tag_evidence(code_for_validation, "cp_roller_", "_cage_pocket")
-    has_loop_cage_feature_evidence = _has_segmented_loop_tag_evidence(code_for_validation, "contact_roller_", "_cage")
-    has_loop_cage_selection_evidence = (
-        _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_cage_contact")
-        and _has_segmented_loop_tag_evidence(code_for_validation, "sel_cage_pocket_", "_contact")
-    )
-    if cage_contact_pair_count < VERIFIED_ROLLER_COUNT and not has_loop_cage_pair_evidence:
-        errors.append(
-            f"3D full-bearing code must create or loop-create at least {VERIFIED_ROLLER_COUNT} "
-            "roller-to-cage-pocket Contact Pair features."
-        )
-    if cage_contact_feature_count < VERIFIED_ROLLER_COUNT and not has_loop_cage_feature_evidence:
-        errors.append(
-            f"3D full-bearing code must create or loop-create at least {VERIFIED_ROLLER_COUNT} "
-            "Solid Mechanics Contact features for roller-to-cage-pocket load transfer."
-        )
-    if (
-        (
-            roller_cage_selection_count < VERIFIED_ROLLER_COUNT
-            or cage_pocket_selection_count < VERIFIED_ROLLER_COUNT
-        )
-        and not has_loop_cage_selection_evidence
-    ):
-        for token in (
-            "sel_roller_1_cage_contact",
-            "sel_roller_12_cage_contact",
-            "sel_cage_pocket_1_contact",
-            "sel_cage_pocket_12_contact",
-        ):
-            if token not in lowered:
-                errors.append(f"Generated 3D bearing code is missing cage contact selection evidence: {token}")
     if require_named_selections and not any(marker in compact for marker in ("selection().create", ".selection('", '.selection("')):
         errors.append("Production 3D bearing code must create/use named selections for contact, load, support, and cage entities.")
     if require_named_selections:
+        for token, label in (
+            ("cage_inner_radius", "explicit 27.2 mm cage inner radius"),
+            ("cage_outer_radius", "explicit 34.8 mm cage outer radius"),
+            ("roller_partition_", "12-loop radial roller surface partitions"),
+            ("sel_all_roller_boundaries", "aggregate roller boundary selection"),
+            ("sel_all_roller_inner_contacts", "split inner-facing roller source group"),
+            ("sel_all_roller_outer_contacts", "split outer-facing roller source group"),
+            ("cp_all_rollers_inner", "global inner-raceway contact pair"),
+            ("cp_all_rollers_outer", "global outer-raceway contact pair"),
+            ("contact_all_rollers_inner", "global inner-raceway Contact feature"),
+            ("contact_all_rollers_outer", "global outer-raceway Contact feature"),
+        ):
+            if token not in lowered:
+                errors.append(f"Production 3D bearing code is missing {label}: {token}")
+        for feature_tag, feature_type in (
+            ("fix_outer", "fixed"),
+            ("load_inner_bore", "boundaryload"),
+            ("preload_inner_radial", "displacement2"),
+            ("spring_inner_ring_guidance", "springfoundation2"),
+        ):
+            if not re.search(
+                rf"create\(\s*['\"]{feature_tag}['\"]\s*,\s*['\"]{feature_type}['\"]\s*,\s*2\s*\)",
+                lowered,
+            ):
+                errors.append(
+                    f"Production 3D bearing code must create exact feature {feature_tag} as {feature_type}."
+                )
+        if len(re.findall(r"manualselection\(\s*true\s*\)", lowered)) < 2:
+            errors.append("Both global ContactPair features must call manualSelection(True).")
+        if "pitch_radius+cage_width/2" in compact or "pitch_radius-cage_width/2" in compact:
+            errors.append("Cage radii must be 27.2/34.8 mm parameters, not pitch_radius +/- cage_width/2.")
+        for name, expected in (
+            ("roller_diameter", 8.0),
+            ("roller_length", 16.0),
+            ("cage_pocket_clearance", float(cage_pocket_clearance_mm)),
+        ):
+            for match in re.finditer(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered):
+                if abs(float(match.group(1)) - expected) > 1.0e-12:
+                    errors.append(
+                        f"Generated local {name}={match.group(1)} contradicts required {expected:g} mm."
+                    )
+        if lowered.count("selresultshow") < 5:
+            errors.append("Base rings/cage annulus, roller loop, and final cage must expose all result selections.")
+        if lowered.count("entitydim") < 9:
+            errors.append("Production component selections must explicitly declare boundary/domain entitydim.")
+        if re.search(r"set\(\s*['\"]entitydim['\"]\s*,\s*[23]\s*\)", lowered):
+            errors.append("Production entitydim 2/3 values must be Python strings, not ambiguous integers.")
+        if re.search(r"material\(\)\.create\(\s*['\"]mat_steel['\"]\s*,\s*['\"]steel['\"]", lowered):
+            errors.append("mat_steel must be created as material type Common, not Steel.")
+        for material_token in ("common", "youngsmodulus", "poissonsratio", "density"):
+            if material_token not in lowered:
+                errors.append(f"Production steel material is missing required Common/property evidence: {material_token}")
+        if "propertygroup('def')" not in lowered and 'propertygroup("def")' not in lowered:
+            errors.append("Production steel properties must be assigned through propertyGroup('def').")
+        if re.search(r"\.create\([^,\n]+,\s*['\"](?:contact|fixed|boundaryload|displacement2|springfoundation2)['\"]\s*,\s*1\s*\)", lowered):
+            errors.append("All 3D Solid Mechanics boundary features must use entity dimension 2, not 1.")
+        if "formassembly" in lowered or "geom.node(" in lowered or re.search(r"feature\(\)\.create\(\s*['\"]fin['\"]", lowered):
+            errors.append("Generated code must configure the existing fin action as assembly, not create a new FormAssembly node.")
+        if "cp_roller_" in lowered or "contact_roller_" in lowered:
+            errors.append("Per-roller ContactPair/Contact features are forbidden; use the two audited global contact searches.")
+        if "cage_pocket" in lowered and ("pair_tag_cage" in lowered or "contact_tag_cage" in lowered or "_cage_pocket'" in lowered and "pair().create" in lowered):
+            errors.append("Cage contact is disabled; generated code must not retain cage ContactPair/Contact features.")
+        if not re.search(r"create\(\s*['\"]fix_cage_stabilization['\"]\s*,\s*['\"]fixed['\"]\s*,\s*2\s*\)", lowered):
+            errors.append("Unloaded cage must use a boundary Fixed stabilization feature.")
+        for key in ("pname", "plistarr", "punit"):
+            if not re.search(rf"set\(\s*['\"]{key}['\"]\s*,\s*\[", lowered):
+                errors.append(f"Production auxiliary continuation {key} must use a one-element string array.")
+        if re.search(r"study\(\s*['\"]std1['\"]\s*\)\.create\([^\n]+['\"]parametric['\"]", lowered):
+            errors.append("Production study must use Stationary auxiliary continuation, not a separate Parametric Sweep feature.")
+        for key, value in (
+            ("useparam", "on"),
+            ("pcontinuationmode", "manual"),
+            ("pcontinuation", "radial_load"),
+            ("preusesol", "yes"),
+        ):
+            if not re.search(rf"set\(\s*['\"]{key}['\"]\s*,\s*['\"]{value}['\"]\s*\)", lowered):
+                errors.append(f"Production Stationary auxiliary continuation must set {key}={value!r}.")
         for token in (
             "sel_inner_raceway_contact",
             "sel_outer_raceway_contact",
@@ -589,18 +1082,10 @@ def validate_3d_bearing_code_draft(java_code: str, *, require_named_selections: 
         for index in range(1, VERIFIED_ROLLER_COUNT + 1):
             if f"sel_roller_{index}_body" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_body"):
                 errors.append(f"Production 3D bearing code is missing per-roller body selection: sel_roller_{index}_body")
-            if f"sel_roller_{index}_inner_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_inner_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller inner contact selection: sel_roller_{index}_inner_contact")
-            if f"sel_roller_{index}_outer_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_outer_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller outer contact selection: sel_roller_{index}_outer_contact")
-            if f"sel_roller_{index}_cage_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_cage_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller cage contact selection: sel_roller_{index}_cage_contact")
-            if f"sel_inner_raceway_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_inner_raceway_", "_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller inner raceway contact patch: sel_inner_raceway_{index}_contact")
-            if f"sel_outer_raceway_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_outer_raceway_", "_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller outer raceway contact patch: sel_outer_raceway_{index}_contact")
-            if f"sel_cage_pocket_{index}_contact" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_cage_pocket_", "_contact"):
-                errors.append(f"Production 3D bearing code is missing per-roller cage pocket contact patch: sel_cage_pocket_{index}_contact")
+            if f"sel_roller_{index}_boundary" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "sel_roller_", "_boundary"):
+                errors.append(f"Production 3D bearing code is missing per-roller boundary audit selection: sel_roller_{index}_boundary")
+            if f"intop_roller_{index}" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "intop_roller_"):
+                errors.append(f"Production 3D bearing code is missing per-roller Integration operator: intop_roller_{index}")
             if f"probe_roller_{index}_max_mises" not in lowered and not _has_segmented_loop_tag_evidence(code_for_validation, "probe_roller_", "_max_mises"):
                 errors.append(f"Production 3D bearing code is missing per-roller max-stress probe: probe_roller_{index}_max_mises")
         for token in ("probe_cage_max_mises", "probe_cage_max_displacement"):
@@ -1410,12 +1895,16 @@ def _has_segmented_loop_tag_evidence(java_code: str, prefix: str, suffix: str = 
         rf"f['\"]{escaped_prefix}\{{\s*i\s*\+\s*1\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*index\s*\+\s*1\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*idx\s*\}}{escaped_suffix}['\"]",
+        rf"f['\"]{escaped_prefix}\{{\s*n\s*\}}{escaped_suffix}['\"]",
+        rf"f['\"]{escaped_prefix}\{{\s*roller_idx\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*roller_index\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*i\s*\}}{escaped_suffix}['\"]",
         rf"f['\"]{escaped_prefix}\{{\s*index\s*\}}{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*i\s*\+\s*1\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*index\s*\+\s*1\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*idx\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
+        rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*n\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
+        rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*roller_idx\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*roller_index\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*i\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",
         rf"['\"]{escaped_prefix}['\"]\s*\+\s*str\(\s*index\s*\)\s*\+\s*['\"]{escaped_suffix}['\"]",

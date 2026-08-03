@@ -1,0 +1,33 @@
+{
+  "kind": "bearing_3d_zero_clearance_reference_validation",
+  "date": "2026-07-22",
+  "success": true,
+  "scope": "zero_clearance_assembled_reference_only",
+  "applied_load_n": 0.10099982438539563,
+  "outer_fixed_reaction_x_n": -0.10099979074959538,
+  "relative_force_balance_error": 3.330277252239804e-7,
+  "inner_bore_area_m2": 0.0022619427776056737,
+  "inner_bore_entities": [129, 130, 132, 133],
+  "weak_roller_foundation_sum_x_n": -1.795332092785085e-8,
+  "latest_dataset": "dset6",
+  "natural_load_zone": {
+    "peak_roller": 1,
+    "approximately_symmetric_pairs": [[2, 12], [3, 11], [4, 10], [5, 9]],
+    "essentially_unloaded_rollers": [6, 7, 8]
+  },
+  "constraints": {
+    "outer_support": "fixed",
+    "inner_bore_x_load": "BoundaryLoad/FperArea on cylindrical bore only",
+    "inner_bore_prescribed_x_displacement": false,
+    "inner_guidance": "weak Y/Z only; X stiffness zero",
+    "all_roller_inner_outer_contacts_active": true,
+    "zeroInitGap": "1 (zero-clearance assembled reference assumption)"
+  },
+  "limitations": [
+    "zeroInitGap=0 continuation did not converge",
+    "no user-supplied design clearance/interference was validated",
+    "cage contact is inactive in this raceway load-distribution gate"
+  ],
+  "solved_mph": "runtime_smoke/bearing_physical_all12_strict_bore_k1e4_zig1_20260722/result_packages/actual_area_resume_from_solved_nominal.mph",
+  "stress_png": "runtime_smoke/bearing_physical_all12_strict_bore_k1e4_zig1_20260722/stage_plots/physical_all12_final_0p101n_v2_native_volume.png"
+}

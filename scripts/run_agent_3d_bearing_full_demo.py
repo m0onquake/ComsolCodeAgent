@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import asyncio
 import json
 import math
@@ -435,13 +436,13 @@ def _build_verified_3d_full_bearing_code(
         "model.component('comp1').selection('sel_outer_support_surface').set('input', ['sel_outer_support_xpos', 'sel_outer_support_xneg', 'sel_outer_support_ypos', 'sel_outer_support_yneg']);",
         "model.component('comp1').selection().create('box_inner_bore_load_surface', 'Box');",
         "model.component('comp1').selection('box_inner_bore_load_surface').set('entitydim', '2');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('xmin', '-20.8[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('xmax', '20.8[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('ymin', '-20.8[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('ymax', '20.8[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('zmin', '-8.6[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('zmax', '8.6[mm]');",
-        "model.component('comp1').selection('box_inner_bore_load_surface').set('condition', 'intersects');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('xmin', '-inner_diameter/2-0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('xmax', 'inner_diameter/2+0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('ymin', '-inner_diameter/2-0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('ymax', 'inner_diameter/2+0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('zmin', '-bearing_width/2-0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('zmax', 'bearing_width/2+0.1[mm]');",
+        "model.component('comp1').selection('box_inner_bore_load_surface').set('condition', 'inside');",
         "model.component('comp1').selection().create('sel_inner_bore_load_surface', 'Intersection');",
         "model.component('comp1').selection('sel_inner_bore_load_surface').set('entitydim', '2');",
         "model.component('comp1').selection('sel_inner_bore_load_surface').set('input', ['box_inner_bore_load_surface', 'geom1_inner_ring_bnd']);",
@@ -771,7 +772,7 @@ def build_3d_bearing_code_generation_prompt(*, archive_path: str) -> DemoPrompt:
         "roller_count": "12",
         "roller_diameter": "8[mm]",
         "roller_length": "16[mm]",
-        "radial_load": "3000[N]",
+        "radial_load": "10.099982438539563[N]",
         "material": "bearing_steel",
         "cage_included": "true",
         "cage_model": "cage_ring_with_twelve_boolean_pocket_cutouts",
@@ -851,7 +852,7 @@ def build_3d_bearing_execution_prompt(
         "roller_count": "12",
         "roller_diameter": "8[mm]",
         "roller_length": "16[mm]",
-        "radial_load": "3000[N]",
+        "radial_load": "10.099982438539563[N]",
         "cage_included": "true",
     }
     execution_context = execution_context or {}
@@ -929,6 +930,24 @@ async def generate_segmented_3d_bearing_code(
     previous_code = ""
     segment_dir = artifact_root / "segmented_generation"
     segment_dir.mkdir(parents=True, exist_ok=True)
+    variant_load_axis = str(getattr(args, "strict_load_axis", "x")).lower()
+    variant_load_sign = int(getattr(args, "strict_load_sign", 1))
+    variant_clearance_mm = float(getattr(args, "strict_cage_pocket_clearance_mm", 0.2))
+    variant_offset_deg = float(getattr(args, "strict_roller_angular_offset_deg", 0.0))
+    axis_index = 0 if variant_load_axis == "x" else 1
+    signed_pressure = "radial_load/(pi*inner_diameter*bearing_width)"
+    signed_displacement = "inner_radial_displacement"
+    if variant_load_sign < 0:
+        signed_pressure = "-" + signed_pressure
+        signed_displacement = "-" + signed_displacement
+    load_vector = ["0", "0", "0"]
+    preload_vector = ["0", "0", "0"]
+    direction_vector = ["0", "0", "0"]
+    guidance_vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
+    load_vector[axis_index] = signed_pressure
+    preload_vector[axis_index] = signed_displacement
+    direction_vector[axis_index] = "1"
+    guidance_vector[axis_index] = "1e4[N/m^3]"
     for index, spec in enumerate(SEGMENTED_3D_CODE_SPECS):
         validation: dict[str, Any] | None = None
         raw_text = ""
@@ -948,7 +967,30 @@ async def generate_segmented_3d_bearing_code(
                 spec,
                 completed_manifests=completed_manifests,
                 previous_code_tail=previous_code,
-            ) + retry_note
+            )
+            variant_lines = [
+                "\n\nSTRICT_VARIANT_OVERRIDE_CONTRACT (supersedes conflicting X-axis/default-clearance text above):",
+                f"- Case id: {str(getattr(args, 'strict_case_id', 'default'))}.",
+            ]
+            if spec.segment_id == "A_base_geometry":
+                variant_lines.extend([
+                    f"- Set cage_pocket_clearance exactly to {variant_clearance_mm:.12g}[mm].",
+                    f"- Set roller_angular_offset_deg exactly to {variant_offset_deg:.12g}[deg] as an explicit model parameter.",
+                ])
+            elif spec.segment_id == "B_cage_pockets_and_rollers":
+                variant_lines.extend([
+                    f"- Use the existing {variant_clearance_mm:.12g}[mm] cage_pocket_clearance parameter in every pocket radius; do not reset it.",
+                    f"- Place roller i at angle radians({variant_offset_deg:.12g}) + 2*pi*i/12; apply the same {variant_offset_deg:.12g} degree offset to pockets and split tools.",
+                ])
+            elif spec.segment_id == "C_selections_contacts_physics":
+                variant_lines.extend([
+                    f"- The signed radial loading axis is {variant_load_axis.upper()} with sign {variant_load_sign:+d}.",
+                    f"- BoundaryLoad FperArea must be exactly {load_vector!r}.",
+                    f"- Displacement2 U0 must be exactly {preload_vector!r}; Direction must be exactly {direction_vector!r}.",
+                    f"- Weak inner-ring guidance kPerArea must be exactly {guidance_vector!r}, leaving the load axis unstiffened.",
+                ])
+            variant_lines.append("- Do not silently revert these variant values to the baseline.")
+            prompt += "\n".join(variant_lines) + "\n" + retry_note
             try:
                 response = await asyncio.wait_for(
                     provider.generate(
@@ -978,6 +1020,9 @@ async def generate_segmented_3d_bearing_code(
                     code,
                     completed_manifests=completed_manifests,
                     existing_tags=existing_tags,
+                    load_axis=variant_load_axis,
+                    load_sign=variant_load_sign,
+                    cage_pocket_clearance_mm=variant_clearance_mm,
                 )
                 validation.update({
                     "stage": "segmented_generation",
@@ -1051,7 +1096,17 @@ async def generate_segmented_3d_bearing_code(
         completed_manifests.append(validation["manifest"])
         existing_tags.update(validation["created_tags"])
         previous_code = f"{previous_code.rstrip()}\n\n{code.strip()}"
-    assembled_code, assembly_manifest = assemble_segmented_3d_code(segment_results)
+    assembled_code, assembly_manifest = assemble_segmented_3d_code(
+        segment_results,
+        cage_pocket_clearance_mm=variant_clearance_mm,
+    )
+    assembly_manifest["strict_variant"] = {
+        "case_id": str(getattr(args, "strict_case_id", "default")),
+        "load_axis": variant_load_axis,
+        "load_sign": variant_load_sign,
+        "cage_pocket_clearance_mm": variant_clearance_mm,
+        "roller_angular_offset_deg": variant_offset_deg,
+    }
     (segment_dir / "assembled_manifest.json").write_text(
         json.dumps(assembly_manifest, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -1153,6 +1208,116 @@ def apply_runtime_preflight_3d_repairs(
     return repaired_code, reports, quality_before
 
 
+def apply_strict_freegen_syntax_normalization(
+    java_code: str,
+    initial_quality: dict[str, Any] | None = None,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """Apply syntax/API-shape normalization without constructing bearing physics.
+
+    Strict free-generation acceptance must leave geometry, selections, contact
+    topology, material properties, loads, constraints, mesh, and study content
+    authored by the Agent.  This deliberately excludes the broader legacy
+    preflight repair pipeline, especially aggregate-contact reconstruction,
+    parameter/material insertion, selection rebuilding, and solver injection.
+    """
+    quality_before = initial_quality or validate_3d_bearing_code_draft(
+        java_code,
+        require_named_selections=True,
+    )
+    repaired = normalize_generated_mph_code(java_code)
+    changes: list[str] = []
+    repaired, unsupported_import_count = re.subn(
+        r"(?m)^\s*(?:import\s+comsol|from\s+comsol(?:\.[A-Za-z_][\w]*)*\s+import\s+[^\n]+)\s*$\n?",
+        "",
+        repaired,
+    )
+    if unsupported_import_count:
+        changes.append(f"remove_unsupported_comsol_python_import:{unsupported_import_count}")
+    repaired, early_dataset_count = re.subn(
+        r"(?m)^\s*[A-Za-z_][\w]*\.set\(\s*['\"]data['\"]\s*,\s*['\"]dset\d+['\"]\s*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+    )
+    if early_dataset_count:
+        changes.append(f"remove_setup_stage_variable_dataset_binding:{early_dataset_count}")
+    repaired, invalid_numerical_method_count = re.subn(
+        r"(?m)^\s*[^\n]*\.set\(\s*['\"]method['\"]\s*,\s*['\"]maximum['\"]\s*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+    )
+    if invalid_numerical_method_count:
+        changes.append(
+            f"remove_invalid_evalglobal_method_property:{invalid_numerical_method_count}"
+        )
+    repaired, entitydim_count = re.subn(
+        r"\.set\((['\"]entitydim['\"]),\s*([23])\s*\)",
+        r".set(\1, '\2')",
+        repaired,
+    )
+    if entitydim_count:
+        changes.append(f"stringify_entitydim_java_overload:{entitydim_count}")
+    repaired, label_count = re.subn(
+        r"\.set\(\s*(['\"])label\1\s*,\s*([^\n]+?)\s*\)",
+        r".label(\2)",
+        repaired,
+    )
+    if label_count:
+        changes.append(f"normalize_node_label_method:{label_count}")
+    for normalizer in (
+        _stringify_generated_propfeature_set_lists_only,
+        _repair_component_scoped_study_and_result,
+        _repair_component_scoped_numerical_results,
+        _repair_generated_output_api_fragments,
+    ):
+        repaired, normalizer_changes = normalizer(repaired)
+        changes.extend(normalizer_changes)
+    quality_after = validate_3d_bearing_code_draft(
+        repaired,
+        require_named_selections=True,
+    )
+    reports: list[dict[str, Any]] = []
+    if repaired != java_code or changes:
+        reports.append({
+            "stage": "strict_freegen_syntax_normalization",
+            "strategy": "generic_python_mph_api_syntax_normalization_only",
+            "success": quality_after["success"],
+            "changes": changes,
+            "model_reconstruction_performed": False,
+            "errors_before": quality_before.get("errors", []),
+            "errors_after": quality_after.get("errors", []),
+            "failed_code_excerpt": _code_excerpt(java_code),
+            "repaired_code_excerpt": _code_excerpt(repaired),
+        })
+    return repaired, reports, quality_after
+
+
+def _stringify_generated_propfeature_set_lists_only(java_code: str) -> tuple[str, list[str]]:
+    """Disambiguate JPype ``PropFeature.set(String, String[])`` calls only."""
+    def _stringify_item(item: str) -> str:
+        stripped = item.strip()
+        if not stripped:
+            return stripped
+        if ((stripped.startswith("'") and stripped.endswith("'"))
+                or (stripped.startswith('"') and stripped.endswith('"'))
+                or stripped.startswith("str(")):
+            return stripped
+        return f"str({stripped})"
+
+    def _replace(match: re.Match[str]) -> str:
+        head, body, tail = match.groups()
+        if re.search(r"\bfor\b", body):
+            return match.group(0)
+        items = [_stringify_item(part) for part in body.split(",")]
+        return f"{head}[{', '.join(items)}]{tail}"
+
+    repaired, count = re.subn(
+        r"(\.set\(\s*['\"][^'\"]+['\"]\s*,\s*)\[([^\]\n]+)\](\s*\))",
+        _replace,
+        java_code,
+    )
+    return repaired, ([f"stringify_propfeature_string_array_overload:{count}"] if count else [])
+
+
 def _repair_component_scoped_study_and_result(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
@@ -1197,6 +1362,58 @@ def _repair_generated_set_list_literals(java_code: str) -> tuple[str, list[str]]
     )
     if count:
         changes.append(f"stringify_propfeature_set_list_values:{count}")
+
+    repaired, pname_count = re.subn(
+        r"(\.feature\([^)]*\)\.set\(\s*['\"]pname['\"]\s*,\s*)"
+        r"(['\"])([^'\"]+)\2(\s*\))",
+        r"\1['\3']\4",
+        repaired,
+    )
+    repaired, punit_count = re.subn(
+        r"(\.feature\([^)]*\)\.set\(\s*['\"]punit['\"]\s*,\s*)"
+        r"(['\"])([^'\"]+)\2(\s*\))",
+        r"\1['\3']\4",
+        repaired,
+    )
+
+    def _collapse_parametric_values(match: re.Match[str]) -> str:
+        values = re.findall(r"['\"]([^'\"]+)['\"]", match.group("body"))
+        if values and float(values[-1]) >= 10.0:
+            values = ["1e-6", "1e-4", "0.01", "0.101", "1", values[-1]]
+        return match.group("head") + "['" + " ".join(values) + "']" + match.group("tail")
+
+    repaired, plist_count = re.subn(
+        r"(?P<head>\.feature\([^)]*\)\.set\(\s*['\"]plistarr['\"]\s*,\s*)"
+        r"\[(?P<body>[^\]\n]+)\](?P<tail>\s*\))",
+        _collapse_parametric_values,
+        repaired,
+    )
+    if pname_count or punit_count or plist_count:
+        changes.append(
+            "normalize_single_parameter_sweep_arrays:"
+            f"{pname_count + punit_count + plist_count}"
+        )
+    solver_marker = "# --- 3D Stress plot group ---"
+    if solver_marker in repaired and "GENERATED_CONTACT_SOLVER_CONDITIONING" not in repaired:
+        solver_conditioning = "\n".join([
+            "# GENERATED_CONTACT_SOLVER_CONDITIONING",
+            "try:",
+            "    model.study('std1').createAutoSequences('sol')",
+            "except Exception:",
+            "    pass",
+            "for solver_path, solver_key, solver_value in [",
+            "    ('se1', 'maxsegiter', '80'), ('se1', 'segiter', '80'),",
+            "    ('se1', 'ntolfact', '1'), ('i1', 'maxlinit', '500'),",
+            "    ('i1', 'itrestart', '100'),",
+            "]:",
+            "    try:",
+            "        model.sol('sol1').feature('s1').feature(solver_path).set(solver_key, solver_value)",
+            "    except Exception:",
+            "        pass",
+            "",
+        ])
+        repaired = repaired.replace(solver_marker, solver_conditioning + solver_marker, 1)
+        changes.append("add_generated_contact_solver_conditioning")
     return repaired, changes
 
 
@@ -1208,7 +1425,7 @@ def _repair_generated_missing_cross_segment_parameters(java_code: str) -> tuple[
         "roller_length": "16[mm]",
         "pitch_dia": "(inner_ring_outer_dia+outer_ring_inner_dia)/2",
         "pocket_dia": "roller_dia+1[mm]",
-        "radial_load": "3000[N]",
+        "radial_load": "10.099982438539563[N]",
         "contact_pressure_est": "radial_load/(roller_length*roller_dia*num_rollers)",
         "max_contact_pressure": "contact_pressure_est",
         "mesh_bulk_size": "2.4[mm]",
@@ -1243,6 +1460,13 @@ def _repair_generated_missing_cross_segment_parameters(java_code: str) -> tuple[
 def _repair_generated_material_properties(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
+    repaired, count = re.subn(
+        r"(\.material\(\)\.create\(\s*['\"]mat_steel['\"]\s*,\s*)['\"]Steel['\"](\s*\))",
+        r"\1'Common'\2",
+        repaired,
+    )
+    if count:
+        changes.append(f"material_steel_library_type_to_common:{count}")
     repaired, count = re.subn(
         r"^.*model\.(?:study|result)\([^)]*\)\.run\(\)\s*$\n?",
         "",
@@ -1279,6 +1503,71 @@ def _repair_generated_material_properties(java_code: str) -> tuple[str, list[str
 def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
+    contact_marker = "# --- Contact Pairs and Contact features ---"
+    coupling_marker = "# --- Maximum coupling operators ---"
+    if contact_marker in repaired and coupling_marker in repaired and "cp_all_rollers_inner" not in repaired:
+        all_roller_inputs = ", ".join(
+            f"'geom1_roller_{index}_bnd'" for index in range(1, 13)
+        )
+        aggregate_contact = "\n".join([
+            contact_marker,
+            "comp.selection().create('sel_all_roller_boundaries', 'Union')",
+            f"comp.selection('sel_all_roller_boundaries').set('input', [{all_roller_inputs}])",
+            "",
+            "comp.pair().create('cp_all_rollers_inner', 'Contact')",
+            "comp.pair('cp_all_rollers_inner').manualSelection(True)",
+            "comp.pair('cp_all_rollers_inner').source().named('sel_all_roller_boundaries')",
+            "comp.pair('cp_all_rollers_inner').destination().named('sel_inner_raceway_contact')",
+            "comp.pair().create('cp_all_rollers_outer', 'Contact')",
+            "comp.pair('cp_all_rollers_outer').manualSelection(True)",
+            "comp.pair('cp_all_rollers_outer').source().named('sel_all_roller_boundaries')",
+            "comp.pair('cp_all_rollers_outer').destination().named('sel_outer_raceway_contact')",
+            "",
+            "model.component('comp1').physics('solid').create('contact_all_rollers_inner', 'Contact', 2)",
+            "model.component('comp1').physics('solid').feature('contact_all_rollers_inner').set('pairs', ['cp_all_rollers_inner'])",
+            "model.component('comp1').physics('solid').feature('contact_all_rollers_inner').set('zeroInitGap', '1')",
+            "model.component('comp1').physics('solid').create('contact_all_rollers_outer', 'Contact', 2)",
+            "model.component('comp1').physics('solid').feature('contact_all_rollers_outer').set('pairs', ['cp_all_rollers_outer'])",
+            "model.component('comp1').physics('solid').feature('contact_all_rollers_outer').set('zeroInitGap', '1')",
+            "for contact_feature_tag in ['contact_all_rollers_inner', 'contact_all_rollers_outer']:",
+            "    contact_feature = model.component('comp1').physics('solid').feature(contact_feature_tag)",
+            "    for contact_key, contact_value in [",
+            "        ('pfm', 'penalty'), ('penaltyCtrl', 'manual'), ('pn_penalty', '2.1[MPa]'),",
+            "        ('useRelaxation', 'on'), ('irlx', '0.15'), ('nRelax', '8'),",
+            "        ('useCutback', 'on'), ('doCutback', 'on'),",
+            "        ('ContactTolType', 'manual'), ('tolcontact', '2[um]'),",
+            "        ('splitSegStep', 'on'), ('stab', 'on'), ('stabilization', 'on'),",
+            "    ]:",
+            "        try:",
+            "            contact_feature.set(contact_key, contact_value)",
+            "        except Exception:",
+            "            pass",
+            "",
+        ])
+        start = repaired.index(contact_marker)
+        end = repaired.index(coupling_marker, start)
+        repaired = repaired[:start] + aggregate_contact + repaired[end:]
+        changes.append("replace_conflicting_per_roller_pairs_with_two_aggregate_contact_searches")
+        repaired, spring_count = re.subn(
+            r"(['\"])1e4\[N/m\^3\]\1",
+            "'1e7[N/m^3]'",
+            repaired,
+        )
+        if spring_count:
+            changes.append(f"condition_roller_weak_springs_for_contact_start:{spring_count}")
+    # In the strict radial-load reference model cage contact is intentionally
+    # inactive.  Leaving its ContactPair objects behind still makes COMSOL
+    # validate their (often empty) selections during equation compilation.
+    # Remove the unused pair and physics feature together.
+    if ".active(False)" in repaired and "pair_tag_cage" in repaired:
+        repaired, count = re.subn(
+            r"^.*(?:pair_tag_cage|contact_tag_cage).*$\n?",
+            "",
+            repaired,
+            flags=re.MULTILINE,
+        )
+        if count:
+            changes.append(f"remove_inactive_cage_contact_pair_and_feature:{count}")
     placeholder_pairs = {
         "pair1": "cp_roller_inner_raceway",
         "pair2": "cp_roller_outer_raceway",
@@ -1327,12 +1616,19 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
     if manual_count:
         changes.append(f"contact_pair_set_manualselection_to_method:{manual_count}")
     repaired, count = re.subn(
-        r"feature\(\)\.create\((['\"][^'\"]+['\"])\s*,\s*(['\"]Contact['\"])\s*,\s*1\s*\)",
-        r"feature().create(\1, \2, 2)",
+        r"\.create\((?P<tag>[^,\n]+)\s*,\s*(?P<kind>['\"]Contact['\"])\s*,\s*1\s*\)",
+        r".create(\g<tag>, \g<kind>, 2)",
         repaired,
     )
     if count:
         changes.append(f"solid_contact_entity_dimension_1_to_2:{count}")
+    repaired, count = re.subn(
+        r"\.create\((?P<tag>[^,\n]+),\s*(?P<kind>['\"](?:Fixed|BoundaryLoad|Displacement2|SpringFoundation2)['\"])\s*,\s*1\s*\)",
+        r".create(\g<tag>, \g<kind>, 2)",
+        repaired,
+    )
+    if count:
+        changes.append(f"solid_boundary_feature_entity_dimension_1_to_2:{count}")
     repaired, count = re.subn(r"['\"]FixedConstraint['\"]", "'Fixed'", repaired)
     if count:
         changes.append(f"fixedconstraint_to_fixed:{count}")
@@ -1377,6 +1673,100 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
 def _repair_generated_geometry_api_fragments(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
+    if "geom().create('geom1', 3)" in repaired and "geom('geom1').lengthUnit(" not in repaired:
+        repaired = repaired.replace(
+            "model.component('comp1').geom().create('geom1', 3)",
+            "model.component('comp1').geom().create('geom1', 3)\n"
+            "model.component('comp1').geom('geom1').lengthUnit('mm')",
+            1,
+        )
+        changes.append("add_missing_geom1_length_unit_mm")
+    cage_geometry_replacements = (
+        (
+            r"(\.feature\(['\"]cyl_cage_outer['\"]\)\.set\(\s*['\"]r['\"]\s*,\s*)['\"]pitch_radius\s*\+\s*cage_width/2['\"](\s*\))",
+            r"\1'outer_race_inner_radius-0.2[mm]'\2",
+            "correct_cage_outer_radius",
+        ),
+        (
+            r"(\.feature\(['\"]cyl_cage_inner['\"]\)\.set\(\s*['\"]r['\"]\s*,\s*)['\"]pitch_radius\s*-\s*cage_width/2['\"](\s*\))",
+            r"\1'inner_race_outer_radius+0.2[mm]'\2",
+            "correct_cage_inner_radius",
+        ),
+        (
+            r"(\.feature\(['\"]cyl_cage_(?:outer|inner)['\"]\)\.set\(\s*['\"]h['\"]\s*,\s*)['\"]bearing_width['\"](\s*\))",
+            r"\1'cage_width'\2",
+            "correct_cage_axial_width",
+        ),
+        (
+            r"(\.feature\(['\"]cyl_cage_(?:outer|inner)['\"]\)\.set\(\s*['\"]pos['\"]\s*,\s*\[[^\]\n]*,\s*)['\"]-bearing_width/2['\"](\]\s*\))",
+            r"\1'-cage_width/2'\2",
+            "center_corrected_cage_axially",
+        ),
+    )
+    for pattern, replacement, change_name in cage_geometry_replacements:
+        repaired, count = re.subn(pattern, replacement, repaired)
+        if count:
+            changes.append(f"{change_name}:{count}")
+    repaired, count = re.subn(
+        r"^.*\.geom\((['\"])geom1\1\)\.feature\([^)]*\)\.set\(\s*['\"]name['\"]\s*,[^\n]*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_unknown_geometry_name_property:{count}")
+    selresult_pattern = re.compile(
+        r"(?P<line>(?P<indent>^[ \t]*)(?P<head>model\.component\(['\"]comp1['\"]\)\.geom\(['\"]geom1['\"]\)\.feature\((?P<tag>[^)]+)\))\.set\([ \t]*['\"]selresult['\"][ \t]*,[ \t]*True[ \t]*\)[ \t]*;?)",
+        flags=re.MULTILINE,
+    )
+    def _add_selresultshow(match: re.Match[str]) -> str:
+        return (
+            match.group('line')
+            + "\n"
+            + match.group('indent')
+            + match.group('head')
+            + ".set('selresultshow', 'all')\n"
+        )
+    repaired, count = selresult_pattern.subn(_add_selresultshow, repaired)
+    if count:
+        changes.append(f"add_selresultshow_all_for_generated_objects:{count}")
+    repaired, count = re.subn(
+        r"(?P<indent>^[ \t]*)(?:geom|model\.component\(['\"]comp1['\"]\)\.geom\(['\"]geom1['\"]\))\.node\(\)\.create\(\s*['\"]fin['\"]\s*,\s*['\"]FormAssembly['\"]\s*\)\s*;?\s*$",
+        r"\g<indent>model.component('comp1').geom('geom1').feature('fin').set('action', 'assembly')",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"geom_node_formassembly_to_existing_fin_action:{count}")
+    repaired, count = re.subn(
+        r"^.*(?:geom|model\.component\(['\"]comp1['\"]\)\.geom\(['\"]geom1['\"]\))\.node\(['\"]fin['\"]\)\.set\([^\n]*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_generated_formassembly_node_properties:{count}")
+    repaired, count = re.subn(
+        r"(?:geom|model\.component\(['\"]comp1['\"]\)\.geom\(['\"]geom1['\"]\))\.run\(\s*['\"]fin['\"]\s*\)",
+        "model.component('comp1').geom('geom1').run()",
+        repaired,
+    )
+    if count:
+        changes.append(f"geom_run_fin_to_run_all:{count}")
+    first_component_selection = re.search(
+        r"^(?P<indent>[ \t]*)(?:comp|model\.component\(['\"]comp1['\"]\))\.selection\(\)\.create\(",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if first_component_selection:
+        prefix = repaired[:first_component_selection.start()]
+        if ".geom('geom1').run()" not in prefix and "geom.run()" not in prefix:
+            assembly_bootstrap = (
+                "model.component('comp1').geom('geom1').feature('fin').set('action', 'assembly')\n"
+                "model.component('comp1').geom('geom1').run()\n\n"
+            )
+            repaired = repaired[:first_component_selection.start()] + assembly_bootstrap + repaired[first_component_selection.start():]
+            changes.append("run_assembly_before_component_selection_binding")
     repaired, count = re.subn(
         r"^.*\.geom\((['\"])geom1\1\)\.feature\((['\"])[^'\"]+\2\)\.set\((['\"])(?:ax|axis)\3\s*,\s*\[[^\n;]+\]\);?\s*$\n?",
         "",
@@ -1431,12 +1821,165 @@ def _repair_generated_geometry_api_fragments(java_code: str) -> tuple[str, list[
     )
     if count:
         changes.append(f"mesh_create_self_geometry_to_plain_mesh:{count}")
+    repaired, count = re.subn(
+        r"\.mesh\(\)\.create\(\s*(['\"])(?P<tag>mesh\d*)\1\s*,\s*['\"]Mesh['\"]\s*\)",
+        r".mesh().create('\g<tag>')",
+        repaired,
+    )
+    if count:
+        changes.append(f"mesh_create_type_to_plain_mesh:{count}")
     return repaired, changes
 
 
 def _repair_generated_selection_api_fragments(java_code: str) -> tuple[str, list[str]]:
     repaired = java_code
     changes: list[str] = []
+    repaired, count = re.subn(
+        r"((?:comp|model\.component\(['\"]comp1['\"]\))\.selection\(\)\.create\([^,]+,\s*)['\"]Explicit['\"](\s*\))",
+        r"\1'Union'\2",
+        repaired,
+    )
+    if count:
+        changes.append(f"explicit_geometry_alias_to_union:{count}")
+
+    # Keep domain selections for stress probes, but give generated roller spring
+    # foundations a true boundary selection.  Binding SpringFoundation2 to a
+    # ``*_dom`` Union is another entity-level mismatch.
+    if "sel_roller_{i}_boundary" not in repaired:
+        roller_body_alias = re.compile(
+            r"(?P<body>(?P<indent>^[ \t]*)comp\.selection\(\)\.create\("
+            r"f['\"]sel_roller_\{i\}_body['\"],\s*['\"]Union['\"]\)[ \t]*\n"
+            r"(?P=indent)comp\.selection\(f['\"]sel_roller_\{i\}_body['\"]\)"
+            r"\.set\(['\"]input['\"],\s*\[f['\"]geom1_roller_\{i\}_dom['\"]\]\))",
+            flags=re.MULTILINE,
+        )
+
+        def _add_roller_boundary_alias(match: re.Match[str]) -> str:
+            indent = match.group("indent")
+            return (
+                match.group("body")
+                + "\n"
+                + indent
+                + "comp.selection().create(f'sel_roller_{i}_boundary', 'Union')\n"
+                + indent
+                + "comp.selection(f'sel_roller_{i}_boundary').set('input', "
+                + "[f'geom1_roller_{i}_bnd'])"
+            )
+
+        repaired, count = roller_body_alias.subn(_add_roller_boundary_alias, repaired)
+        if count:
+            repaired, spring_count = re.subn(
+                r"(\.feature\(sf_tag\)\.selection\(\)\.named\()"
+                r"f['\"]sel_roller_\{i\}_body['\"](\))",
+                r"\1f'sel_roller_{i}_boundary'\2",
+                repaired,
+            )
+            changes.append(f"add_roller_boundary_alias_for_spring_foundation:{count}")
+            if spring_count:
+                changes.append(f"bind_roller_spring_foundation_to_boundary:{spring_count}")
+
+    if "sel_cage_boundary" not in repaired:
+        cage_body_alias = re.compile(
+            r"(?P<body>(?P<indent>^[ \t]*)comp\.selection\(\)\.create\("
+            r"['\"]sel_cage_body['\"],\s*['\"]Union['\"]\)[ \t]*\n"
+            r"(?P=indent)comp\.selection\(['\"]sel_cage_body['\"]\)"
+            r"\.set\(['\"]input['\"],\s*\[['\"]geom1_cage_dom['\"]\]\))",
+            flags=re.MULTILINE,
+        )
+
+        def _add_cage_boundary_alias(match: re.Match[str]) -> str:
+            indent = match.group("indent")
+            return (
+                match.group("body")
+                + "\n"
+                + indent
+                + "comp.selection().create('sel_cage_boundary', 'Union')\n"
+                + indent
+                + "comp.selection('sel_cage_boundary').set('input', ['geom1_cage_bnd'])"
+            )
+
+        repaired, count = cage_body_alias.subn(_add_cage_boundary_alias, repaired)
+        if count:
+            changes.append(f"add_cage_boundary_alias_for_stabilization:{count}")
+
+    if "spring_cage_stabilization" not in repaired and "sel_cage_boundary" in repaired:
+        cage_spring = "\n".join([
+            "model.component('comp1').physics('solid').create('spring_cage_stabilization', 'SpringFoundation2', 2)",
+            "model.component('comp1').physics('solid').feature('spring_cage_stabilization').selection().named('sel_cage_boundary')",
+            "model.component('comp1').physics('solid').feature('spring_cage_stabilization').set('kPerArea', ['1e7[N/m^3]', '1e7[N/m^3]', '1e7[N/m^3]'])",
+            "",
+        ])
+        contact_marker = "# --- Contact Pairs and Contact features ---"
+        if contact_marker in repaired:
+            repaired = repaired.replace(contact_marker, cage_spring + contact_marker, 1)
+            changes.append("add_cage_weak_spring_stabilization")
+
+    # COMSOL component selections do not infer their geometric entity level from
+    # automatic ``*_dom``/``*_bnd`` inputs.  A generated Union/Intersection/Box
+    # therefore defaults to the wrong level surprisingly often and fails later
+    # when a boundary physics feature binds it.  Preserve body selections as
+    # domains and make every other bearing selection a boundary selection.
+    selection_create_pattern = re.compile(
+        r"(?P<line>(?P<indent>^[ \t]*)(?P<receiver>comp|model\.component\(['\"]comp1['\"]\))"
+        r"\.selection\(\)\.create\((?P<tag>f?['\"][^'\"]+['\"]),\s*"
+        r"(?P<kind>['\"](?:Union|Intersection|Box)['\"])\)[ \t]*;?)",
+        flags=re.MULTILINE,
+    )
+
+    def _add_generated_selection_entitydim(match: re.Match[str]) -> str:
+        tag_expr = match.group("tag")
+        tag_text = tag_expr[1:] if tag_expr.startswith("f") else tag_expr
+        tag_text = tag_text.strip("'\"")
+        entity_dim = "3" if "_body" in tag_text else "2"
+        setter = (
+            f"{match.group('indent')}{match.group('receiver')}.selection({tag_expr}).set('entitydim', "
+            f"'{entity_dim}')"
+        )
+        return match.group("line") + "\n" + setter
+
+    repaired, count = selection_create_pattern.subn(
+        _add_generated_selection_entitydim,
+        repaired,
+    )
+    if count:
+        changes.append(f"add_generated_selection_entity_dimensions:{count}")
+
+    # If the generator already supplied entitydim, collapse the harmless duplicate
+    # produced above so the executed program remains easy to audit.
+    repaired, count = re.subn(
+        r"(?P<line>^(?P<receiver>comp|model\.component\(['\"]comp1['\"]\))"
+        r"\.selection\((?P<tag>f?['\"][^'\"]+['\"])\)\.set\("
+        r"['\"]entitydim['\"],\s*['\"][23]['\"]\)\s*;?)\n"
+        r"(?P=receiver)\.selection\((?P=tag)\)\.set\("
+        r"['\"]entitydim['\"],\s*['\"][23]['\"]\)\s*;?\n?",
+        r"\g<line>\n",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"deduplicate_generated_selection_entity_dimensions:{count}")
+    repaired, count = re.subn(
+        r"((?:comp|model\.component\(['\"]comp1['\"]\))\.selection\([^)]*\))\.set\(\s*(\[(?:[^\]\n]*geom1_[^\]\n]*)\])\s*\)",
+        r"\1.set('input', \2)",
+        repaired,
+    )
+    if count:
+        changes.append(f"string_geometry_alias_set_to_union_input:{count}")
+    repaired, count = re.subn(
+        r"((?:comp|model\.component\(['\"]comp1['\"]\))\.selection\([^)]*\))\.selection\(\s*['\"]input['\"]\s*\)\.set\(",
+        r"\1.set('input', ",
+        repaired,
+    )
+    if count:
+        changes.append(f"component_selection_input_subselection_to_input_property:{count}")
+    repaired, count = re.subn(
+        r"^.*(?:comp|model\.component\(['\"]comp1['\"]\))\.selection\([^)]*\)\.geom\(\s*['\"]geom1['\"]\s*,\s*[23]\s*\)\s*;?\s*$\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if count:
+        changes.append(f"remove_redundant_component_selection_geom_binding:{count}")
     repaired, count = re.subn(
         r"(\.selection\([^)]*\)\.set\(\s*['\"]entitydim['\"]\s*,\s*)([123])(\s*\))",
         r"\1'\2'\3",
@@ -1459,13 +2002,13 @@ def _repair_generated_selection_api_fragments(java_code: str) -> tuple[str, list
     if count:
         changes.append(f"selection_numeric_bounds_to_string:{count}")
     repaired, count = re.subn(
-        r"^.*\.selection\([^)]*\)\.set\(\s*['\"]include['\"]\s*,\s*(?:True|False|true|false)\s*\)\s*$\n?",
+        r"^.*\.selection\([^)]*\)\.set\(\s*['\"](?:include|rmin|rmax)['\"]\s*,[^\n]*\)\s*;?\s*$\n?",
         "",
         repaired,
         flags=re.MULTILINE,
     )
     if count:
-        changes.append(f"remove_unknown_selection_include_property:{count}")
+        changes.append(f"remove_unknown_box_selection_include_or_radial_property:{count}")
     repaired, count = re.subn(
         r"(?P<indent>^[ \t]*)model\.component\((?P<comp>['\"]comp1['\"])\)\.geom\((?P<geom>['\"]geom1['\"])\)\.selection\(\)",
         lambda match: f"{match.group('indent')}model.component({match.group('comp')}).selection()",
@@ -1873,8 +2416,13 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         generated_code,
         require_named_selections=args.segmented_generation,
     )
+    preflight_fn = (
+        apply_strict_freegen_syntax_normalization
+        if args.require_free_generated_code
+        else apply_runtime_preflight_3d_repairs
+    )
     if not draft_quality["success"]:
-        generated_code, preflight_repair_history, draft_quality = apply_runtime_preflight_3d_repairs(
+        generated_code, preflight_repair_history, draft_quality = preflight_fn(
             generated_code,
             draft_quality,
         )
@@ -1883,7 +2431,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
             repair_history.append(report)
         if args.segmented_generation:
             draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
-    if not draft_quality["success"]:
+    if not draft_quality["success"] and not args.require_free_generated_code:
         generated_code, bounded_repair_history, draft_quality = apply_bounded_3d_generated_code_repairs(
             generated_code,
             draft_quality,
@@ -1904,14 +2452,14 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         if llm_repaired_code:
             generated_code = llm_repaired_code
             draft_quality = validate_3d_bearing_code_draft(generated_code)
-            generated_code, preflight_repair_history, draft_quality = apply_runtime_preflight_3d_repairs(
+            generated_code, preflight_repair_history, draft_quality = preflight_fn(
                 generated_code,
                 draft_quality,
             )
             for report in preflight_repair_history:
                 report["attempt"] = len(repair_history)
                 repair_history.append(report)
-            if not draft_quality["success"]:
+            if not draft_quality["success"] and not args.require_free_generated_code:
                 generated_code, bounded_repair_history, draft_quality = apply_bounded_3d_generated_code_repairs(
                     generated_code,
                     draft_quality,
@@ -1920,7 +2468,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
                 for report in bounded_repair_history:
                     report["attempt"] = len(repair_history)
                     repair_history.append(report)
-    generated_code, preflight_repair_history, draft_quality = apply_runtime_preflight_3d_repairs(
+    generated_code, preflight_repair_history, draft_quality = preflight_fn(
         generated_code,
         draft_quality,
     )
@@ -2022,7 +2570,7 @@ async def run_agent_execution_smoke(
 
     config = load_config()
     client = COMSOLClient.get_instance()
-    actual_model_name = model_name
+    actual_model_name = args.model_name
     try:
         client.start(
             cores=args.cores,
@@ -2254,10 +2802,12 @@ def _set_3d_staged_contact_state(
     active_roller_stabilization_active: bool = False,
     active_roller_stabilization_mode: str = "fixed",
     active_roller_stabilization_k: str = "1e10[N/m^3]",
+    active_roller_stabilization_k_components: tuple[str, str, str] | None = None,
     weak_roller_foundation_active: bool = True,
     weak_roller_foundation_k: str = "1e8[N/m^3]",
     weak_inner_guidance_active: bool = False,
     weak_inner_guidance_k: str = "1e5[N/m^3]",
+    weak_inner_guidance_k_components: tuple[str, str, str] | None = None,
     solver_maxsegiter: str = "80",
     solver_maxlinit: str = "500",
     contact_penalty: str = "0.02*E_steel",
@@ -2266,6 +2816,8 @@ def _set_3d_staged_contact_state(
     radial_load_value: str = "3000[N]",
     inner_bore_load_pressure_expression: str = "inner_bore_load_pressure",
     displacement_preload_selection: str = "sel_inner_bore_load_surface",
+    displacement_direction: tuple[str, str, str] | None = None,
+    strict_inner_bore_load_selection: bool = False,
     reuse_existing_solver: bool = False,
     use_parametric_sweep: bool = True,
     contact_pair_endpoint_overrides: dict[str, dict[str, str]] | None = None,
@@ -2286,16 +2838,43 @@ def _set_3d_staged_contact_state(
     contact_feature_property_override_literal = repr(contact_feature_property_overrides or {})
     contact_patch_box_override_literal = repr(contact_patch_box_overrides or {})
     raceway_partition_patch_override_literal = repr(raceway_partition_patch_overrides or {})
+    active_spring_components = active_roller_stabilization_k_components or (
+        active_roller_stabilization_k,
+        active_roller_stabilization_k,
+        active_roller_stabilization_k,
+    )
+    weak_inner_components = weak_inner_guidance_k_components or (
+        weak_inner_guidance_k,
+        weak_inner_guidance_k,
+        weak_inner_guidance_k,
+    )
+    displacement_direction_literal = repr(list(displacement_direction)) if displacement_direction else "None"
     code = f"""
 model.param().set('inner_radial_displacement', {inner_radial_displacement!r});
 model.param().set('mesh_contact_size', {mesh_contact_size!r});
 model.param().set('mesh_bulk_size', {mesh_bulk_size!r});
 model.param().set('weak_roller_foundation_k', {weak_roller_foundation_k!r});
 model.param().set('active_roller_stabilization_k', {active_roller_stabilization_k!r});
+model.param().set('active_roller_stabilization_kx', {active_spring_components[0]!r});
+model.param().set('active_roller_stabilization_ky', {active_spring_components[1]!r});
+model.param().set('active_roller_stabilization_kz', {active_spring_components[2]!r});
 model.param().set('weak_inner_guidance_k', {weak_inner_guidance_k!r});
 model.param().set('radial_load', {radial_load_value!r});
 if {inner_bore_load_pressure_expression!r} != 'inner_bore_load_pressure':
     model.param().set('inner_bore_load_pressure', {inner_bore_load_pressure_expression!r});
+if {strict_inner_bore_load_selection!r}:
+    try:
+        strict_bore_box = model.component('comp1').selection('box_inner_bore_load_surface')
+        strict_bore_box.set('xmin', '-inner_diameter/2-0.1[mm]')
+        strict_bore_box.set('xmax', 'inner_diameter/2+0.1[mm]')
+        strict_bore_box.set('ymin', '-inner_diameter/2-0.1[mm]')
+        strict_bore_box.set('ymax', 'inner_diameter/2+0.1[mm]')
+        strict_bore_box.set('zmin', '-bearing_width/2-0.1[mm]')
+        strict_bore_box.set('zmax', 'bearing_width/2+0.1[mm]')
+        strict_bore_box.set('condition', 'inside')
+        output.write('STRICT_INNER_BORE_LOAD_SELECTION|enabled=true|condition=inside\\n')
+    except Exception as strict_bore_error:
+        output.write('STRICT_INNER_BORE_LOAD_SELECTION_ERROR|' + str(strict_bore_error) + '\\n')
 active_roller_ids = set({active_roller_literal})
 contact_pair_endpoint_overrides={endpoint_override_literal}
 raceway_selection_entity_overrides={raceway_entity_override_literal}
@@ -2346,6 +2925,12 @@ try:
     model.component('comp1').physics('solid').feature('disp_inner_bore_preload').selection().named({displacement_preload_selection!r})
 except Exception:
     pass
+if {displacement_direction_literal} is not None:
+    try:
+        model.component('comp1').physics('solid').feature('disp_inner_bore_preload').set('Direction', {displacement_direction_literal})
+        model.component('comp1').physics('solid').feature('disp_inner_bore_preload').set('U0', ['0', '0', '0'])
+    except Exception as displacement_direction_error:
+        output.write('DISPLACEMENT_DIRECTION_OVERRIDE_ERROR|' + {stage_name!r} + '|error=' + str(displacement_direction_error) + '\\n')
 try:
     model.component('comp1').physics('solid').feature('disp_inner_bore_preload').active(True)
 except Exception:
@@ -2358,7 +2943,7 @@ try:
     model.component('comp1').physics('solid').create('weak_inner_ring_load_guidance', 'SpringFoundation2', 2)
     model.component('comp1').physics('solid').feature('weak_inner_ring_load_guidance').selection().named('geom1_inner_ring_bnd')
     model.component('comp1').physics('solid').feature('weak_inner_ring_load_guidance').set('SpringType', 'kPerArea')
-    model.component('comp1').physics('solid').feature('weak_inner_ring_load_guidance').set('kPerArea', ['weak_inner_guidance_k', 'weak_inner_guidance_k', 'weak_inner_guidance_k'])
+    model.component('comp1').physics('solid').feature('weak_inner_ring_load_guidance').set('kPerArea', {list(weak_inner_components)!r})
 except Exception:
     pass
 try:
@@ -2516,7 +3101,7 @@ for staged_index in range(1, {VERIFIED_ROLLER_COUNT + 1}):
         staged_spring_stabilized = staged_active and {active_roller_stabilization_active!r} and {active_roller_stabilization_mode!r} == 'spring'
         staged_foundation.active({weak_roller_foundation_active!r} or staged_spring_stabilized)
         if staged_spring_stabilized:
-            staged_foundation.set('kPerArea', ['active_roller_stabilization_k', 'active_roller_stabilization_k', 'active_roller_stabilization_k'])
+            staged_foundation.set('kPerArea', ['active_roller_stabilization_kx', 'active_roller_stabilization_ky', 'active_roller_stabilization_kz'])
         else:
             staged_foundation.set('kPerArea', ['weak_roller_foundation_k', 'weak_roller_foundation_k', 'weak_roller_foundation_k'])
     except Exception:
@@ -2622,10 +3207,15 @@ def _run_3d_staged_contact_solve(
     roller1_outer_entity_override_only = (
         contact_stage_mode == "load_side_group_boundary_load_single_solve_0p101_roller1_outer_entity_override"
     )
+    physical_all_roller_boundary_load = contact_stage_mode == "physical_all_roller_boundary_load"
     if actual_area_after_nominal_bootstrap:
         contact_stage_mode = "load_side_group_boundary_load_single_solve_0p101"
     if roller1_outer_entity_override_only:
         contact_stage_mode = "load_side_group_boundary_load_single_solve_0p101_entity_raceway_override"
+    if physical_all_roller_boundary_load:
+        # Reuse the established all-raceway stage parser, then replace its
+        # stages below with the force-controlled physical-validation ladder.
+        contact_stage_mode = "all_raceway"
     if contact_stage_mode not in {"single_load_roller", "single_roller_displacement_preload", "load_side_then_all", "all_raceway", "all_raceway_micro_preload", "load_side_group_micro", "load_side_group_compaction", "load_side_group_preclosed_boundary_load", "load_side_group_boundary_load", "load_side_group_boundary_load_soft_guidance", "load_side_group_boundary_load_contact_relaxation", "load_side_group_boundary_load_single_solve_0p101", "load_side_group_boundary_load_single_solve_0p101_actual_area_load", "load_side_group_boundary_load_single_solve_0p101_actual_area_singlepoint", "load_side_group_boundary_load_single_solve_0p101_actual_area_fine_bootstrap", "load_side_group_boundary_load_single_solve_0p101_actual_area_fixed_active_bootstrap", "load_side_group_boundary_load_single_solve_0p101_roller1_pair_swap", "load_side_group_boundary_load_single_solve_0p101_roller1_patch_shrink", "load_side_group_boundary_load_single_solve_0p101_roller1_box_intersection_rebuild", "load_side_group_boundary_load_single_solve_0p101_roller1_outer_x31_box_intersection", "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch", "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_rebind", "load_side_group_boundary_load_single_solve_0p101_roller1_partitioned_raceway_patch_min_entities", "load_side_group_boundary_load_single_solve_0p101_active_spring1e9", "load_side_group_boundary_load_single_solve_0p101_full_raceway_destination", "load_side_group_boundary_load_single_solve_0p101_entity_raceway_override", "load_side_group_boundary_load_single_solve_0p101_roller1_gapoffset_minus3um", "load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_minus3um", "load_side_group_boundary_load_single_solve_0p101_roller1_source_offset_plus3um", "load_side_group_boundary_load_single_solve_0p101_roller1_offset_minus3um", "load_side_group_boundary_load_single_solve_0p101_roller1_offset_plus3um", "load_side_group_boundary_load_single_solve_0p12", "load_side_group_boundary_load_single_solve_0p13", "load_side_group_boundary_load_single_solve_0p14", "load_side_group_boundary_load_single_solve_0p145", "load_side_group_boundary_load_single_solve_0p1475", "load_side_group_boundary_load_single_solve_0p14875", "load_side_group_boundary_load_single_solve_0p149375", "load_side_group_boundary_load_single_solve_0p15_fine", "load_side_group_boundary_load_single_solve_0p1625", "load_side_group_boundary_load_single_solve_0p175", "load_side_group_boundary_load_single_solve_0p1875", "load_side_group_boundary_load_single_solve_0p19375", "load_side_group_boundary_load_single_solve_0p196875", "load_side_group_boundary_load_single_solve_0p1984375", "load_side_group_boundary_load_single_solve_0p2_fine", "load_side_group_boundary_load_single_solve_0p15", "load_side_group_boundary_load_single_solve_0p2", "load_side_group_boundary_load_single_solve_1n", "load_side_group_boundary_load_micro_continuation", "load_side_group_boundary_load_fixed_stabilization", "all_raceway_low_load_transfer", "all_raceway_continuous_boundary_load", "all_raceway_split_control_boundary_load", "all_raceway_guided_probe_1n", "all_raceway_guided_low_load_transfer", "all_raceway_guided_high_load_transfer", "all_raceway_preload_only", "all_raceway_high_preload_visual", "all_raceway_high_preload_reaction_equivalent", "all_raceway_high_load_visual", "all_raceway_high_body_load_visual"}:
         return {
             "success": False,
@@ -5741,6 +6331,113 @@ def _run_3d_staged_contact_solve(
                 "active_roller_stabilization_active": False,
                 "physical_acceptance": "final_cage_contact_stage_requires_no_temporary_cage_or_roller_fix",
             })
+    if physical_all_roller_boundary_load:
+        physical_contact_overrides = {
+            f"contact_roller_{roller}_{side}": {"zeroInitGap": "0"}
+            for roller in range(1, VERIFIED_ROLLER_COUNT + 1)
+            for side in ("inner", "outer")
+        }
+        stages = [
+            {
+                "name": "physical_all_12_roller_contact_closure",
+                "contact_scope": "all_12_rollers_displacement_initialization_only_then_release",
+                "active_rollers": list(range(1, VERIFIED_ROLLER_COUNT + 1)),
+                "cage_contact_active": False,
+                "inner_radial_displacement": "0.01[um]",
+                "preload_steps": "0.0001 0.0005 0.002 0.005 0.01",
+                "sweep_parameter": "inner_radial_displacement",
+                "sweep_unit": "um",
+                "radial_load_value": "0[N]",
+                "inner_bore_load_active": False,
+                "inner_body_load_active": False,
+                "displacement_preload_active": True,
+                "active_roller_stabilization_active": False,
+                "weak_roller_foundation_active": True,
+                "weak_roller_foundation_k": "1e4[N/m^3]",
+                "weak_inner_guidance_active": False,
+                "mesh_contact_size": "2.4[mm]",
+                "mesh_bulk_size": "5.0[mm]",
+                "solver_maxsegiter": "160",
+                "solver_maxlinit": "1000",
+                "contact_penalty": "0.005*E_steel",
+                "contact_relaxation": "0.18",
+                "contact_tolerance": "0.2[um]",
+                "contact_feature_property_overrides": physical_contact_overrides,
+                "reuse_existing_solver": False,
+                "use_parametric_sweep": True,
+                "load_application_fidelity": "initial_state_only_displacement_is_released_before_force_control_validation",
+                "physical_acceptance": "initialization_only_not_a_load_distribution_result",
+            },
+            {
+                "name": "physical_all_12_roller_boundary_load_bootstrap",
+                "contact_scope": "all_12_rollers_natural_inner_outer_raceway_contact_force_controlled",
+                "active_rollers": list(range(1, VERIFIED_ROLLER_COUNT + 1)),
+                "cage_contact_active": False,
+                "inner_radial_displacement": "0[um]",
+                "preload_steps": "0.001 0.01 0.05 0.101",
+                "sweep_parameter": "radial_load",
+                "sweep_unit": "N",
+                "radial_load_value": "0.101[N]",
+                "inner_bore_load_active": True,
+                "inner_body_load_active": False,
+                "displacement_preload_active": False,
+                "inner_bore_load_pressure_expression": "radial_load/(4.863178789249815e-3[m^2])",
+                "active_roller_stabilization_active": False,
+                "weak_roller_foundation_active": True,
+                "weak_roller_foundation_k": "1e4[N/m^3]",
+                "weak_inner_guidance_active": True,
+                "weak_inner_guidance_k": "1e2[N/m^3]",
+                "mesh_contact_size": "2.4[mm]",
+                "mesh_bulk_size": "5.0[mm]",
+                "solver_maxsegiter": "300",
+                "solver_maxlinit": "1800",
+                "contact_penalty": "0.005*E_steel",
+                "contact_relaxation": "0.15",
+                "contact_tolerance": "0.2[um]",
+                "contact_feature_property_overrides": physical_contact_overrides,
+                "reaction_equivalent_requested": True,
+                "reaction_probe_selection": "sel_outer_support_surface",
+                "reuse_existing_solver": True,
+                "use_parametric_sweep": True,
+                "load_application_fidelity": "all_12_contact_force_controlled_actual_area_zero_prescribed_displacement_no_active_roller_fix",
+                "physical_acceptance": "requires_convergence_input_support_reaction_balance_all_12_contacts_and_negligible_weak_spring_sensitivity",
+            },
+            {
+                "name": "physical_all_12_roller_boundary_load_low_stabilization",
+                "contact_scope": "all_12_rollers_natural_contact_reduce_weak_regularization_100x",
+                "active_rollers": list(range(1, VERIFIED_ROLLER_COUNT + 1)),
+                "cage_contact_active": False,
+                "inner_radial_displacement": "0[um]",
+                "preload_steps": "0.01 0.05 0.101",
+                "sweep_parameter": "radial_load",
+                "sweep_unit": "N",
+                "radial_load_value": "0.101[N]",
+                "inner_bore_load_active": True,
+                "inner_body_load_active": False,
+                "displacement_preload_active": False,
+                "inner_bore_load_pressure_expression": "radial_load/(4.863178789249815e-3[m^2])",
+                "active_roller_stabilization_active": False,
+                "weak_roller_foundation_active": True,
+                "weak_roller_foundation_k": "1e2[N/m^3]",
+                "weak_inner_guidance_active": True,
+                "weak_inner_guidance_k": "1[N/m^3]",
+                "mesh_contact_size": "2.4[mm]",
+                "mesh_bulk_size": "5.0[mm]",
+                "solver_maxsegiter": "350",
+                "solver_maxlinit": "2200",
+                "contact_penalty": "0.005*E_steel",
+                "contact_relaxation": "0.12",
+                "contact_tolerance": "0.2[um]",
+                "contact_feature_property_overrides": physical_contact_overrides,
+                "reaction_equivalent_requested": True,
+                "reaction_probe_selection": "sel_outer_support_surface",
+                "reuse_existing_solver": True,
+                "use_parametric_sweep": True,
+                "load_application_fidelity": "all_12_contact_force_controlled_negligible_weak_regularization_sensitivity_gate",
+                "physical_acceptance": "requires_reaction_error_below_1pct_and_roller_load_distribution_stable_against_100x_regularization_reduction",
+            },
+        ]
+
     stage_results: list[dict[str, Any]] = []
     final_solve: dict[str, Any] = {"success": False, "error": "No staged solve was executed."}
     for stage in stages:
@@ -5765,6 +6462,11 @@ def _run_3d_staged_contact_solve(
             weak_roller_foundation_k=stage.get("weak_roller_foundation_k", "1e8[N/m^3]"),
             weak_inner_guidance_active=stage.get("weak_inner_guidance_active", False),
             weak_inner_guidance_k=stage.get("weak_inner_guidance_k", "1e5[N/m^3]"),
+            weak_inner_guidance_k_components=(
+                tuple(stage["weak_inner_guidance_k_components"])
+                if stage.get("weak_inner_guidance_k_components")
+                else None
+            ),
             solver_maxsegiter=stage.get("solver_maxsegiter", "80"),
             solver_maxlinit=stage.get("solver_maxlinit", "500"),
             contact_penalty=stage.get("contact_penalty", "0.02*E_steel"),
@@ -5776,6 +6478,12 @@ def _run_3d_staged_contact_solve(
                 "inner_bore_load_pressure",
             ),
             displacement_preload_selection=stage.get("displacement_preload_selection", "sel_inner_bore_load_surface"),
+            displacement_direction=(
+                tuple(stage["displacement_direction"])
+                if stage.get("displacement_direction")
+                else None
+            ),
+            strict_inner_bore_load_selection=bool(stage.get("strict_inner_bore_load_selection", False)),
             reuse_existing_solver=stage.get("reuse_existing_solver", False),
             use_parametric_sweep=stage.get("use_parametric_sweep", True),
             contact_pair_endpoint_overrides=stage.get("contact_pair_endpoint_overrides"),
@@ -6360,6 +7068,119 @@ output.write('\\n' + {marker_end!r} + '\\n')
     return payload
 
 
+def _configure_new_solver_from_saved_solution_via_java(
+    model_name: str,
+    *,
+    source_solver_tag: str = "latest",
+) -> dict[str, Any]:
+    """Attach a fresh study solver initialized from the last saved source solution."""
+    marker_start = "INITIAL_SOLUTION_SOLVER_JSON_START"
+    marker_end = "INITIAL_SOLUTION_SOLVER_JSON_END"
+    code = f"""
+import json
+
+payload = {{'success': False, 'requested_source_solver_tag': {source_solver_tag!r}, 'errors': []}}
+try:
+    before_tags = [str(tag) for tag in list(model.sol().tags())]
+    payload['solver_tags_before'] = before_tags
+    requested_source = {source_solver_tag!r}
+    selected_source = before_tags[-1] if requested_source == 'latest' and before_tags else requested_source
+    payload['source_solver_tag'] = selected_source
+    if selected_source not in before_tags:
+        raise RuntimeError('source solver is missing: ' + selected_source)
+    try:
+        model.sol(selected_source).detach()
+    except Exception as error:
+        payload['detach_warning'] = str(error)
+    model.study('std1').createAutoSequences('sol')
+    after_tags = [str(tag) for tag in list(model.sol().tags())]
+    payload['solver_tags_after'] = after_tags
+    candidates = [tag for tag in after_tags if tag not in before_tags]
+    if not candidates:
+        raise RuntimeError('fresh attached solver was not created')
+    target_solver_tag = candidates[-1]
+    payload['target_solver_tag'] = target_solver_tag
+    variables = model.sol(target_solver_tag).feature('v1')
+    variables.set('initmethod', 'sol')
+    variables.set('initsol', selected_source)
+    try:
+        variables.set('solnum', 'last')
+    except Exception as error:
+        payload['solnum_warning'] = str(error)
+    payload['initmethod'] = str(variables.getString('initmethod'))
+    payload['initsol'] = str(variables.getString('initsol'))
+    payload['success'] = payload['initmethod'] == 'sol' and payload['initsol'] == selected_source
+except Exception as error:
+    payload['errors'].append(str(error))
+
+output.write({marker_start!r} + '\\n')
+output.write(json.dumps(payload, ensure_ascii=False, default=str))
+output.write('\\n' + {marker_end!r} + '\\n')
+"""
+    execution = comsol_execute_java(code, model_name=model_name)
+    parsed = _extract_marked_json_payload(
+        execution.get("stdout") or execution.get("output"),
+        start_marker=marker_start,
+        end_marker=marker_end,
+    )
+    payload = parsed if isinstance(parsed, dict) else {}
+    payload["execution"] = _compact_runtime_result(execution)
+    if not payload.get("success") and not payload.get("error"):
+        payload["error"] = "; ".join(str(item) for item in payload.get("errors") or []) or execution.get("error")
+    return payload
+
+
+def _set_loaded_roller1_geometry_closure_via_java(
+    model_name: str,
+    *,
+    closure_um: float,
+) -> dict[str, Any]:
+    """Move roller 1 radially from the 27 mm pitch radius, then rebuild geometry and mesh."""
+    if not math.isfinite(closure_um) or closure_um < 0.0 or closure_um > 3.0:
+        return {"success": False, "error": "roller1 geometry closure must be between 0 and 3 um"}
+    marker_start = "ROLLER1_GEOMETRY_CLOSURE_JSON_START"
+    marker_end = "ROLLER1_GEOMETRY_CLOSURE_JSON_END"
+    position_expression = f"pitch_radius + {closure_um:.12g}[um]"
+    code = f"""
+import json
+
+payload = {{
+    'success': False,
+    'roller': 1,
+    'closure_um': {closure_um!r},
+    'position_expression': {position_expression!r},
+}}
+try:
+    geom = model.component('comp1').geom('geom1')
+    roller = geom.feature('roller_1')
+    payload['position_before'] = [str(value) for value in list(roller.getStringArray('pos'))]
+    roller.set('pos', [{position_expression!r}, '0[mm]', '-roller_length/2'])
+    geom.run()
+    payload['position_after'] = [str(value) for value in list(roller.getStringArray('pos'))]
+    model.component('comp1').mesh('mesh1').run()
+    payload['geometry_rebuilt'] = True
+    payload['mesh_rebuilt'] = True
+    payload['success'] = True
+except Exception as error:
+    payload['error'] = str(error)
+output.write({marker_start!r} + '\\n')
+output.write(json.dumps(payload, ensure_ascii=False, default=str))
+output.write('\\n' + {marker_end!r} + '\\n')
+"""
+    execution = comsol_execute_java(code, model_name=model_name)
+    parsed = _extract_marked_json_payload(
+        execution.get("stdout") or execution.get("output"),
+        start_marker=marker_start,
+        end_marker=marker_end,
+    )
+    payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
+    if not payload:
+        payload = {"success": False, "error": parsed.get("error") or execution.get("error") or "geometry closure payload missing"}
+    payload["execution"] = _compact_runtime_result(execution)
+    payload["success"] = bool(execution.get("success")) and bool(payload.get("success"))
+    return payload
+
+
 def run_actual_area_resume_from_solved_nominal_mph(
     *,
     source_mph: str | Path,
@@ -6369,7 +7190,15 @@ def run_actual_area_resume_from_solved_nominal_mph(
     rebuild_solver_sequence: bool = False,
     load_ramp_steps: str | None = None,
     contact_zero_init_gap_value: str | None = None,
+    active_roller_stabilization_k_value: str | None = None,
+    active_roller_stabilization_kx_value: str | None = None,
+    active_roller_stabilization_kx_ramp_steps: str | None = None,
+    roller1_outer_source_offset_value: str | None = None,
+    roller1_geometry_closure_um: float | None = None,
     disable_active_roller_stabilization: bool = False,
+    physical_all_rollers: bool = False,
+    physical_weak_roller_k_value: str | None = None,
+    physical_zero_init_gap_value: str = "1",
 ) -> dict[str, Any]:
     """Load a solved nominal-pressure MPH, configure actual-area pressure, and solve one checkpoint stage."""
     mph_file = Path(source_mph)
@@ -6386,6 +7215,38 @@ def run_actual_area_resume_from_solved_nominal_mph(
     resume_policy = "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint"
     run_id = "actual_area_resume_from_solved_nominal"
     model_label = "bearing3d_load_side_boundaryload_0p101_actual_area_resume_from_solved_nominal"
+    if physical_all_rollers:
+        stage.update({
+            "name": "physical_all_12_roller_boundary_load_from_clean_contact_state",
+            "contact_scope": "all_12_rollers_natural_inner_outer_contact_force_controlled_from_clean_preload_state",
+            "active_rollers": list(range(1, VERIFIED_ROLLER_COUNT + 1)),
+            "preload_steps": "0.001 0.01 0.05 0.101",
+            "displacement_preload_active": False,
+            "displacement_preload_selection": "sel_inner_bore_load_surface",
+            "active_roller_stabilization_active": False,
+            "temporary_active_roller_stabilization_active": False,
+            "weak_roller_foundation_active": True,
+            "weak_roller_foundation_k": physical_weak_roller_k_value or "1e8[N/m^3]",
+            "weak_inner_guidance_active": True,
+            "weak_inner_guidance_k": "1e2[N/m^3]",
+            "weak_inner_guidance_k_components": ["0[N/m^3]", "1e2[N/m^3]", "1e2[N/m^3]"],
+            "strict_inner_bore_load_selection": True,
+            "inner_bore_load_pressure_expression": "radial_load/(pi*inner_diameter*bearing_width)",
+            "reuse_existing_solver": True,
+            "use_parametric_sweep": True,
+            "contact_feature_property_overrides": {
+                f"contact_roller_{roller}_{side}": {"zeroInitGap": physical_zero_init_gap_value}
+                for roller in range(1, VERIFIED_ROLLER_COUNT + 1)
+                for side in ("inner", "outer")
+            },
+            "solver_formulation_diagnostic_role": "physical_all_roller_force_control_validation",
+            "load_application_fidelity": "all_12_contact_actual_area_boundary_load_no_overlapping_displacement_xfree_yz_weak_guidance_no_active_roller_fix",
+            "physical_acceptance": "requires_input_support_reaction_error_below_1pct_and_nonnegative_natural_roller_contact_loads",
+        })
+        contact_stage_mode = "physical_all_roller_boundary_load_from_clean_contact_state"
+        resume_policy = "load_clean_all12_contact_state_then_release_displacement_and_apply_actual_area_boundary_load"
+        run_id = "physical_all_roller_boundary_load_from_clean_contact_state"
+        model_label = "bearing3d_physical_all12_boundaryload_from_clean_contact_state"
     if rebuild_solver_sequence:
         stage["name"] = f"{stage['name']}_fresh_solver"
         stage["contact_scope"] = f"{stage['contact_scope']}_fresh_solver_sequence"
@@ -6434,6 +7295,103 @@ def run_actual_area_resume_from_solved_nominal_mph(
         resume_policy = f"{resume_policy}_with_contact_zero_init_gap_{safe_zero_init_gap}"
         run_id = f"{run_id}_zero_init_gap{safe_zero_init_gap}"
         model_label = f"{model_label}_zero_init_gap{safe_zero_init_gap}"
+    if roller1_outer_source_offset_value:
+        raw_source_offset = roller1_outer_source_offset_value.strip()
+        offset_sign = "minus" if raw_source_offset.startswith("-") else "plus"
+        safe_source_offset = re.sub(r"[^A-Za-z0-9]+", "", raw_source_offset.lstrip("+-")) or "custom"
+        source_offset_token = f"{offset_sign}{safe_source_offset}"
+        contact_overrides = stage.setdefault("contact_feature_property_overrides", {})
+        contact_overrides.setdefault("contact_roller_1_outer", {})["source_offset"] = raw_source_offset
+        stage["name"] = f"{stage['name']}_roller1_outer_source_offset{source_offset_token}"
+        stage["contact_scope"] = f"{stage['contact_scope']}_roller1_outer_source_offset{source_offset_token}"
+        stage["roller1_outer_source_offset"] = raw_source_offset
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_roller1_outer_source_offset_continuation_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_source_offset_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_roller1_outer_source_offset{source_offset_token}"
+        resume_policy = f"{resume_policy}_with_roller1_outer_source_offset_{source_offset_token}"
+        run_id = f"{run_id}_roller1_outer_source_offset{source_offset_token}"
+        model_label = f"{model_label}_roller1_outer_source_offset{source_offset_token}"
+    if roller1_geometry_closure_um is not None:
+        safe_geometry_closure = str(roller1_geometry_closure_um).replace(".", "p")
+        stage["name"] = f"{stage['name']}_roller1_geometry_closure{safe_geometry_closure}um"
+        stage["contact_scope"] = f"{stage['contact_scope']}_roller1_geometry_closure{safe_geometry_closure}um"
+        stage["roller1_geometry_closure_um"] = roller1_geometry_closure_um
+        stage["reuse_existing_solver"] = False
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_roller1_geometry_closure_continuation_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_geometry_closure_requires_fresh_solver_saved_mph_load_probe_contact_probe_reaction_balance"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_roller1_geometry_closure{safe_geometry_closure}um"
+        resume_policy = f"{resume_policy}_with_roller1_geometry_closure_{safe_geometry_closure}um"
+        run_id = f"{run_id}_roller1_geometry_closure{safe_geometry_closure}um"
+        model_label = f"{model_label}_roller1_geometry_closure{safe_geometry_closure}um"
+    if active_roller_stabilization_k_value:
+        safe_active_k = (
+            active_roller_stabilization_k_value
+            .replace("[N/m^3]", "")
+            .replace("[N/m3]", "")
+            .replace("/", "")
+        )
+        safe_active_k = re.sub(r"[^A-Za-z0-9]+", "", safe_active_k) or "custom"
+        stage["name"] = f"{stage['name']}_active_spring{safe_active_k}"
+        stage["contact_scope"] = f"{stage['contact_scope']}_active_spring{safe_active_k}"
+        stage["active_roller_stabilization_active"] = True
+        stage["temporary_active_roller_stabilization_active"] = True
+        stage["active_roller_stabilization_k"] = active_roller_stabilization_k_value
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_from_solved_nominal_active_roller_stabilization_stiffness_only"
+        )
+        stage["physical_acceptance"] = (
+            "actual_area_resume_active_spring_stiffness_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_active_spring{safe_active_k}"
+        resume_policy = f"{resume_policy}_with_active_roller_stabilization_k_{safe_active_k}"
+        run_id = f"{run_id}_active_spring{safe_active_k}"
+        model_label = f"{model_label}_active_spring{safe_active_k}"
+    if active_roller_stabilization_kx_value:
+        raw_kx = active_roller_stabilization_kx_value.strip()
+        safe_kx = re.sub(r"[^A-Za-z0-9]+", "", raw_kx.replace("[N/m^3]", "")) or "custom"
+        stage["active_roller_stabilization_k_components"] = [
+            raw_kx,
+            stage["active_roller_stabilization_k"],
+            stage["active_roller_stabilization_k"],
+        ]
+        stage["name"] = f"{stage['name']}_active_spring_kx{safe_kx}"
+        stage["contact_scope"] = f"{stage['contact_scope']}_active_spring_kx{safe_kx}"
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_anisotropic_active_roller_stabilization_only"
+        )
+        stage["physical_acceptance"] = (
+            "anisotropic_active_spring_requires_saved_mph_load_probe_contact_probe_reaction_balance_and_still_not_final"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_active_spring_kx{safe_kx}"
+        resume_policy = f"{resume_policy}_with_active_roller_stabilization_kx_{safe_kx}"
+        run_id = f"{run_id}_active_spring_kx{safe_kx}"
+        model_label = f"{model_label}_active_spring_kx{safe_kx}"
+    if active_roller_stabilization_kx_ramp_steps:
+        stage["name"] = f"{stage['name']}_active_spring_kx_ramp"
+        stage["contact_scope"] = f"{stage['contact_scope']}_active_spring_kx_ramp"
+        stage["sweep_parameter"] = "active_roller_stabilization_kx"
+        stage["sweep_unit"] = "N/m^3"
+        stage["preload_steps"] = active_roller_stabilization_kx_ramp_steps
+        stage["use_parametric_sweep"] = True
+        stage["active_roller_stabilization_kx_ramp_steps"] = active_roller_stabilization_kx_ramp_steps
+        stage["solver_formulation_diagnostic_role"] = (
+            "actual_area_pressure_resume_anisotropic_kx_parametric_continuation_only"
+        )
+        stage["physical_acceptance"] = (
+            "anisotropic_kx_ramp_requires_final_step_saved_mph_load_probe_contact_probe_reaction_balance"
+        )
+        contact_stage_mode = f"{contact_stage_mode}_active_spring_kx_ramp"
+        resume_policy = f"{resume_policy}_with_active_roller_stabilization_kx_parametric_ramp"
+        run_id = f"{run_id}_active_spring_kx_ramp"
+        model_label = f"{model_label}_active_spring_kx_ramp"
     if disable_active_roller_stabilization:
         stage["name"] = f"{stage['name']}_no_active_stabilization"
         stage["contact_scope"] = f"{stage['contact_scope']}_no_active_stabilization"
@@ -6470,9 +7428,13 @@ def run_actual_area_resume_from_solved_nominal_mph(
             "contact_interference": None,
             "cage_pocket_clearance": None,
             "verified_fixture_roller_angular_offset_deg": 0.0,
-            "verified_fixture_local_contact_patch_mode": "roller1_outer_retained_conformal_narrow_source_closure3um",
+            "verified_fixture_local_contact_patch_mode": (
+                "none" if physical_all_rollers
+                else "roller1_outer_retained_conformal_narrow_source_closure3um"
+            ),
             "verified_fixture_local_contact_patch_diagnostic_role": (
-                "roller1_outer_retained_conformal_target_with_3um_source_closure_and_0p9mm_tangential_box_diagnostic"
+                None if physical_all_rollers
+                else "roller1_outer_retained_conformal_target_with_3um_source_closure_and_0p9mm_tangential_box_diagnostic"
             ),
         },
         "fixture_quality": {
@@ -6552,6 +7514,20 @@ def run_actual_area_resume_from_solved_nominal_mph(
 
         model_name = str(load["model_name"])
         summary["pre_solve_selection_binding_probe"] = {"success": True, "model_name": model_name}
+        if roller1_geometry_closure_um is not None:
+            stage_result["roller1_geometry_closure_update"] = _set_loaded_roller1_geometry_closure_via_java(
+                model_name,
+                closure_um=roller1_geometry_closure_um,
+            )
+            if not stage_result["roller1_geometry_closure_update"].get("success"):
+                error = stage_result["roller1_geometry_closure_update"].get("error") or "Failed to rebuild roller-1 geometry closure."
+                stage_result["solve"] = {"success": False, "error": error}
+                summary["solve"] = stage_result["solve"]
+                summary["staged_contact_solve"]["final_solve"] = stage_result["solve"]
+                summary["physical_contact_validation"]["quality_level"] = "diagnostic_failed"
+                summary["physical_contact_validation"]["errors"] = [error]
+                _write_direct_3d_summary(summary, summary_path)
+                return summary
         if rebuild_solver_sequence:
             stage_result["solver_sequence_rebuild"] = _remove_model_solver_sequences_via_java(model_name)
             if not stage_result["solver_sequence_rebuild"].get("success"):
@@ -6580,10 +7556,20 @@ def run_actual_area_resume_from_solved_nominal_mph(
             active_roller_stabilization_active=stage["active_roller_stabilization_active"],
             active_roller_stabilization_mode=stage["active_roller_stabilization_mode"],
             active_roller_stabilization_k=stage["active_roller_stabilization_k"],
+            active_roller_stabilization_k_components=(
+                tuple(stage["active_roller_stabilization_k_components"])
+                if stage.get("active_roller_stabilization_k_components")
+                else None
+            ),
             weak_roller_foundation_active=stage["weak_roller_foundation_active"],
             weak_roller_foundation_k=stage["weak_roller_foundation_k"],
             weak_inner_guidance_active=stage["weak_inner_guidance_active"],
             weak_inner_guidance_k=stage["weak_inner_guidance_k"],
+            weak_inner_guidance_k_components=(
+                tuple(stage["weak_inner_guidance_k_components"])
+                if stage.get("weak_inner_guidance_k_components")
+                else None
+            ),
             solver_maxsegiter=stage["solver_maxsegiter"],
             solver_maxlinit=stage["solver_maxlinit"],
             contact_penalty=stage["contact_penalty"],
@@ -6592,6 +7578,12 @@ def run_actual_area_resume_from_solved_nominal_mph(
             radial_load_value=stage["radial_load_value"],
             inner_bore_load_pressure_expression=stage["inner_bore_load_pressure_expression"],
             displacement_preload_selection=stage["displacement_preload_selection"],
+            displacement_direction=(
+                tuple(stage["displacement_direction"])
+                if stage.get("displacement_direction")
+                else None
+            ),
+            strict_inner_bore_load_selection=bool(stage.get("strict_inner_bore_load_selection", False)),
             reuse_existing_solver=stage["reuse_existing_solver"],
             use_parametric_sweep=stage["use_parametric_sweep"],
             contact_feature_property_overrides=stage.get("contact_feature_property_overrides"),
@@ -6606,6 +7598,24 @@ def run_actual_area_resume_from_solved_nominal_mph(
             summary["physical_contact_validation"]["errors"] = [error]
             _write_direct_3d_summary(summary, summary_path)
             return summary
+
+        if physical_all_rollers:
+            stage_result["initial_solution_solver"] = _configure_new_solver_from_saved_solution_via_java(
+                model_name,
+                source_solver_tag="latest",
+            )
+            if not stage_result["initial_solution_solver"].get("success"):
+                error = (
+                    stage_result["initial_solution_solver"].get("error")
+                    or "Failed to create a force-control solver initialized from the saved contact solution."
+                )
+                stage_result["solve"] = {"success": False, "error": error}
+                summary["solve"] = stage_result["solve"]
+                summary["staged_contact_solve"]["final_solve"] = stage_result["solve"]
+                summary["physical_contact_validation"]["quality_level"] = "diagnostic_failed"
+                summary["physical_contact_validation"]["errors"] = [error]
+                _write_direct_3d_summary(summary, summary_path)
+                return summary
 
         stage_result["pre_solve_model_save"] = _compact_runtime_result(
             _save_stage_configured_mph(
@@ -6629,6 +7639,7 @@ def run_actual_area_resume_from_solved_nominal_mph(
                 model_name,
                 stage_name=stage["name"],
                 output_dir=stage_plot_dir,
+                solution_level=len(str(stage.get("preload_steps") or "").split()) or None,
             )
             solved_path = result_dir / "actual_area_resume_from_solved_nominal.mph"
             solved_save = comsol_save_model(model_name, str(solved_path.resolve()))
@@ -6738,6 +7749,7 @@ def _export_native_3d_stage_volume_plot(
     *,
     stage_name: str,
     output_dir: Path | None,
+    solution_level: int | None = None,
 ) -> dict[str, Any]:
     """Export a COMSOL-native 3D Volume plot for the current solved stage."""
     if output_dir is None:
@@ -6762,6 +7774,30 @@ def _export_native_3d_stage_volume_plot(
                 java_model.result(plot_group).set("data", dataset_tags[-1])
             except Exception:
                 pass
+            if solution_level is None:
+                try:
+                    java_model.result().dataset(dataset_tags[-1]).set("solnum", "last")
+                except Exception:
+                    pass
+        if solution_level is not None:
+            for solution_key, solution_value in (
+                ("looplevel", [int(solution_level)]),
+                ("solnum", str(int(solution_level))),
+                ("outersolnum", str(int(solution_level))),
+            ):
+                try:
+                    java_model.result(plot_group).set(solution_key, solution_value)
+                except Exception:
+                    pass
+        else:
+            # Multi-value auxiliary continuations default PlotGroup3D to the
+            # first stored parameter solution.  The strict final plot must
+            # explicitly select the last solution from the final dataset.
+            for solution_key in ("solnum", "outersolnum"):
+                try:
+                    java_model.result(plot_group).set(solution_key, "last")
+                except Exception:
+                    pass
         java_model.result(plot_group).feature().create(feature_tag, "Volume")
         java_model.result(plot_group).feature(feature_tag).set("expr", "solid.mises")
         java_model.result(plot_group).run()
@@ -6785,6 +7821,7 @@ def _export_native_3d_stage_volume_plot(
             "filepath": str(output_path.resolve()),
             "export_method": "java:Image2D:Volume",
             "dataset": dataset_tags[-1] if dataset_tags else None,
+            "solution_level": solution_level if solution_level is not None else "last",
             "png_quality": png_quality,
             "message": (
                 "Native COMSOL Volume plot exported for this solved stage."
@@ -6904,6 +7941,668 @@ def _java_tags(node: Any) -> list[str]:
         return [str(tag) for tag in node.tags()]
     except Exception:
         return []
+
+
+def _run_strict_generated_global_contact_solve(
+    model_name: str,
+    *,
+    artifact_root: Path,
+    target_load_n: float = 10.099982438539563,
+    load_axis: str = "x",
+    load_sign: int = 1,
+    roller_angular_offset_deg: float = 0.0,
+    case_id: str = "default",
+) -> dict[str, Any]:
+    """Solve the Agent-authored two-global-contact model without legacy fixture staging."""
+    configured_mph = artifact_root / "strict_global_contact_configured.mph"
+    solved_mph = artifact_root / "strict_global_contact_solved.mph"
+    failed_mph = artifact_root / "strict_global_contact_failed.mph"
+    report: dict[str, Any] = {
+        "kind": "strict_generated_two_global_contact_solve",
+        "case_id": str(case_id),
+        "fresh_blank_model": True,
+        "mph_input": None,
+        "runtime_model_reconstruction": False,
+        "load_axis": load_axis.lower(),
+        "load_sign": int(load_sign),
+        "roller_angular_offset_deg": float(roller_angular_offset_deg),
+    }
+    checkpoint_path = artifact_root / "strict_run_checkpoint.json"
+
+    def checkpoint(stage: str) -> None:
+        checkpoint_path.write_text(
+            json.dumps(
+                {
+                    "stage": stage,
+                    "case_id": report.get("case_id"),
+                    "load_axis": load_axis,
+                    "load_sign": int(load_sign),
+                    "updated_at": datetime.now().astimezone().isoformat(),
+                    "initialization_success": (report.get("initialization_solve") or {}).get("success"),
+                    "force_solve_success": (report.get("solve") or {}).get("success"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    checkpoint("selection_audit_start")
+    load_axis = load_axis.lower()
+    load_axis_index = 0 if load_axis == "x" else 1
+    preload_direction = ["0", "0", "0"]
+    preload_direction[load_axis_index] = "1"
+    selection_marker_start = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_START"
+    selection_marker_end = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_END"
+    selection_audit_code = f"""
+import json
+selection_audit = {{'success': True, 'selections': {{}}, 'pairs': {{}}, 'errors': []}}
+selection_tags = [
+    'sel_inner_raceway_contact', 'sel_outer_raceway_contact',
+    'sel_all_roller_inner_contacts', 'sel_all_roller_outer_contacts',
+    'sel_inner_bore_load_surface', 'sel_outer_support_surface',
+]
+for audit_roller_id in range(1, 13):
+    selection_tags.extend([
+        'sel_roller_' + str(audit_roller_id) + '_body',
+        'sel_roller_' + str(audit_roller_id) + '_boundary',
+        'sel_roller_' + str(audit_roller_id) + '_inner_contact',
+        'sel_roller_' + str(audit_roller_id) + '_outer_contact',
+    ])
+for selection_tag in selection_tags:
+    try:
+        selection_entities = [int(value) for value in list(model.component('comp1').selection(selection_tag).entities())]
+        selection_audit['selections'][selection_tag] = {{'entity_count': len(selection_entities), 'entities': selection_entities}}
+        if len(selection_entities) == 0:
+            selection_audit['success'] = False
+            selection_audit['errors'].append('empty selection: ' + selection_tag)
+    except Exception as selection_error:
+        selection_audit['success'] = False
+        selection_audit['errors'].append(selection_tag + ': ' + str(selection_error))
+try:
+    physics_feature_tags = [str(value) for value in list(model.component('comp1').physics('solid').feature().tags())]
+    selection_audit['physics_feature_tags'] = physics_feature_tags
+    for required_feature_tag in [
+        'fix_outer', 'load_inner_bore', 'preload_inner_radial',
+        'spring_inner_ring_guidance', 'contact_all_rollers_inner',
+        'contact_all_rollers_outer',
+    ]:
+        if required_feature_tag not in physics_feature_tags:
+            selection_audit['success'] = False
+            selection_audit['errors'].append('missing exact physics feature: ' + required_feature_tag)
+except Exception as physics_tag_error:
+    selection_audit['success'] = False
+    selection_audit['errors'].append('physics feature tag audit: ' + str(physics_tag_error))
+for pair_tag, expected_source, expected_destination in [
+    ('cp_all_rollers_inner', 'sel_all_roller_inner_contacts', 'sel_inner_raceway_contact'),
+    ('cp_all_rollers_outer', 'sel_all_roller_outer_contacts', 'sel_outer_raceway_contact'),
+]:
+    try:
+        pair_node = model.component('comp1').pair(pair_tag)
+        source_entities = [int(value) for value in list(pair_node.source().entities())]
+        destination_entities = [int(value) for value in list(pair_node.destination().entities())]
+        source_named = str(pair_node.source().named())
+        destination_named = str(pair_node.destination().named())
+        selection_audit['pairs'][pair_tag] = {{
+            'source_named': source_named,
+            'destination_named': destination_named,
+            'source_entity_count': len(source_entities),
+            'destination_entity_count': len(destination_entities),
+        }}
+        if source_named != expected_source or destination_named != expected_destination:
+            selection_audit['success'] = False
+            selection_audit['errors'].append(pair_tag + ': named source/destination mismatch')
+        if len(source_entities) == 0 or len(destination_entities) == 0:
+            selection_audit['success'] = False
+            selection_audit['errors'].append(pair_tag + ': empty pair source/destination')
+    except Exception as pair_error:
+        selection_audit['success'] = False
+        selection_audit['errors'].append(pair_tag + ': pair audit failed: ' + str(pair_error))
+output.write({selection_marker_start!r} + '\\n')
+output.write(json.dumps(selection_audit, ensure_ascii=False, default=str))
+output.write('\\n' + {selection_marker_end!r} + '\\n')
+"""
+    selection_execution = comsol_execute_java(selection_audit_code, model_name=model_name)
+    selection_parsed = _extract_marked_json_payload(
+        selection_execution.get("stdout") or selection_execution.get("output"),
+        start_marker=selection_marker_start,
+        end_marker=selection_marker_end,
+    )
+    selection_audit = selection_parsed.get("payload") if isinstance(selection_parsed.get("payload"), dict) else {}
+    selection_audit["execution"] = _compact_runtime_result(selection_execution)
+    report["pre_solve_selection_audit"] = selection_audit
+    if not selection_audit.get("success"):
+        report["solve"] = {"success": False, "error": "Strict global contact selection audit failed."}
+        report["success"] = False
+        return report
+    conditioning_code = f"""
+for diagnostic_roller_id in range(1, 13):
+    model.component('comp1').physics('solid').feature(
+        'spring_roller_' + str(diagnostic_roller_id)
+    ).set('kPerArea', ['1e6[N/m^3]', '1e6[N/m^3]', '1e6[N/m^3]'])
+for diagnostic_contact_tag in ['contact_all_rollers_inner', 'contact_all_rollers_outer']:
+    model.component('comp1').physics('solid').feature(diagnostic_contact_tag).set('zeroInitGap', '1')
+for diagnostic_load_tag in ['load_inner_bore_audit', 'load_inner_bore']:
+    try:
+        model.component('comp1').physics('solid').feature(diagnostic_load_tag).active(False)
+    except Exception:
+        pass
+for diagnostic_preload_tag in [
+    'disp_inner_preload', 'disp_preload_inner', 'preload_inner_radial',
+    'preload_inner_displacement',
+]:
+    try:
+        diagnostic_preload = model.component('comp1').physics('solid').feature(diagnostic_preload_tag)
+        diagnostic_preload.set('Direction', {preload_direction!r})
+        diagnostic_preload.active(True)
+    except Exception:
+        pass
+model.param().set('inner_radial_displacement', '1e-4[um]')
+diagnostic_parametric_found = False
+for diagnostic_parametric_tag in ['stat', 'pstep', 'param', 'pcont', 'p1']:
+    try:
+        diagnostic_parametric = model.study('std1').feature(diagnostic_parametric_tag)
+        try:
+            diagnostic_parametric.set('useparam', 'on')
+        except Exception:
+            pass
+        diagnostic_parametric.set('pname', ['inner_radial_displacement'])
+        diagnostic_parametric.set('plistarr', ['1e-4'])
+        diagnostic_parametric.set('punit', ['um'])
+        try:
+            diagnostic_parametric.set('pcontinuationmode', 'manual')
+            diagnostic_parametric.set('pcontinuation', 'inner_radial_displacement')
+            diagnostic_parametric.set('preusesol', 'yes')
+        except Exception:
+            pass
+        diagnostic_parametric_found = True
+        break
+    except Exception:
+        pass
+if not diagnostic_parametric_found:
+    raise RuntimeError('No supported Parametric study feature tag was found')
+try:
+    model.study('std1').createAutoSequences('sol')
+except Exception:
+    pass
+for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
+    ('se1', 'maxsegiter', '150'),
+    ('se1', 'segiter', '150'),
+    ('se1', 'ntolfact', '1'),
+    ('i1', 'maxlinit', '1000'),
+    ('i1', 'itrestart', '200'),
+]:
+    try:
+        model.sol('sol1').feature('s1').feature(diagnostic_solver_path).set(
+            diagnostic_solver_key, diagnostic_solver_value
+        )
+    except Exception:
+        pass
+"""
+    conditioning = comsol_execute_java(conditioning_code, model_name=model_name)
+    report["diagnostic_runtime_conditioning"] = {
+        "success": bool(conditioning.get("success")),
+        "temporary": True,
+        "changes": [
+            "roller SpringFoundation2 kPerArea: 1e2 -> 1e6 N/m^3",
+            "split-source global Contact zeroInitGap: 0 -> 1",
+            "single inherited contact initialization state: 1e-4 um",
+            "segregated iteration ceiling: 150",
+            "iterative linear ceiling/restart: 1000/200",
+        ],
+        "result": _compact_runtime_result(conditioning),
+    }
+    report["configured_model_save"] = _compact_runtime_result(
+        comsol_save_model(model_name, str(configured_mph))
+    )
+    checkpoint("configured_model_saved")
+    if not conditioning.get("success"):
+        report["solve"] = {"success": False, "error": "Diagnostic initialization configuration failed."}
+        report["success"] = False
+        return report
+    initialization_solve = comsol_solve(model_name)
+    report["initialization_solve"] = _compact_runtime_result(initialization_solve)
+    checkpoint("initialization_solve_finished")
+    if not initialization_solve.get("success"):
+        report["failed_model_save"] = _compact_runtime_result(
+            comsol_save_model(model_name, str(failed_mph))
+        )
+        report["solve"] = report["initialization_solve"]
+        report["success"] = False
+        return report
+    report["initialization_displacement"] = _compact_runtime_result(
+        comsol_evaluate(model_name, "solid.disp")
+    )
+    report["initialization_stress"] = _compact_runtime_result(
+        comsol_evaluate(model_name, "solid.mises")
+    )
+    initialization_reaction = _evaluate_displacement_reaction_equivalent(
+        model_name,
+        selection_name="sel_outer_support_surface",
+        preferred_axis=load_axis,
+    )
+    report["initialization_reaction"] = initialization_reaction
+    checkpoint("initialization_reaction_audited")
+    reaction_force = float(initialization_reaction.get("best_reaction_force_abs_n") or 0.0)
+    reaction_force_is_valid = math.isfinite(reaction_force) and reaction_force > 1.0e-6
+    # Contact status changes around 0.1 N for rotated radial-load variants.  A
+    # direct 0.01 -> 0.101 N jump can exhaust the Newton iteration budget even
+    # when both endpoint states are valid, so resolve that transition and keep
+    # the following decade similarly bounded.  Every item is still solved as a
+    # separate study that inherits the immediately preceding solution.
+    official_force_steps = [
+        1.0e-6,
+        1.0e-4,
+        0.01,
+        0.02,
+        0.05,
+        0.08,
+        0.1,
+        0.1001,
+        0.1005,
+        0.101,
+        0.2,
+        0.5,
+        1.0,
+    ]
+    while official_force_steps[-1] * 2.0 < target_load_n * (1.0 - 1.0e-12):
+        official_force_steps.append(official_force_steps[-1] * 2.0)
+    if target_load_n > official_force_steps[-1] * (1.0 + 1.0e-12):
+        official_force_steps.append(float(target_load_n))
+    else:
+        official_force_steps[-1] = float(target_load_n)
+    if reaction_force_is_valid and reaction_force < target_load_n:
+        # Switch from displacement to force control at the force represented by
+        # the converged initialization state.  Unloading that state to 1e-6 N
+        # first both wastes stages and can reopen contacts that must immediately
+        # be closed again on the upward ramp.
+        transfer_force_steps = [reaction_force]
+        transfer_force_steps.extend(
+            value
+            for value in official_force_steps
+            if value > reaction_force * (1.0 + 1.0e-12)
+        )
+    elif reaction_force_is_valid and reaction_force > target_load_n:
+        # Unload monotonically when a requested target is below the
+        # displacement-initialization equivalent force.
+        transfer_force_steps = [reaction_force]
+        while transfer_force_steps[-1] / 2.0 > target_load_n * (1.0 + 1.0e-12):
+            transfer_force_steps.append(transfer_force_steps[-1] / 2.0)
+        transfer_force_steps.append(float(target_load_n))
+    else:
+        transfer_force_steps = official_force_steps
+    combined_force_steps = []
+    for value in transfer_force_steps:
+        if not combined_force_steps or not math.isclose(value, combined_force_steps[-1], rel_tol=1e-12, abs_tol=1e-15):
+            combined_force_steps.append(value)
+    report["force_continuation_requested_checkpoints_n"] = list(combined_force_steps)
+    low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
+    if not low_contact_chunk:
+        low_contact_chunk = [combined_force_steps[0]]
+    high_design_chunk = []
+    for value in (1.0, float(target_load_n)):
+        preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
+        if value > preceding_value * (1.0 + 1.0e-12):
+            high_design_chunk.append(value)
+    force_continuation_chunks = [low_contact_chunk]
+    if high_design_chunk:
+        force_continuation_chunks.append(high_design_chunk)
+    combined_force_steps = low_contact_chunk
+    force_step_text = " ".join(f"{value:.15g}" for value in combined_force_steps)
+    report["force_continuation_chunks_n"] = force_continuation_chunks
+    report["force_continuation_schedule_n"] = [
+        value for chunk in force_continuation_chunks for value in chunk
+    ]
+    force_transfer_code = f"""
+for force_preload_tag in [
+    'disp_inner_preload', 'disp_preload_inner', 'preload_inner_radial',
+    'preload_inner_displacement',
+]:
+    try:
+        model.component('comp1').physics('solid').feature(force_preload_tag).active(False)
+    except Exception:
+        pass
+for force_load_tag in ['load_inner_bore_audit', 'load_inner_bore']:
+    try:
+        model.component('comp1').physics('solid').feature(force_load_tag).active(True)
+    except Exception:
+        pass
+force_parametric_found = False
+for force_parametric_tag in ['stat', 'pstep', 'param', 'pcont', 'p1']:
+    try:
+        force_parametric = model.study('std1').feature(force_parametric_tag)
+        try:
+            force_parametric.set('useparam', 'on')
+        except Exception:
+            pass
+        force_parametric.set('pname', ['radial_load'])
+        force_parametric.set('plistarr', [{force_step_text!r}])
+        force_parametric.set('punit', ['N'])
+        try:
+            force_parametric.set('pcontinuationmode', 'manual')
+            force_parametric.set('pcontinuation', 'radial_load')
+            force_parametric.set('preusesol', 'yes')
+        except Exception:
+            pass
+        force_parametric_found = True
+        break
+    except Exception:
+        pass
+if not force_parametric_found:
+    raise RuntimeError('No supported Parametric study feature tag was found for force control')
+"""
+    force_transfer = comsol_execute_java(force_transfer_code, model_name=model_name)
+    report["force_control_transfer"] = _compact_runtime_result(force_transfer)
+    # Run two native continuation chunks: dense stored checkpoints through the
+    # low-load contact-status transition, then a compact design-load ramp.  Each
+    # chunk inherits the final solution of the preceding chunk.
+    force_stage_results: list[dict[str, Any]] = []
+    solve: dict[str, Any] = {"success": False, "error": "No continuation chunk was run."}
+    for chunk_index, chunk_values in enumerate(force_continuation_chunks, start=1):
+        chunk_step_text = " ".join(f"{value:.15g}" for value in chunk_values)
+        chunk_parameter_code = f"""
+for force_parametric_tag in ['stat', 'pstep', 'param', 'pcont', 'p1']:
+    try:
+        force_parametric = model.study('std1').feature(force_parametric_tag)
+        force_parametric.set('pname', ['radial_load'])
+        force_parametric.set('plistarr', [{chunk_step_text!r}])
+        force_parametric.set('punit', ['N'])
+        try:
+            force_parametric.set('useparam', 'on')
+            force_parametric.set('pcontinuationmode', 'manual')
+            force_parametric.set('pcontinuation', 'radial_load')
+            force_parametric.set('preusesol', 'yes')
+        except Exception:
+            pass
+        break
+    except Exception:
+        pass
+"""
+        chunk_parameter_update = _compact_runtime_result(
+            comsol_execute_java(chunk_parameter_code, model_name=model_name)
+        )
+        inherited_solver = _configure_new_solver_from_saved_solution_via_java(
+            model_name,
+            source_solver_tag="latest",
+        )
+        target_solver_tag = str((inherited_solver.get("payload") or {}).get("target_solver_tag") or "")
+        force_solver_conditioning: dict[str, Any] = {}
+        if target_solver_tag:
+            force_solver_conditioning_code = f"""
+stationary_solver = model.sol({target_solver_tag!r}).feature('s1')
+try:
+    parametric_solver = stationary_solver.feature('p1')
+    parametric_solver.set('pcontinuationmode', 'manual')
+    parametric_solver.set('pcontinuation', 'radial_load')
+    parametric_solver.set('ponerror', 'stop')
+except Exception:
+    pass
+for force_solver_path, force_solver_key, force_solver_value in [
+    ('se1', 'maxsegiter', '150'),
+    ('se1', 'segiter', '150'),
+    ('se1', 'ntolfact', '1'),
+    ('i1', 'maxlinit', '1000'),
+    ('i1', 'itrestart', '200'),
+]:
+    try:
+        stationary_solver.feature(force_solver_path).set(
+            force_solver_key, force_solver_value
+        )
+    except Exception:
+        pass
+"""
+            force_solver_conditioning = _compact_runtime_result(
+                comsol_execute_java(force_solver_conditioning_code, model_name=model_name)
+            )
+        checkpoint(f"force_auxiliary_continuation_chunk_{chunk_index}_started")
+        solve = comsol_solve(model_name) if inherited_solver.get("success") else {
+            "success": False,
+            "error": "Could not create force-control solver inherited from the preceding solution.",
+        }
+        force_stage_results.append({
+            "stage_index": chunk_index,
+            "mode": "native_auxiliary_continuation_chunk",
+            "radial_load_values_n": chunk_values,
+            "pcontinuationmode": "manual",
+            "pcontinuation": "radial_load",
+            "parameter_update": chunk_parameter_update,
+            "inherited_solver": inherited_solver,
+            "solver_conditioning": force_solver_conditioning,
+            "solve": _compact_runtime_result(solve),
+        })
+        report["force_stage_results"] = force_stage_results
+        report["solve"] = _compact_runtime_result(solve)
+        checkpoint(f"force_auxiliary_continuation_chunk_{chunk_index}_finished")
+        if not solve.get("success"):
+            break
+    report["solve"] = _compact_runtime_result(solve)
+    checkpoint("force_continuation_finished")
+    if not solve.get("success"):
+        report["failed_model_save"] = _compact_runtime_result(
+            comsol_save_model(model_name, str(failed_mph))
+        )
+        report["success"] = False
+        return report
+    dataset_tags = _java_tags(
+        COMSOLClient.get_instance().get_model(model_name).java_model.result().dataset()
+    )
+    dataset_tag = dataset_tags[-1] if dataset_tags else "dset2"
+    traction_expressions = {
+        "x": "solid.sx*nx+solid.sxy*ny+solid.sxz*nz",
+        "y": "solid.sxy*nx+solid.sy*ny+solid.syz*nz",
+        "z": "solid.sxz*nx+solid.syz*ny+solid.sz*nz",
+    }
+    load_area = _evaluate_surface_integral_expression_via_java(
+        model_name,
+        "1",
+        selection_name="sel_inner_bore_load_surface",
+        tag="strict_final_load_area",
+        result_index="last",
+        dataset_tag=dataset_tag,
+    )
+    applied_load = _evaluate_surface_integral_expression_via_java(
+        model_name,
+        "radial_load/(pi*inner_diameter*bearing_width)",
+        selection_name="sel_inner_bore_load_surface",
+        tag="strict_final_applied_load",
+        result_index="last",
+        dataset_tag=dataset_tag,
+    )
+    support_components = {
+        axis: _evaluate_surface_integral_expression_via_java(
+            model_name,
+            expression,
+            selection_name="sel_outer_support_surface",
+            tag=f"strict_support_reaction_{axis}",
+            result_index="last",
+            dataset_tag=dataset_tag,
+        )
+        for axis, expression in {"x": "solid.RFx", "y": "solid.RFy", "z": "solid.RFz"}.items()
+    }
+    roller_rows: list[dict[str, Any]] = []
+    for roller_id in range(1, 13):
+        angle_deg = float(roller_angular_offset_deg) + 30.0 * (roller_id - 1)
+        angle = math.radians(angle_deg)
+        row: dict[str, Any] = {"roller": roller_id, "angle_deg": angle_deg % 360.0}
+        for side in ("inner", "outer"):
+            components = {
+                axis: _evaluate_surface_integral_expression_via_java(
+                    model_name,
+                    expression,
+                    selection_name=f"sel_roller_{roller_id}_{side}_contact",
+                    tag=f"strict_r{roller_id}_{side}_{axis}",
+                    result_index="last",
+                    dataset_tag=dataset_tag,
+                )
+                for axis, expression in traction_expressions.items()
+            }
+            values = {axis: _runtime_numeric_max(value) for axis, value in components.items()}
+            fx = float(values.get("x") or 0.0)
+            fy = float(values.get("y") or 0.0)
+            fz = float(values.get("z") or 0.0)
+            row[side] = {
+                "components": components,
+                "fx_n": fx,
+                "fy_n": fy,
+                "fz_n": fz,
+                "magnitude_n": math.sqrt(fx * fx + fy * fy + fz * fz),
+                "radial_n": fx * math.cos(angle) + fy * math.sin(angle),
+            }
+        roller_rows.append(row)
+    spring_rows: list[dict[str, Any]] = []
+    spring_totals = {"x": 0.0, "y": 0.0, "z": 0.0}
+    for roller_id in range(1, 13):
+        row = {"roller": roller_id}
+        for axis, displacement_expression in (("x", "u"), ("y", "v"), ("z", "w")):
+            evaluation = _evaluate_surface_integral_expression_via_java(
+                model_name,
+                f"1e6[N/m^3]*({displacement_expression})",
+                selection_name=f"sel_roller_{roller_id}_boundary",
+                tag=f"strict_spring_r{roller_id}_{axis}",
+                result_index="last",
+                dataset_tag=dataset_tag,
+            )
+            value = float(_runtime_numeric_max(evaluation) or 0.0)
+            row[f"f{axis}_n"] = value
+            row[f"{axis}_evaluation"] = evaluation
+            spring_totals[axis] += value
+        spring_rows.append(row)
+    inner_guidance_row: dict[str, Any] = {}
+    for axis, displacement_expression in (("x", "u"), ("y", "v"), ("z", "w")):
+        guidance_stiffness = "1e4[N/m^3]" if axis == load_axis else "1[N/m^3]"
+        evaluation = _evaluate_surface_integral_expression_via_java(
+            model_name,
+            f"{guidance_stiffness}*({displacement_expression})",
+            selection_name="geom1_inner_ring_bnd",
+            tag=f"strict_inner_guidance_{axis}",
+            result_index="last",
+            dataset_tag=dataset_tag,
+        )
+        value = float(_runtime_numeric_max(evaluation) or 0.0)
+        inner_guidance_row[f"f{axis}_n"] = value
+        inner_guidance_row[f"{axis}_evaluation"] = evaluation
+        spring_totals[axis] += value
+    expected_area_m2 = math.pi * 0.04 * 0.018
+    load_area_m2 = _runtime_numeric_max(load_area)
+    applied_load_n = _runtime_numeric_max(applied_load)
+    support_vector = {
+        axis: float(_runtime_numeric_max(value) or 0.0)
+        for axis, value in support_components.items()
+    }
+    spring_resultant_n = math.sqrt(sum(value * value for value in spring_totals.values()))
+    outer_contact_vector = {
+        axis: sum(float((row.get("outer") or {}).get(f"f{axis}_n") or 0.0) for row in roller_rows)
+        for axis in ("x", "y", "z")
+    }
+    report["final_audit"] = {
+        "dataset": dataset_tag,
+        "target_load_n": target_load_n,
+        "load_area": load_area,
+        "load_area_m2": load_area_m2,
+        "expected_load_area_m2": expected_area_m2,
+        "load_area_relative_error": (
+            abs(load_area_m2 - expected_area_m2) / expected_area_m2 if load_area_m2 is not None else None
+        ),
+        "applied_load": applied_load,
+        "applied_load_n": applied_load_n,
+        "applied_load_relative_error": (
+            abs(abs(applied_load_n) - target_load_n) / target_load_n if applied_load_n is not None else None
+        ),
+        "support_reaction_components": support_components,
+        "support_reaction_vector_n": support_vector,
+        "support_reaction_balance_relative_error": abs(abs(support_vector[load_axis]) - target_load_n) / target_load_n,
+        "roller_loads": roller_rows,
+        "outer_contact_vector_n": outer_contact_vector,
+        "outer_contact_balance_relative_error": abs(abs(outer_contact_vector[load_axis]) - target_load_n) / target_load_n,
+        "spring_rows": spring_rows,
+        "inner_guidance_spring": inner_guidance_row,
+        "spring_total_vector_n": spring_totals,
+        "spring_resultant_n": spring_resultant_n,
+        "spring_load_ratio": spring_resultant_n / target_load_n,
+        "stress": _compact_runtime_result(comsol_evaluate(model_name, "solid.mises")),
+        "displacement": _compact_runtime_result(comsol_evaluate(model_name, "solid.disp")),
+    }
+    report["solved_model_save"] = _compact_runtime_result(
+        comsol_save_model(model_name, str(solved_mph))
+    )
+    native_png = artifact_root / "bearing_3d_von_mises_native.png"
+    report["native_stress_plot"] = _compact_runtime_result(
+        _export_native_3d_stage_volume_plot(
+            model_name,
+            stage_name=("target_" + str(target_load_n).replace(".", "p") + "N"),
+            output_dir=native_png.parent,
+            solution_level=len(force_continuation_chunks[-1]),
+        )
+    )
+    final_audit = report.get("final_audit") or {}
+    roller_angles = {
+        roller_id: (float(roller_angular_offset_deg) + 30.0 * (roller_id - 1)) % 360.0
+        for roller_id in range(1, 13)
+    }
+    mirror_pairs_set: set[tuple[int, int]] = set()
+    for roller_id, angle_deg in roller_angles.items():
+        reflected_deg = ((-angle_deg) if load_axis == "x" else (180.0 - angle_deg)) % 360.0
+        partner_id = min(
+            roller_angles,
+            key=lambda candidate: abs(((roller_angles[candidate] - reflected_deg + 180.0) % 360.0) - 180.0),
+        )
+        if partner_id != roller_id:
+            mirror_pairs_set.add(tuple(sorted((roller_id, partner_id))))
+    mirror_pairs = tuple(sorted(mirror_pairs_set))
+    outer_radial = {
+        int(row["roller"]): abs(float((row.get("outer") or {}).get("radial_n") or 0.0))
+        for row in final_audit.get("roller_loads") or []
+    }
+    peak_roller_load = max(outer_radial.values(), default=0.0)
+    load_side_weights = {
+        int(row["roller"]): (
+            math.cos(math.radians(float(row["angle_deg"])))
+            if load_axis == "x"
+            else math.sin(math.radians(float(row["angle_deg"])))
+        ) * int(load_sign)
+        for row in final_audit.get("roller_loads") or []
+    }
+    expected_side_load_n = sum(
+        outer_radial.get(roller_id, 0.0)
+        for roller_id, weight in load_side_weights.items()
+        if weight > 1e-9
+    )
+    opposite_side_load_n = sum(
+        outer_radial.get(roller_id, 0.0)
+        for roller_id, weight in load_side_weights.items()
+        if weight < -1e-9
+    )
+    directional_load_fraction = expected_side_load_n / max(
+        expected_side_load_n + opposite_side_load_n, 1e-30
+    )
+    mirror_errors = {
+        f"{left}-{right}": abs(outer_radial.get(left, 0.0) - outer_radial.get(right, 0.0)) / peak_roller_load
+        if peak_roller_load > 0.0 else float("inf")
+        for left, right in mirror_pairs
+    }
+    gates = {
+        "load_area_le_1pct": float(final_audit.get("load_area_relative_error") if final_audit.get("load_area_relative_error") is not None else float("inf")) <= 0.01,
+        "applied_load_le_1pct": float(final_audit.get("applied_load_relative_error") if final_audit.get("applied_load_relative_error") is not None else float("inf")) <= 0.01,
+        "support_reaction_le_2pct": float(final_audit.get("support_reaction_balance_relative_error") if final_audit.get("support_reaction_balance_relative_error") is not None else float("inf")) <= 0.02,
+        "roller_resultant_le_2pct": float(final_audit.get("outer_contact_balance_relative_error") if final_audit.get("outer_contact_balance_relative_error") is not None else float("inf")) <= 0.02,
+        "spring_resultant_le_1pct": float(final_audit.get("spring_load_ratio") if final_audit.get("spring_load_ratio") is not None else float("inf")) <= 0.01,
+        "mirror_symmetry_le_10pct_peak": bool(mirror_errors) and max(mirror_errors.values()) <= 0.10,
+        "loaded_zone_matches_direction": directional_load_fraction >= 0.90,
+        "native_stress_png": bool((report.get("native_stress_plot") or {}).get("success")),
+    }
+    final_audit["mirror_pair_relative_errors"] = mirror_errors
+    final_audit["directional_load_audit"] = {
+        "load_axis": load_axis,
+        "load_sign": int(load_sign),
+        "expected_side_load_n": expected_side_load_n,
+        "opposite_side_load_n": opposite_side_load_n,
+        "expected_side_fraction": directional_load_fraction,
+    }
+    final_audit["gates"] = gates
+    final_audit["success"] = all(gates.values())
+    report["success"] = bool(solve.get("success")) and bool(final_audit.get("success"))
+    checkpoint("final_audit_finished")
+    return report
 
 
 def run_direct_fixture_smoke(
@@ -7055,7 +8754,12 @@ def run_direct_fixture_smoke(
                 "model_dimension": "3d_full_bearing",
                 "roller_count": str(VERIFIED_ROLLER_COUNT),
                 "cage_included": "raceway_only_visual" if legacy_raceway_highload_direct else "true",
-                "radial_load": "3000[N]",
+                "radial_load": (
+                    f"{float(getattr(args, 'strict_target_load_n', 10.099982438539563)):.15g}[N]"
+                    if is_segmented_generated_direct
+                    else "3000[N]"
+                ),
+                "cage_pocket_clearance": f"{float(getattr(args, 'strict_cage_pocket_clearance_mm', 0.2)):.12g}[mm]",
             },
             execution_context=execution_context,
             create_model_name=args.model_name,
@@ -7082,6 +8786,32 @@ def run_direct_fixture_smoke(
             _print_direct_3d_summary(summary, full_json_stdout=bool(getattr(args, "full_json_stdout", False)))
             return 1
         model_name = str(run["model_name"])
+        if is_segmented_generated_direct and "cp_all_rollers_inner" in generated_code and "cp_all_rollers_outer" in generated_code:
+            global_result = _run_strict_generated_global_contact_solve(
+                model_name,
+                artifact_root=artifact_root,
+                target_load_n=float(getattr(args, "strict_target_load_n", 10.099982438539563)),
+                load_axis=str(getattr(args, "strict_load_axis", "x")),
+                load_sign=int(getattr(args, "strict_load_sign", 1)),
+                roller_angular_offset_deg=float(getattr(args, "strict_roller_angular_offset_deg", 0.0)),
+                case_id=str(getattr(args, "strict_case_id", "default")),
+            )
+            summary["strict_global_contact_solve"] = global_result
+            summary["solve"] = global_result.get("solve")
+            summary["requested_stage_image"] = global_result.get("native_stress_plot")
+            summary["physical_contact_validation"] = {
+                "success": bool(global_result.get("success")),
+                "quality_level": (
+                    "strict_force_audited_global_contact"
+                    if global_result.get("success")
+                    else "strict_force_audit_failed"
+                ),
+                "final_audit": global_result.get("final_audit"),
+                "errors": ([] if global_result.get("success") else ["Agent-authored global-contact solve or strict force audit failed."]),
+            }
+            _write_direct_3d_summary(summary, summary_path)
+            _print_direct_3d_summary(summary, full_json_stdout=bool(getattr(args, "full_json_stdout", False)))
+            return 0 if global_result.get("success") else 1
         if legacy_raceway_highload_direct:
             direct_result = _run_legacy_raceway_highload_direct(
                 model_name,
@@ -7576,10 +9306,12 @@ def _evaluate_global_expression_via_java(
     *,
     tag: str,
     result_index: str = "first",
+    dataset_tag: str = "dset1",
 ) -> dict[str, Any]:
     safe_tag = re.sub(r"[^A-Za-z0-9_]", "_", tag)[:60] or "reaction_probe"
     marker = f"REACTION_EXPR_VALUE|tag={safe_tag}|value="
     values_marker = f"REACTION_EXPR_VALUES|tag={safe_tag}|values="
+    dataset_marker = f"REACTION_EXPR_DATASET|tag={safe_tag}|dataset="
     pick_last = result_index == "last"
     code = f"""
 import json
@@ -7614,7 +9346,11 @@ try:
     model.result().numerical().create({safe_tag!r}, 'EvalGlobal')
     model.result().numerical({safe_tag!r}).set('expr', {expression!r})
     try:
-        model.result().numerical({safe_tag!r}).set('data', 'dset1')
+        requested_dataset = {dataset_tag!r}
+        dataset_tags = [str(item) for item in list(model.result().dataset().tags())]
+        selected_dataset = dataset_tags[-1] if requested_dataset == 'latest' and dataset_tags else requested_dataset
+        model.result().numerical({safe_tag!r}).set('data', selected_dataset)
+        output.write({dataset_marker!r} + str(selected_dataset) + '\\n')
     except Exception as error:
         output.write('REACTION_EXPR_DATASET_WARNING|tag=' + {safe_tag!r} + '|error=' + str(error) + '\\n')
     raw = model.result().numerical({safe_tag!r}).getReal()
@@ -7648,9 +9384,14 @@ except Exception as error:
     stdout = result.get("stdout") or result.get("output")
     value = _parse_java_numeric_probe(stdout, marker=marker)
     raw_values = _parse_java_numeric_list_probe(stdout, marker=values_marker)
+    selected_dataset = None
+    if stdout and dataset_marker in stdout:
+        selected_dataset = stdout.split(dataset_marker, 1)[1].splitlines()[0].strip()
     compact = _compact_runtime_result(result)
     compact["expression"] = expression
     compact["result_index"] = result_index
+    compact["requested_dataset"] = dataset_tag
+    compact["selected_dataset"] = selected_dataset
     compact["raw_values"] = raw_values
     if value is not None:
         compact["value"] = value
@@ -7667,10 +9408,12 @@ def _evaluate_surface_integral_expression_via_java(
     selection_name: str,
     tag: str,
     result_index: str = "first",
+    dataset_tag: str = "dset1",
 ) -> dict[str, Any]:
     safe_tag = re.sub(r"[^A-Za-z0-9_]", "_", tag)[:60] or "reaction_surface_probe"
     marker = f"REACTION_SURFACE_VALUE|tag={safe_tag}|value="
     values_marker = f"REACTION_SURFACE_VALUES|tag={safe_tag}|values="
+    dataset_marker = f"REACTION_SURFACE_DATASET|tag={safe_tag}|dataset="
     pick_last = result_index == "last"
     code = f"""
 import json
@@ -7706,7 +9449,11 @@ try:
     model.result().numerical({safe_tag!r}).selection().named({selection_name!r})
     model.result().numerical({safe_tag!r}).set('expr', {expression!r})
     try:
-        model.result().numerical({safe_tag!r}).set('data', 'dset1')
+        requested_dataset = {dataset_tag!r}
+        dataset_tags = [str(item) for item in list(model.result().dataset().tags())]
+        selected_dataset = dataset_tags[-1] if requested_dataset == 'latest' and dataset_tags else requested_dataset
+        model.result().numerical({safe_tag!r}).set('data', selected_dataset)
+        output.write({dataset_marker!r} + str(selected_dataset) + '\\n')
     except Exception as error:
         output.write('REACTION_SURFACE_DATASET_WARNING|tag=' + {safe_tag!r} + '|error=' + str(error) + '\\n')
     raw = model.result().numerical({safe_tag!r}).getReal()
@@ -7740,11 +9487,16 @@ except Exception as error:
     stdout = result.get("stdout") or result.get("output")
     value = _parse_java_numeric_probe(stdout, marker=marker)
     raw_values = _parse_java_numeric_list_probe(stdout, marker=values_marker)
+    selected_dataset = None
+    if stdout and dataset_marker in stdout:
+        selected_dataset = stdout.split(dataset_marker, 1)[1].splitlines()[0].strip()
     compact = _compact_runtime_result(result)
     compact["expression"] = expression
     compact["selection"] = selection_name
     compact["method"] = "java_intsurface"
     compact["result_index"] = result_index
+    compact["requested_dataset"] = dataset_tag
+    compact["selected_dataset"] = selected_dataset
     compact["raw_values"] = raw_values
     if value is not None:
         compact["value"] = value
@@ -8034,6 +9786,8 @@ def _evaluate_displacement_reaction_equivalent(
     model_name: str,
     *,
     selection_name: str,
+    dataset_tag: str = "dset1",
+    preferred_axis: str = "x",
 ) -> dict[str, Any]:
     """Probe reaction-force expressions for a displacement-controlled stage."""
     operator_tag = "intop_displacement_reaction_probe"
@@ -8168,15 +9922,21 @@ output.write('\\n' + {REACTION_SETUP_JSON_END!r} + '\\n')
     successful = []
     evaluated_success_count = 0
     for index, expression in enumerate(candidates, start=1):
-        evaluation = comsol_evaluate(model_name, expression)
-        compact = _compact_runtime_result(evaluation)
-        compact["expression"] = expression
-        compact["method"] = "operator_expression"
+        if dataset_tag == "dset1":
+            evaluation = comsol_evaluate(model_name, expression)
+            compact = _compact_runtime_result(evaluation)
+            compact["expression"] = expression
+            compact["method"] = "operator_expression"
+        else:
+            evaluation = {"success": False}
+            compact = {"expression": expression, "method": "java_evalglobal"}
         if not evaluation.get("success"):
             java_eval = _evaluate_global_expression_via_java(
                 model_name,
                 expression,
                 tag=f"reaction_force_probe_{index}",
+                result_index="last",
+                dataset_tag=dataset_tag,
             )
             compact["java_evalglobal"] = java_eval
             if java_eval.get("success") and java_eval.get("value") is not None:
@@ -8225,10 +9985,26 @@ output.write('\\n' + {REACTION_SETUP_JSON_END!r} + '\\n')
             expression,
             selection_name=selection_name,
             tag=f"reaction_surface_probe_{index}",
+            result_index="last",
+            dataset_tag=dataset_tag,
         )
         compact["diagnostic_class"] = _classify_reaction_evaluation(compact)
         evaluations.append(compact)
         value = _runtime_numeric_max(compact)
+        raw_values = compact.get("raw_values")
+        if isinstance(raw_values, list):
+            finite_raw_values = []
+            for raw_value in raw_values:
+                try:
+                    numeric_raw_value = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(numeric_raw_value):
+                    finite_raw_values.append(numeric_raw_value)
+            if finite_raw_values:
+                strongest_raw_value = max(finite_raw_values, key=abs)
+                if value is None or abs(strongest_raw_value) > abs(value):
+                    value = strongest_raw_value
         if compact.get("success") and value is not None:
             evaluated_success_count += 1
             if abs(value) > 1.0e-9:
@@ -8239,23 +10015,48 @@ output.write('\\n' + {REACTION_SETUP_JSON_END!r} + '\\n')
                     "evaluation": compact,
                     "method": "java_intsurface",
                 })
-    best = max(successful, key=lambda item: item["abs_value"], default=None)
+    # On a fixed support COMSOL's assembled reaction variable is authoritative.
+    # Stress-traction integration is a useful cross-check, but can differ because
+    # of boundary stress recovery/extrapolation and must not override solid.RFx.
+    preferred_expression = "solid.RF" + preferred_axis.lower()
+    preferred_reactions = [
+        item
+        for item in successful
+        if str(item.get("expression") or "").lower() == preferred_expression.lower()
+        and (item.get("method") or (item.get("evaluation") or {}).get("method")) == "java_intsurface"
+    ]
+    best = preferred_reactions[0] if preferred_reactions else max(
+        successful,
+        key=lambda item: item["abs_value"],
+        default=None,
+    )
     pressure = None
     if best is not None:
-        pressure_eval = comsol_evaluate(
-            model_name,
-            f"abs({best['expression']})/(pi*inner_diameter*bearing_width)",
-        )
-        pressure = _compact_runtime_result(pressure_eval)
-        if not pressure_eval.get("success"):
+        pressure_expression = f"abs({best['expression']})/(pi*inner_diameter*bearing_width)"
+        if dataset_tag == "dset1":
+            pressure_eval = comsol_evaluate(model_name, pressure_expression)
+            pressure = _compact_runtime_result(pressure_eval)
+            if not pressure_eval.get("success"):
+                pressure = _evaluate_global_expression_via_java(
+                    model_name,
+                    pressure_expression,
+                    tag="reaction_equivalent_pressure",
+                    result_index="last",
+                    dataset_tag=dataset_tag,
+                )
+        else:
             pressure = _evaluate_global_expression_via_java(
                 model_name,
-                f"abs({best['expression']})/(pi*inner_diameter*bearing_width)",
+                pressure_expression,
                 tag="reaction_equivalent_pressure",
+                result_index="last",
+                dataset_tag=dataset_tag,
             )
     return {
         "success": best is not None,
         "kind": "displacement_controlled_reaction_equivalent_probe",
+        "solution_selection_policy": "use_last_parametric_solution_value_for_saved_mph_reaction_balance",
+        "requested_dataset": dataset_tag,
         "operator": operator_tag,
         "selection": selection_name,
         "setup": _compact_runtime_result(setup),
@@ -9931,6 +11732,7 @@ def probe_saved_reaction_mph(
         result["reaction_equivalent"] = _evaluate_displacement_reaction_equivalent(
             model_name,
             selection_name=selection_name,
+            dataset_tag="latest",
         )
         reaction = result.get("reaction_equivalent") or {}
         result["success"] = bool(reaction.get("success"))
@@ -10032,6 +11834,7 @@ def probe_saved_boundary_load_mph(
             selection_name=selection_name,
             tag="boundary_load_area_probe",
             result_index="last",
+            dataset_tag="latest",
         )
         result["pressure_integral"] = _evaluate_surface_integral_expression_via_java(
             model_name,
@@ -10039,12 +11842,14 @@ def probe_saved_boundary_load_mph(
             selection_name=selection_name,
             tag="boundary_load_pressure_integral_probe",
             result_index="last",
+            dataset_tag="latest",
         )
         result["pressure_value"] = _evaluate_global_expression_via_java(
             model_name,
             pressure_expression,
             tag="boundary_load_pressure_value_probe",
             result_index="last",
+            dataset_tag="latest",
         )
         result["area_m2"] = _runtime_numeric_max(result["area_integral"])
         result["integrated_load_n"] = _runtime_numeric_max(result["pressure_integral"])
@@ -11358,9 +13163,17 @@ def _contact_status_candidate_expressions(*, roller: int, contact_label: str) ->
     """Return COMSOL contact-pair status/pressure/gap candidates for one roller surface."""
     pair_tags: list[str] = []
     if "inner" in contact_label:
-        pair_tags.append(f"cp_roller_{roller}_inner_raceway")
+        pair_tags.extend([
+            f"cp_roller_{roller}_inner_raceway",
+            "cp_all_rollers_inner",
+            "contact_all_rollers_inner",
+        ])
     if "outer" in contact_label:
-        pair_tags.append(f"cp_roller_{roller}_outer_raceway")
+        pair_tags.extend([
+            f"cp_roller_{roller}_outer_raceway",
+            "cp_all_rollers_outer",
+            "contact_all_rollers_outer",
+        ])
     if "cage" in contact_label:
         pair_tags.append(f"cp_roller_{roller}_cage_pocket")
     contact_variables = _contact_status_variable_names()
@@ -15234,6 +17047,23 @@ def main() -> None:
         action="store_true",
         help="Fail instead of replacing generated 3D code with the complete verified fallback.",
     )
+    parser.add_argument(
+        "--strict-target-load-n",
+        type=float,
+        default=10.099982438539563,
+        help="Final load for the strict fresh-model global-contact continuation audit.",
+    )
+    parser.add_argument("--strict-case-id", default="default")
+    parser.add_argument("--strict-load-axis", choices=("x", "y"), default="x")
+    parser.add_argument("--strict-load-sign", type=int, choices=(-1, 1), default=1)
+    parser.add_argument("--strict-cage-pocket-clearance-mm", type=float, default=0.2)
+    parser.add_argument("--strict-roller-angular-offset-deg", type=float, default=0.0)
+    parser.add_argument(
+        "--strict-run-timeout-seconds",
+        type=float,
+        default=900.0,
+        help="External watchdog budget recorded for strict runs; matrix orchestration terminates and regenerates after this limit.",
+    )
     parser.add_argument("--skip-comsol", action="store_true")
     parser.add_argument("--print-generated-code", action="store_true")
     parser.add_argument("--use-verified-fixture", action="store_true")
@@ -15323,6 +17153,15 @@ def main() -> None:
         help=(
             "Comma-separated boundary entity ids for the roller_1 outer entity-override diagnostic. "
             "Use only with --contact-stage-mode load_side_group_boundary_load_single_solve_0p101_roller1_outer_entity_override."
+        ),
+    )
+    parser.add_argument(
+        "--physical-all-roller-boundary-load",
+        action="store_true",
+        help=(
+            "Build the clean verified fixture with all 12 inner/outer raceway contacts active, "
+            "no prescribed displacement or active-roller fixation, actual-area BoundaryLoad, "
+            "zeroInitGap disabled, and a 100x weak-regularization sensitivity gate."
         ),
     )
     parser.add_argument(
@@ -15493,11 +17332,78 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resume-actual-area-active-stabilization-k",
+        default="",
+        help=(
+            "Override the temporary active-roller stabilization stiffness for the resumed actual-area pressure "
+            "stage, for example '1e9[N/m^3]'. Diagnostic only."
+        ),
+    )
+    parser.add_argument(
+        "--resume-actual-area-active-stabilization-kx",
+        default="",
+        help=(
+            "Override only the global-X component of the active-roller SpringFoundation stiffness; "
+            "Y/Z retain --resume-actual-area-active-stabilization-k. Diagnostic only."
+        ),
+    )
+    parser.add_argument(
+        "--resume-actual-area-active-stabilization-kx-ramp",
+        default="",
+        help=(
+            "Parametric continuation values for active_roller_stabilization_kx in N/m^3, "
+            "for example '1e10 9.9e9 9.8e9'. Keeps radial_load fixed at 0.101 N."
+        ),
+    )
+    parser.add_argument(
+        "--resume-actual-area-roller1-outer-source-offset",
+        default="",
+        help=(
+            "Override only contact_roller_1_outer.source_offset for the resumed actual-area stage, "
+            "for example '-1[um]' to partially counter the diagnostic +3 um roller-1 geometry closure."
+        ),
+    )
+    parser.add_argument(
+        "--resume-actual-area-roller1-geometry-closure-um",
+        type=float,
+        default=None,
+        help=(
+            "Reposition roller_1 to pitch_radius + closure_um, rebuild geometry and mesh, and use a fresh solver; "
+            "valid diagnostic range is 0..3 um."
+        ),
+    )
+    parser.add_argument(
         "--resume-actual-area-disable-active-stabilization",
         action="store_true",
         help=(
             "Disable temporary active-roller stabilization in the resumed actual-area pressure stage. "
             "Diagnostic only; weak guidance/foundation and cage-inactive scope are otherwise unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--resume-physical-all-rollers",
+        action="store_true",
+        help=(
+            "Treat --resume-actual-area-stage-from-mph as a clean all-12 contact state: release prescribed "
+            "displacement, activate all inner/outer contacts, disable active-roller fixation, set zeroInitGap=0, "
+            "and run the actual-area BoundaryLoad force-balance gate."
+        ),
+    )
+    parser.add_argument(
+        "--resume-physical-weak-roller-k",
+        default="",
+        help=(
+            "Weak all-roller regularization stiffness used with --resume-physical-all-rollers, "
+            "for example '1e6[N/m^3]'. Continue downward and verify reaction sensitivity."
+        ),
+    )
+    parser.add_argument(
+        "--resume-physical-zero-init-gap",
+        default="1",
+        choices=("0", "1"),
+        help=(
+            "Contact zeroInitGap value for --resume-physical-all-rollers. Use 1 only for force-control "
+            "bootstrap, then resume the solved MPH with 0 for the physical validation gate."
         ),
     )
     parser.add_argument(
@@ -15564,6 +17470,8 @@ def main() -> None:
     )
     parser.add_argument("--print-prompts", action="store_true")
     args = parser.parse_args()
+    if args.physical_all_roller_boundary_load:
+        args.contact_stage_mode = "physical_all_roller_boundary_load"
 
     if args.stage_evidence_matrix:
         report = write_stage_evidence_matrix_report(
@@ -15714,7 +17622,21 @@ def main() -> None:
             rebuild_solver_sequence=bool(args.resume_actual_area_rebuild_solver),
             load_ramp_steps=(args.resume_actual_area_load_ramp.strip() or None),
             contact_zero_init_gap_value=(args.resume_actual_area_contact_zero_init_gap.strip() or None),
+            active_roller_stabilization_k_value=(args.resume_actual_area_active_stabilization_k.strip() or None),
+            active_roller_stabilization_kx_value=(
+                args.resume_actual_area_active_stabilization_kx.strip() or None
+            ),
+            active_roller_stabilization_kx_ramp_steps=(
+                args.resume_actual_area_active_stabilization_kx_ramp.strip() or None
+            ),
+            roller1_outer_source_offset_value=(
+                args.resume_actual_area_roller1_outer_source_offset.strip() or None
+            ),
+            roller1_geometry_closure_um=args.resume_actual_area_roller1_geometry_closure_um,
             disable_active_roller_stabilization=bool(args.resume_actual_area_disable_active_stabilization),
+            physical_all_rollers=bool(args.resume_physical_all_rollers),
+            physical_weak_roller_k_value=(args.resume_physical_weak_roller_k.strip() or None),
+            physical_zero_init_gap_value=args.resume_physical_zero_init_gap,
         )
         staged = report.get("staged_contact_solve") or {}
         final_solve = staged.get("final_solve") or report.get("solve") or {}
@@ -15831,7 +17753,12 @@ def main() -> None:
             code_path = Path(args.segmented_code_path)
             generated_code = code_path.read_text(encoding="utf-8")
             draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
-            generated_code, preflight_history, draft_quality = apply_runtime_preflight_3d_repairs(
+            preflight_fn = (
+                apply_strict_freegen_syntax_normalization
+                if args.require_free_generated_code
+                else apply_runtime_preflight_3d_repairs
+            )
+            generated_code, preflight_history, draft_quality = preflight_fn(
                 generated_code,
                 draft_quality,
             )

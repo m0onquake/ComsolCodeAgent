@@ -397,6 +397,10 @@ class TestSystemPrompt:
         assert "simulation_plan_generated_code" in prompt
         assert "template-first but not template-only" in prompt
         assert "simulation_probe_3d_selection_binding" in prompt
+        assert "cylindrical bore faces only" in prompt
+        assert "solid.RFx" in prompt
+        assert "finite natural load zone" in prompt
+        assert "zero-clearance assembled reference" in prompt
 
     def test_domain_prompt(self):
         from comsol_agent.agent.prompt import build_system_prompt
@@ -2900,6 +2904,12 @@ class TestSimulationSkills:
         assert "COMPLETED_MANIFESTS_JSON" in segment_prompt
         assert "Do not recreate comp1/geom1" in segment_prompt
         assert "SEGMENT_MANIFEST_START" in segment_prompt
+        segment_a_prompt = build_segmented_3d_generation_prompt(
+            SEGMENTED_3D_CODE_SPECS[0],
+            completed_manifests=[],
+            previous_code_tail="",
+        )
+        assert "inner_radial_displacement" in segment_a_prompt
         segmented_response = (
             f"{SEGMENT_MARKER_MANIFEST_START}\n"
             '{"segment_id":"B_cage_pockets_and_rollers","depends_on":["A_base_geometry"],'
@@ -2924,7 +2934,8 @@ class TestSimulationSkills:
             completed_manifests=[{"segment_id": "A_base_geometry"}],
             existing_tags={"comp1", "geom1", "inner_ring", "outer_ring", "cage_annulus"},
         )
-        assert segment_quality["success"] is True
+        assert segment_quality["success"] is False
+        assert any("geometry must retain COMSOL parameter expression" in error for error in segment_quality["errors"])
         duplicate_quality = validate_segmented_3d_segment(
             segment_b,
             manifest,
@@ -2943,23 +2954,33 @@ class TestSimulationSkills:
             }
         ])
         assert "cage_pocket_12" in assembled_code
-        assert assembly_manifest["final_quality"]["success"] is True
+        assert assembly_manifest["final_quality"]["success"] is False
+        assert any(
+            "two audited global contact searches" in error
+            or "global inner-raceway contact pair" in error
+            for error in assembly_manifest["final_quality"]["errors"]
+        )
 
         quality = validate_3d_bearing_code_draft(VERIFIED_3D_FULL_BEARING_CODE)
         assert quality["success"] is True
         assert quality["quality_level"] == "smoke"
         assert quality["warnings"] == []
+        assert "selection('box_inner_bore_load_surface').set('condition', 'inside')" in VERIFIED_3D_FULL_BEARING_CODE
+        assert "-inner_diameter/2-0.1[mm]" in VERIFIED_3D_FULL_BEARING_CODE
+        bad_inner_bore_intersects = VERIFIED_3D_FULL_BEARING_CODE.replace(
+            "selection('box_inner_bore_load_surface').set('condition', 'inside')",
+            "selection('box_inner_bore_load_surface').set('condition', 'intersects')",
+        )
+        bad_inner_bore_quality = validate_3d_bearing_code_draft(bad_inner_bore_intersects)
+        assert bad_inner_bore_quality["success"] is False
+        assert any("includes ring end faces" in error for error in bad_inner_bore_quality["errors"])
         production_quality = validate_3d_bearing_code_draft(
             VERIFIED_3D_FULL_BEARING_CODE,
             require_named_selections=True,
         )
-        assert production_quality["success"] is True
+        assert production_quality["success"] is False
         assert production_quality["quality_level"] == "production_candidate"
-        assert not any("sel_roller_1_body" in error for error in production_quality["errors"])
-        assert not any("probe_roller_1_max_mises" in error for error in production_quality["errors"])
-        assert not any("sel_roller_1_inner_contact" in error for error in production_quality["errors"])
-        assert not any("sel_roller_1_outer_contact" in error for error in production_quality["errors"])
-        assert production_quality["errors"] == []
+        assert any("Per-roller ContactPair/Contact features are forbidden" in error for error in production_quality["errors"])
         old_inner_domain_load_code = (
             VERIFIED_3D_FULL_BEARING_CODE
             + "\nmodel.component('comp1').selection().create('sel_inner_load_region', 'Box');"
@@ -3432,6 +3453,33 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert all(stage["native_volume_plot"]["success"] for stage in stage_plotted["stages"])
         assert stage_plotted["stages"][0]["native_volume_plot"]["plot_type"] == "native_comsol_volume"
 
+        setup_codes.clear()
+        solve_calls.clear()
+        physical_all12 = demo._run_3d_staged_contact_solve(
+            "staged_model",
+            contact_stage_mode="physical_all_roller_boundary_load",
+            stage_plot_dir=tmp_path / "physical_all12_stage_plots",
+        )
+        assert physical_all12["success"] is True
+        assert physical_all12["contact_stage_mode"] == "physical_all_roller_boundary_load"
+        assert len(physical_all12["stages"]) == 3
+        closure, force_control, low_regularization = physical_all12["stages"]
+        assert closure["active_rollers"] == list(range(1, 13))
+        assert closure["displacement_preload_active"] is True
+        assert force_control["displacement_preload_active"] is False
+        assert force_control["inner_bore_load_active"] is True
+        assert force_control["temporary_active_roller_stabilization_active"] is False
+        assert force_control["inactive_roller_stabilization_active"] is False
+        assert force_control["weak_roller_foundation_k"] == "1e4[N/m^3]"
+        assert low_regularization["weak_roller_foundation_k"] == "1e2[N/m^3]"
+        assert low_regularization["weak_inner_guidance_k"] == "1[N/m^3]"
+        assert low_regularization["reaction_probe_selection"] == "sel_outer_support_surface"
+        assert "active_roller_ids = set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])" in setup_codes[0]
+        assert "feature('disp_inner_bore_preload').active(False)" in setup_codes[1]
+        assert "feature('load_inner_bore').active(True)" in setup_codes[1]
+        assert "CONTACT_FEATURE_PROPERTY_OVERRIDE" in setup_codes[1]
+        assert "zeroInitGap" in setup_codes[1]
+
         high_visual = demo._run_3d_staged_contact_solve(
             "staged_model",
             contact_stage_mode="all_raceway_high_preload_visual",
@@ -3653,7 +3701,10 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert "('plistarr', ['0.101'])" in setup_codes[3]
         assert "active_roller_ids = set([1, 2, 12])" in setup_codes[-1]
         assert "if not False:" in setup_codes[1]
-        assert "staged_foundation.set('kPerArea', ['active_roller_stabilization_k'" in setup_codes[0]
+        assert (
+            "staged_foundation.set('kPerArea', ['active_roller_stabilization_kx', "
+            "'active_roller_stabilization_ky', 'active_roller_stabilization_kz'])"
+        ) in setup_codes[0]
         assert "model.param().set('active_roller_stabilization_k', '1e10[N/m^3]')" in setup_codes[0]
         assert "feature(fix_tag).active(staged_roller_fixed)" in setup_codes[0]
 
@@ -5357,6 +5408,14 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         assert result["best_method"] == "java_intsurface"
         assert result["best_reaction_force_abs_n"] == 55.0
         assert result["equivalent_pressure_pa"] == 456.0
+        assert result["solution_selection_policy"] == (
+            "use_last_parametric_solution_value_for_saved_mph_reaction_balance"
+        )
+        assert all(
+            item.get("result_index") == "last"
+            for item in result["evaluations"]
+            if item.get("method") == "java_intsurface"
+        )
         assert result["candidate_audit"]["nonzero_success_count"] == 1
         assert result["candidate_audit"]["unknown_operator_count"] >= 1
 
@@ -6711,7 +6770,11 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         monkeypatch.setattr(
             demo,
             "_export_native_3d_stage_volume_plot",
-            lambda model_name, *, stage_name, output_dir: {"success": True, "filepath": str(Path(output_dir) / f"{stage_name}.png")},
+            lambda model_name, *, stage_name, output_dir, solution_level=None: {
+                "success": True,
+                "filepath": str(Path(output_dir) / f"{stage_name}.png"),
+                "solution_level": solution_level,
+            },
         )
         monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
         monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True})
@@ -6854,6 +6917,219 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
         )
         assert summary["solve"]["success"] is False
 
+    def test_actual_area_resume_can_set_anisotropic_active_roller_stabilization(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "nominal_solved.mph"
+        source_mph.write_text("fake nominal solved mph", encoding="utf-8")
+        output_dir = tmp_path / "actual_area_resume_zero_init_gap_active_spring1e9"
+
+        class FakeClient:
+            def __init__(self):
+                self.is_running = False
+                self.started = False
+                self.stopped = False
+
+            def start(self, **kwargs):
+                self.started = True
+                self.is_running = True
+
+            def stop(self):
+                self.stopped = True
+                self.is_running = False
+
+        fake_client = FakeClient()
+        configured: dict[str, object] = {}
+
+        def fake_set_state(model_name: str, **kwargs):
+            configured["model_name"] = model_name
+            configured.update(kwargs)
+            return {"success": True, "model_name": model_name, "stdout": "configured active spring1e9"}
+
+        def fake_save_stage(model_name: str, *, stage_name: str, output_dir: Path | None):
+            path = Path(output_dir) / f"{stage_name}_configured.mph"
+            path.write_text("configured mph", encoding="utf-8")
+            return {"success": True, "model_name": model_name, "stage": stage_name, "saved_to": str(path)}
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: fake_client))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_nominal_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_remove_model_solver_sequences_via_java",
+            lambda model_name: pytest.fail("active-spring stiffness diagnostic must not rebuild solver sequences"),
+        )
+        monkeypatch.setattr(demo, "_set_3d_staged_contact_state", fake_set_state)
+        monkeypatch.setattr(demo, "_save_stage_configured_mph", fake_save_stage)
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": False, "error": "Solve failed: timed out"})
+        monkeypatch.setattr(demo, "comsol_save_model", lambda model_name, filepath=None: {"success": True, "saved_to": filepath})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True, "model_name": model_name})
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=output_dir,
+            cores=1,
+            contact_zero_init_gap_value="1",
+            active_roller_stabilization_k_value="1e9[N/m^3]",
+            active_roller_stabilization_kx_value="1e6[N/m^3]",
+            active_roller_stabilization_kx_ramp_steps="1e9 9e8",
+        )
+
+        assert fake_client.started is True
+        assert fake_client.stopped is True
+        assert configured["reuse_existing_solver"] is True
+        assert configured["use_parametric_sweep"] is True
+        assert configured["sweep_parameter"] == "active_roller_stabilization_kx"
+        assert configured["sweep_unit"] == "N/m^3"
+        assert configured["preload_steps"] == "1e9 9e8"
+        assert configured["radial_load_value"] == "0.101[N]"
+        assert configured["active_roller_stabilization_active"] is True
+        assert configured["active_roller_stabilization_mode"] == "spring"
+        assert configured["active_roller_stabilization_k"] == "1e9[N/m^3]"
+        assert configured["active_roller_stabilization_k_components"] == (
+            "1e6[N/m^3]",
+            "1e9[N/m^3]",
+            "1e9[N/m^3]",
+        )
+        assert configured["weak_roller_foundation_active"] is True
+        assert configured["weak_roller_foundation_k"] == "1e8[N/m^3]"
+        assert configured["weak_inner_guidance_active"] is True
+        assert configured["weak_inner_guidance_k"] == "5e4[N/m^3]"
+        assert configured["contact_feature_property_overrides"] == {
+            "contact_roller_1_inner": {"zeroInitGap": "1"},
+            "contact_roller_1_outer": {"zeroInitGap": "1"},
+            "contact_roller_2_inner": {"zeroInitGap": "1"},
+            "contact_roller_2_outer": {"zeroInitGap": "1"},
+            "contact_roller_12_inner": {"zeroInitGap": "1"},
+            "contact_roller_12_outer": {"zeroInitGap": "1"},
+        }
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["name"].endswith(
+            "_zero_init_gap1_active_spring1e9_active_spring_kx1e6_active_spring_kx_ramp"
+        )
+        assert stage["active_roller_stabilization_active"] is True
+        assert stage["temporary_active_roller_stabilization_active"] is True
+        assert stage["active_roller_stabilization_k"] == "1e9[N/m^3]"
+        assert stage["active_roller_stabilization_k_components"] == [
+            "1e6[N/m^3]",
+            "1e9[N/m^3]",
+            "1e9[N/m^3]",
+        ]
+        assert stage["weak_inner_guidance_active"] is True
+        assert stage["solver_formulation_diagnostic_role"] == (
+            "actual_area_pressure_resume_anisotropic_kx_parametric_continuation_only"
+        )
+        assert summary["staged_contact_solve"]["policy"] == (
+            "load_solved_nominal_mph_then_configure_actual_area_pressure_checkpoint"
+            "_with_contact_zero_init_gap_1_with_active_roller_stabilization_k_1e9"
+            "_with_active_roller_stabilization_kx_1e6"
+            "_with_active_roller_stabilization_kx_parametric_ramp"
+        )
+        assert "temporary active-roller stabilization" in " ".join(
+            summary["physical_contact_validation"]["warnings"]
+        )
+        assert summary["solve"]["success"] is False
+
+    def test_actual_area_resume_can_combine_zero_init_gap_with_roller1_outer_source_offset(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        source_mph = tmp_path / "solved_actual_area.mph"
+        source_mph.write_text("fake solved mph", encoding="utf-8")
+        configured: dict[str, object] = {}
+
+        class FakeClient:
+            is_running = False
+
+            def start(self, **kwargs):
+                self.is_running = True
+
+            def stop(self):
+                self.is_running = False
+
+        monkeypatch.setattr(
+            demo,
+            "load_config",
+            lambda: SimpleNamespace(comsol=SimpleNamespace(version=None, executable_path=None)),
+        )
+        monkeypatch.setattr(demo.COMSOLClient, "get_instance", staticmethod(lambda: FakeClient()))
+        monkeypatch.setattr(demo.COMSOLClient, "reset_instance", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            demo,
+            "comsol_load_model",
+            lambda filepath: {"success": True, "model_name": "loaded_model", "filepath": filepath},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_set_3d_staged_contact_state",
+            lambda model_name, **kwargs: configured.update(kwargs) or {"success": True, "model_name": model_name},
+        )
+        monkeypatch.setattr(
+            demo,
+            "_save_stage_configured_mph",
+            lambda model_name, *, stage_name, output_dir: {"success": True, "stage": stage_name},
+        )
+        monkeypatch.setattr(demo, "comsol_solve", lambda model_name: {"success": False, "error": "stop after setup"})
+        monkeypatch.setattr(demo, "comsol_close_model", lambda model_name, save=False: {"success": True})
+
+        summary = demo.run_actual_area_resume_from_solved_nominal_mph(
+            source_mph=source_mph,
+            output_dir=tmp_path / "source_offset_resume",
+            contact_zero_init_gap_value="1",
+            roller1_outer_source_offset_value="-1[um]",
+        )
+
+        overrides = configured["contact_feature_property_overrides"]
+        assert overrides["contact_roller_1_outer"] == {"zeroInitGap": "1", "source_offset": "-1[um]"}
+        assert overrides["contact_roller_1_inner"] == {"zeroInitGap": "1"}
+        stage = summary["staged_contact_solve"]["stages"][0]
+        assert stage["roller1_outer_source_offset"] == "-1[um]"
+        assert "source_offsetminus1um" in stage["name"]
+        assert summary["solve"]["success"] is False
+
+    def test_loaded_roller1_geometry_closure_rebuilds_geometry_and_mesh(self, monkeypatch):
+        from scripts import run_agent_3d_bearing_full_demo as demo
+
+        captured: dict[str, str] = {}
+
+        def fake_execute_java(code: str, *, model_name: str):
+            captured["code"] = code
+            return {
+                "success": True,
+                "model_name": model_name,
+                "stdout": (
+                    "ROLLER1_GEOMETRY_CLOSURE_JSON_START\n"
+                    '{"success": true, "position_before": ["27.003[mm]", "0", "-roller_length/2"], '
+                    '"position_after": ["pitch_radius + 2[um]", "0[mm]", "-roller_length/2"], '
+                    '"geometry_rebuilt": true, "mesh_rebuilt": true}\n'
+                    "ROLLER1_GEOMETRY_CLOSURE_JSON_END\n"
+                ),
+            }
+
+        monkeypatch.setattr(demo, "comsol_execute_java", fake_execute_java)
+
+        result = demo._set_loaded_roller1_geometry_closure_via_java("bearing", closure_um=2.0)
+
+        assert result["success"] is True
+        assert result["geometry_rebuilt"] is True
+        assert result["mesh_rebuilt"] is True
+        assert "pitch_radius + 2[um]" in captured["code"]
+        assert "geom.run()" in captured["code"]
+        assert "mesh('mesh1').run()" in captured["code"]
+        assert demo._set_loaded_roller1_geometry_closure_via_java("bearing", closure_um=-0.1)["success"] is False
+
     def test_saved_mph_reaction_probe_writes_candidate_artifacts(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
@@ -6879,9 +7155,10 @@ model.output().write("Cage included: Boolean cage ring with twelve pockets.")
 
         fake_client = FakeClient()
 
-        def fake_reaction_probe(model_name: str, *, selection_name: str):
+        def fake_reaction_probe(model_name: str, *, selection_name: str, dataset_tag: str = "dset1"):
             assert model_name == "loaded_reaction_model"
             assert selection_name == "sel_inner_bore_load_surface"
+            assert dataset_tag == "latest"
             return {
                 "success": False,
                 "kind": "displacement_controlled_reaction_equivalent_probe",
