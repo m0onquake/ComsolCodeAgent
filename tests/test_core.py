@@ -2575,6 +2575,54 @@ class TestSimulationSkills:
             validate_segmented_3d_segment,
         )
 
+        base_spec = next(item for item in SEGMENTED_3D_CODE_SPECS if item.segment_id == "A_base_geometry")
+        reversed_inner_ring_code = """
+        model.param().set('inner_diameter', '42[mm]')
+        model.param().set('inner_race_outer_radius', '27.5[mm]')
+        model.param().set('outer_race_inner_radius', '34.5[mm]')
+        model.param().set('outer_diameter', '82[mm]')
+        model.param().set('cage_inner_radius', '27.7[mm]')
+        model.param().set('cage_outer_radius', '34.3[mm]')
+        model.component().create('comp1', True)
+        model.component('comp1').geom().create('geom1', 3)
+        model.component('comp1').geom('geom1').create('cyl_inner_solid', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_inner_solid').set('r', 'inner_diameter/2')
+        model.component('comp1').geom('geom1').create('cyl_inner_race', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_inner_race').set('r', 'inner_race_outer_radius')
+        model.component('comp1').geom('geom1').create('cyl_outer_solid', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_outer_solid').set('r', 'outer_diameter/2')
+        model.component('comp1').geom('geom1').create('cyl_outer_race', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_outer_race').set('r', 'outer_race_inner_radius')
+        model.component('comp1').geom('geom1').create('cyl_cage_outer', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_cage_outer').set('r', 'cage_outer_radius')
+        model.component('comp1').geom('geom1').create('cyl_cage_inner', 'Cylinder')
+        model.component('comp1').geom('geom1').feature('cyl_cage_inner').set('r', 'cage_inner_radius')
+        model.component('comp1').geom('geom1').create('inner_ring', 'Difference')
+        model.component('comp1').geom('geom1').feature('inner_ring').selection('input').set(['cyl_inner_solid'])
+        model.component('comp1').geom('geom1').feature('inner_ring').selection('input2').set(['cyl_inner_race'])
+        model.component('comp1').geom('geom1').feature('inner_ring').set('selresultshow', 'all')
+        model.component('comp1').geom('geom1').create('outer_ring', 'Difference')
+        model.component('comp1').geom('geom1').feature('outer_ring').selection('input').set(['cyl_outer_solid'])
+        model.component('comp1').geom('geom1').feature('outer_ring').selection('input2').set(['cyl_outer_race'])
+        model.component('comp1').geom('geom1').feature('outer_ring').set('selresultshow', 'all')
+        model.component('comp1').geom('geom1').create('cage_annulus', 'Difference')
+        model.component('comp1').geom('geom1').feature('cage_annulus').selection('input').set(['cyl_cage_outer'])
+        model.component('comp1').geom('geom1').feature('cage_annulus').selection('input2').set(['cyl_cage_inner'])
+        model.component('comp1').geom('geom1').feature('cage_annulus').set('selresultshow', 'all')
+        """
+        base_validation = validate_segmented_3d_segment(
+            base_spec,
+            {"segment_id": "A_base_geometry", "depends_on": [], "creates": ["comp1", "geom1", "inner_ring", "outer_ring", "cage_annulus"]},
+            reversed_inner_ring_code,
+            completed_manifests=[],
+            existing_tags=set(),
+            inner_diameter_mm=42.0,
+            outer_diameter_mm=82.0,
+            inner_race_outer_radius_mm=27.5,
+            outer_race_inner_radius_mm=34.5,
+        )
+        assert any("inner_ring Difference must use the larger inner race cylinder" in error for error in base_validation["errors"])
+
         spec = next(item for item in SEGMENTED_3D_CODE_SPECS if item.segment_id == "B_cage_pockets_and_rollers")
         code = """
         pitch_radius_mm = 31.0
@@ -2618,6 +2666,7 @@ class TestSimulationSkills:
 
         assert not any("roller_12" in error or "cage_pocket_12" in error for error in validation["errors"])
         assert not any("roller_partition_12" in error or "roller_split_tool_12" in error for error in validation["errors"])
+        assert not any("missing required tag evidence" in error for error in validation["errors"])
 
     def test_3d_full_bearing_demo_prompt_fixture_and_quality_gate(self):
         from comsol_agent.simulation.bearing_3d import (
@@ -2649,6 +2698,7 @@ class TestSimulationSkills:
             build_3d_bearing_execution_prompt,
             apply_bounded_3d_generated_code_repairs,
             apply_runtime_preflight_3d_repairs,
+            apply_strict_freegen_syntax_normalization,
             _build_local_two_body_contact_smoke_code,
         )
 
@@ -2659,6 +2709,25 @@ class TestSimulationSkills:
         assert "def validate_3d_bearing_code_draft(" not in demo_source
         assert "def _build_3d_execution_context(" not in demo_source
         assert "roller1_outer_raceway_partition_with_3um_source_closure_diagnostic" in demo_source
+        b_spec = next(item for item in SEGMENTED_3D_CODE_SPECS if item.segment_id == "B_cage_pockets_and_rollers")
+        d_spec = next(item for item in SEGMENTED_3D_CODE_SPECS if item.segment_id == "D_mesh_study_results")
+        b_segment_prompt = build_segmented_3d_generation_prompt(
+            b_spec,
+            completed_manifests=[{"segment_id": "A_base_geometry"}],
+            previous_code_tail="",
+        )
+        d_segment_prompt = build_segmented_3d_generation_prompt(
+            d_spec,
+            completed_manifests=[
+                {"segment_id": "A_base_geometry"},
+                {"segment_id": "B_cage_pockets_and_rollers"},
+                {"segment_id": "C_selections_contacts_physics"},
+            ],
+            previous_code_tail="",
+        )
+        assert "mesh().create('mesh1', 'geom1')" not in b_segment_prompt
+        assert "mesh().create('mesh1', 'geom1')" in d_segment_prompt
+        assert "Do not retrieve comp.mesh('mesh1') before this create call" in d_segment_prompt
 
         execution_context = build_3d_execution_context(
             workflow="bearing_3d_generated_code_agent_execution",
@@ -3311,6 +3380,35 @@ for i in range(num_rollers):
         assert "[1, 2, 3]" in normalized_arrays
         assert "/*" not in normalized_arrays
         assert "[4]" in normalized_arrays
+        normalized_plot_group = normalize_generated_mph_code(
+            "import comtypes.client\n"
+            "import Python\n"
+            "res = model.result()\n"
+            "res.create('pg_stress3d', 'PlotGroup3D')\n"
+            "pg = res.plot('pg_stress3d')\n"
+            "pg.create('surf_stress', 'Surface')\n"
+        )
+        assert "import comtypes" not in normalized_plot_group
+        assert "import Python" not in normalized_plot_group
+        assert "pg = model.result('pg_stress3d')" in normalized_plot_group
+        assert "pg.feature().create('surf_stress', 'Surface')" in normalized_plot_group
+        strict_contact_code = (
+            "solid.create('contact_all_rollers_inner', 'Contact', 2)\n"
+            "solid.feature('contact_all_rollers_inner').selection().named('sel_all_roller_inner_contacts')\n"
+            "solid.feature('contact_all_rollers_inner').set('pairs', ['cp_all_rollers_inner'])\n"
+        )
+        strict_repaired, strict_reports, strict_quality = apply_strict_freegen_syntax_normalization(
+            strict_contact_code,
+            {"success": True, "errors": [], "warnings": []},
+            quality_gate=lambda code: {"success": True, "errors": [], "warnings": []},
+        )
+        assert ".selection().named('sel_all_roller_inner_contacts')" not in strict_repaired
+        assert "set('pairs', ['cp_all_rollers_inner'])" in strict_repaired
+        assert strict_quality["success"] is True
+        assert any(
+            "remove_pair_bound_contact_feature_selection:1" in report.get("changes", [])
+            for report in strict_reports
+        )
 
         double_quote_code = VERIFIED_3D_FULL_BEARING_CODE.replace(
             "geom().create('geom1', 3)",

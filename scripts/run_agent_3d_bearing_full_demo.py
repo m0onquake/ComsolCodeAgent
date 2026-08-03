@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Callable
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +113,31 @@ def _axis_guidance_vector(load_axis: str) -> list[str]:
 
 def _bearing_load_area_m2(*, inner_diameter_mm: float, bearing_width_mm: float) -> float:
     return math.pi * (float(inner_diameter_mm) / 1000.0) * (float(bearing_width_mm) / 1000.0)
+
+
+def _validate_generated_bearing_code_for_args(
+    java_code: str,
+    args: argparse.Namespace,
+    *,
+    require_named_selections: bool = False,
+) -> dict[str, Any]:
+    variant = _strict_bearing_variant_from_args(args)
+    return validate_3d_bearing_code_draft(
+        java_code,
+        require_named_selections=require_named_selections,
+        cage_pocket_clearance_mm=float(getattr(args, "strict_cage_pocket_clearance_mm", 0.2)),
+        load_axis=str(getattr(args, "strict_load_axis", "x")),
+        load_sign=int(getattr(args, "strict_load_sign", 1)),
+        roller_count=variant.roller_count,
+        inner_diameter_mm=variant.inner_diameter_mm,
+        outer_diameter_mm=variant.outer_diameter_mm,
+        bearing_width_mm=variant.bearing_width_mm,
+        roller_diameter_mm=variant.roller_diameter_mm,
+        roller_length_mm=variant.roller_length_mm,
+        pitch_radius_mm=variant.pitch_radius_mm,
+        inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
+        outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
+    )
 
 
 def _strict_force_continuation_chunks(
@@ -1409,6 +1434,7 @@ def apply_runtime_preflight_3d_repairs(
 def apply_strict_freegen_syntax_normalization(
     java_code: str,
     initial_quality: dict[str, Any] | None = None,
+    quality_gate: Callable[[str], dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Apply syntax/API-shape normalization without constructing bearing physics.
 
@@ -1418,10 +1444,10 @@ def apply_strict_freegen_syntax_normalization(
     preflight repair pipeline, especially aggregate-contact reconstruction,
     parameter/material insertion, selection rebuilding, and solver injection.
     """
-    quality_before = initial_quality or validate_3d_bearing_code_draft(
-        java_code,
-        require_named_selections=True,
+    quality_gate = quality_gate or (
+        lambda code: validate_3d_bearing_code_draft(code, require_named_selections=True)
     )
+    quality_before = initial_quality or quality_gate(java_code)
     repaired = normalize_generated_mph_code(java_code)
     changes: list[str] = []
     repaired, unsupported_import_count = re.subn(
@@ -1447,6 +1473,14 @@ def apply_strict_freegen_syntax_normalization(
         changes.append(
             f"remove_invalid_evalglobal_method_property:{invalid_numerical_method_count}"
         )
+    repaired, contact_selection_count = re.subn(
+        r"(?m)^\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
+        r"\.feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
+        "",
+        repaired,
+    )
+    if contact_selection_count:
+        changes.append(f"remove_pair_bound_contact_feature_selection:{contact_selection_count}")
     repaired, entitydim_count = re.subn(
         r"\.set\((['\"]entitydim['\"]),\s*([23])\s*\)",
         r".set(\1, '\2')",
@@ -1469,10 +1503,7 @@ def apply_strict_freegen_syntax_normalization(
     ):
         repaired, normalizer_changes = normalizer(repaired)
         changes.extend(normalizer_changes)
-    quality_after = validate_3d_bearing_code_draft(
-        repaired,
-        require_named_selections=True,
-    )
+    quality_after = quality_gate(repaired)
     reports: list[dict[str, Any]] = []
     if repaired != java_code or changes:
         reports.append({
@@ -1851,6 +1882,14 @@ def _repair_generated_contact_api_fragments(java_code: str) -> tuple[str, list[s
     )
     if count:
         changes.append(f"contact_pair_property_to_pairs_list:{count}")
+    repaired, count = re.subn(
+        r"(?m)^\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
+        r"\.feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\([^\n]*\)\s*$\n?",
+        "",
+        repaired,
+    )
+    if count:
+        changes.append(f"remove_pair_bound_contact_feature_selection:{count}")
     repaired, count = re.subn(
         r"\.(source|destination)\(\)\.set\(\s*\[\s*(['\"])geom1\2\s*\]\s*\)",
         lambda match: f".{match.group(1)}().all()",
@@ -2610,12 +2649,22 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
             print(json.dumps(failure_payload, ensure_ascii=False, indent=2, default=str))
             return 1
 
-    draft_quality = validate_3d_bearing_code_draft(
+    draft_quality = _validate_generated_bearing_code_for_args(
         generated_code,
+        args,
         require_named_selections=args.segmented_generation,
     )
+    strict_quality_gate = lambda code: _validate_generated_bearing_code_for_args(
+        code,
+        args,
+        require_named_selections=True,
+    )
     preflight_fn = (
-        apply_strict_freegen_syntax_normalization
+        (lambda code, quality: apply_strict_freegen_syntax_normalization(
+            code,
+            quality,
+            quality_gate=strict_quality_gate,
+        ))
         if args.require_free_generated_code
         else apply_runtime_preflight_3d_repairs
     )
@@ -2628,7 +2677,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
             report["attempt"] = len(repair_history)
             repair_history.append(report)
         if args.segmented_generation:
-            draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
+            draft_quality = _validate_generated_bearing_code_for_args(generated_code, args, require_named_selections=True)
     if not draft_quality["success"] and not args.require_free_generated_code:
         generated_code, bounded_repair_history, draft_quality = apply_bounded_3d_generated_code_repairs(
             generated_code,
@@ -2649,7 +2698,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         repair_history.append(llm_repair_report)
         if llm_repaired_code:
             generated_code = llm_repaired_code
-            draft_quality = validate_3d_bearing_code_draft(generated_code)
+            draft_quality = _validate_generated_bearing_code_for_args(generated_code, args)
             generated_code, preflight_repair_history, draft_quality = preflight_fn(
                 generated_code,
                 draft_quality,
@@ -2674,7 +2723,7 @@ async def run_3d_bearing_demo(args: argparse.Namespace) -> int:
         report["attempt"] = len(repair_history)
         repair_history.append(report)
     if args.segmented_generation:
-        draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
+        draft_quality = _validate_generated_bearing_code_for_args(generated_code, args, require_named_selections=True)
     if not draft_quality["success"]:
         repair_history.append({
             "attempt": len(repair_history),
@@ -8699,6 +8748,7 @@ for force_solver_path, force_solver_key, force_solver_value in [
         for roller_id in range(1, variant.roller_count + 1)
     }
     mirror_pairs_set: set[tuple[int, int]] = set()
+    mirror_pair_angle_mismatches: dict[str, float] = {}
     for roller_id, angle_deg in roller_angles.items():
         reflected_deg = ((-angle_deg) if load_axis == "x" else (180.0 - angle_deg)) % 360.0
         partner_id = min(
@@ -8706,7 +8756,11 @@ for force_solver_path, force_solver_key, force_solver_value in [
             key=lambda candidate: abs(((roller_angles[candidate] - reflected_deg + 180.0) % 360.0) - 180.0),
         )
         if partner_id != roller_id:
-            mirror_pairs_set.add(tuple(sorted((roller_id, partner_id))))
+            pair = tuple(sorted((roller_id, partner_id)))
+            mirror_pairs_set.add(pair)
+            mismatch = abs(((roller_angles[partner_id] - reflected_deg + 180.0) % 360.0) - 180.0)
+            key = f"{pair[0]}-{pair[1]}"
+            mirror_pair_angle_mismatches[key] = min(mismatch, mirror_pair_angle_mismatches.get(key, mismatch))
     mirror_pairs = tuple(sorted(mirror_pairs_set))
     outer_radial = {
         int(row["roller"]): abs(float((row.get("outer") or {}).get("radial_n") or 0.0))
@@ -8739,17 +8793,24 @@ for force_solver_path, force_solver_key, force_solver_value in [
         if peak_roller_load > 0.0 else float("inf")
         for left, right in mirror_pairs
     }
+    mirror_symmetry_applicable = bool(mirror_errors) and all(
+        mismatch <= 1.0e-6 for mismatch in mirror_pair_angle_mismatches.values()
+    )
     gates = {
         "load_area_le_1pct": float(final_audit.get("load_area_relative_error") if final_audit.get("load_area_relative_error") is not None else float("inf")) <= 0.01,
         "applied_load_le_1pct": float(final_audit.get("applied_load_relative_error") if final_audit.get("applied_load_relative_error") is not None else float("inf")) <= 0.01,
         "support_reaction_le_2pct": float(final_audit.get("support_reaction_balance_relative_error") if final_audit.get("support_reaction_balance_relative_error") is not None else float("inf")) <= 0.02,
         "roller_resultant_le_2pct": float(final_audit.get("outer_contact_balance_relative_error") if final_audit.get("outer_contact_balance_relative_error") is not None else float("inf")) <= 0.02,
         "spring_resultant_le_1pct": float(final_audit.get("spring_load_ratio") if final_audit.get("spring_load_ratio") is not None else float("inf")) <= 0.01,
-        "mirror_symmetry_le_10pct_peak": bool(mirror_errors) and max(mirror_errors.values()) <= 0.10,
+        "mirror_symmetry_le_10pct_peak": (
+            max(mirror_errors.values()) <= 0.10 if mirror_symmetry_applicable else True
+        ),
         "loaded_zone_matches_direction": directional_load_fraction >= 0.90,
         "native_stress_png": bool((report.get("native_stress_plot") or {}).get("success")),
     }
     final_audit["mirror_pair_relative_errors"] = mirror_errors
+    final_audit["mirror_pair_angle_mismatches_deg"] = mirror_pair_angle_mismatches
+    final_audit["mirror_symmetry_applicable"] = mirror_symmetry_applicable
     final_audit["directional_load_audit"] = {
         "load_axis": load_axis,
         "load_sign": int(load_sign),
@@ -17937,9 +17998,17 @@ def main() -> None:
         if args.segmented_code_path:
             code_path = Path(args.segmented_code_path)
             generated_code = code_path.read_text(encoding="utf-8")
-            draft_quality = validate_3d_bearing_code_draft(generated_code, require_named_selections=True)
+            draft_quality = _validate_generated_bearing_code_for_args(generated_code, args, require_named_selections=True)
             preflight_fn = (
-                apply_strict_freegen_syntax_normalization
+                (lambda code, quality: apply_strict_freegen_syntax_normalization(
+                    code,
+                    quality,
+                    quality_gate=lambda checked_code: _validate_generated_bearing_code_for_args(
+                        checked_code,
+                        args,
+                        require_named_selections=True,
+                    ),
+                ))
                 if args.require_free_generated_code
                 else apply_runtime_preflight_3d_repairs
             )

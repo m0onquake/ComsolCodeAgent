@@ -36,6 +36,35 @@ def _format_mm_bound(value: float) -> str:
     return f"{text}[mm]"
 
 
+def _geometry_feature_radii(java_code: str) -> dict[str, str]:
+    radii: dict[str, str] = {}
+    for tag, radius in re.findall(
+        r"\.feature\(\s*['\"]([^'\"]+)['\"]\s*\)\.set\(\s*['\"]r['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)",
+        java_code,
+        flags=re.IGNORECASE,
+    ):
+        radii[tag.lower()] = re.sub(r"\s+", "", radius.lower())
+    return radii
+
+
+def _difference_input_tags(java_code: str, feature_tag: str, slot: str) -> list[str]:
+    match = re.search(
+        rf"\.feature\(\s*['\"]{re.escape(feature_tag)}['\"]\s*\)"
+        rf"\.selection\(\s*['\"]{re.escape(slot)}['\"]\s*\)\.set\(\s*\[([^\]]*)\]\s*\)",
+        java_code,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+    return [tag.lower() for tag in re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))]
+
+
+def _difference_slot_contains_radius(java_code: str, feature_tag: str, slot: str, radius_expr: str) -> bool:
+    radii = _geometry_feature_radii(java_code)
+    expected = re.sub(r"\s+", "", radius_expr.lower())
+    return any(radii.get(tag) == expected for tag in _difference_input_tags(java_code, feature_tag, slot))
+
+
 @dataclass(frozen=True)
 class Segmented3DCodeSpec:
     """Local contract for one generated 3D bearing code segment."""
@@ -65,6 +94,11 @@ SEGMENTED_3D_CODE_SPECS: tuple[Segmented3DCodeSpec, ...] = (
             "pitch_radius +/- cage_width/2. "
             "Define radial_load=10.099982438539563[N], inner_radial_displacement=0[um], "
             "cage_pocket_clearance=0.2[mm], mesh_bulk_size=5[mm], and mesh_contact_size=2.4[mm]. "
+            "The ring Boolean order is mandatory: inner_ring must subtract the inner bore cylinder "
+            "with radius inner_diameter/2 from the larger inner race cylinder with radius inner_race_outer_radius; "
+            "outer_ring must subtract the raceway void cylinder with radius outer_race_inner_radius from the "
+            "larger outer cylinder with radius outer_diameter/2. Never subtract a larger race cylinder from "
+            "the smaller inner-bore cylinder. "
             "Immediately after creating geom1 call model.component('comp1').geom('geom1').lengthUnit('mm'). "
             "All dimensional expressions passed to COMSOL must be unit-aware strings. "
             "Do not create rollers, cage pockets, physics, mesh, study, result, or geom.run()."
@@ -271,9 +305,6 @@ def build_segmented_3d_generation_prompt(
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
             "- Do not import comsol, mph, or any COMSOL Python module. The existing model object is the only API entry point.\n"
-            "- Create the mesh with the exact API call model.component('comp1').mesh().create('mesh1', 'geom1') "
-            "or comp.mesh().create('mesh1', 'geom1'). The second argument MUST be the existing geometry tag geom1, "
-            "never mesh1. Then set autoMeshSize and call mesh1.run().\n"
             "- Do not introduce roller_diameter_mm, roller_length_mm, roller_diameter_str, roller_length_str, "
             "cage_pocket_clearance_mm, cage_pocket_clearance_str, roller_radius, or pocket_radius. The parameters "
             "already exist in COMSOL from segment A.\n"
@@ -405,8 +436,12 @@ def build_segmented_3d_generation_prompt(
     elif spec.segment_id == "D_mesh_study_results":
         segment_extra_contract = (
             "\nSEGMENT_EXTRA_CONTRACT:\n"
-            "- Create mesh1 on geom1 and use comp.mesh('mesh1').autoMeshSize(4) for the bulk. Then create four "
-            "an explicit global Size feature size_bulk with custom='on', hmax='5[mm]', hmin='0.5[mm]'. Then create "
+            "- First create mesh1 on the existing geometry with the exact API call "
+            "model.component('comp1').mesh().create('mesh1', 'geom1') or comp.mesh().create('mesh1', 'geom1'). "
+            "The second argument MUST be the existing geometry tag geom1, never mesh1. Do not retrieve "
+            "comp.mesh('mesh1') before this create call. Then use comp.mesh('mesh1').autoMeshSize(4) for the bulk. "
+            "Then create an explicit global Size feature size_bulk with custom='on', hmax='5[mm]', hmin='0.5[mm]'. "
+            "Then create "
             "four mesh Size features size_roller_inner_contacts, size_roller_outer_contacts, size_inner_raceway, and "
             "size_outer_raceway, bind them respectively to sel_all_roller_inner_contacts, "
             "sel_all_roller_outer_contacts, sel_inner_raceway_contact, and sel_outer_raceway_contact with "
@@ -545,6 +580,7 @@ def extract_segment_generated_code(response: str) -> str | None:
 def normalize_generated_mph_code(java_code: str) -> str:
     """Normalize common Java-ish snippets into Python/MPh executable syntax."""
     normalized = _strip_block_comments(_strip_code_fence(java_code))
+    normalized = re.sub(r"(?m)^\s*import\s+(?:comtypes(?:\.client)?|Python|numpy(?:\s+as\s+\w+)?)\s*$\n?", "", normalized)
     normalized = re.sub(
         r"new\s+String\s*\[\]\s*\{([^{}]*)\}",
         lambda match: "[" + match.group(1).strip() + "]",
@@ -568,6 +604,16 @@ def normalize_generated_mph_code(java_code: str) -> str:
     normalized = re.sub(
         r"\{(\s*['\"][^{};]+?['\"](?:\s*,\s*['\"][^{};]+?['\"])+\s*)\}",
         r"[\1]",
+        normalized,
+    )
+    normalized = re.sub(
+        r"(?m)^(\s*)(\w+)\s*=\s*(\w+)\.plot\(\s*(['\"])([^'\"]+)\4\s*\)\s*$",
+        r"\1\2 = model.result(\4\5\4)",
+        normalized,
+    )
+    normalized = re.sub(
+        r"(?m)^(\s*)(\w+)\.create\(\s*(['\"])([^'\"]+)\3\s*,\s*(['\"])(Surface|Volume|Slice|LineGraph|ArrowSurface)\5\s*\)",
+        r"\1\2.feature().create(\3\4\3, \5\6\5)",
         normalized,
     )
     return normalized.strip()
@@ -642,6 +688,30 @@ def validate_segmented_3d_segment(
         for tag in ("inner_ring", "outer_ring", "cage_annulus"):
             if not re.search(rf"\.create\(\s*['\"]{tag}['\"]\s*,\s*['\"]difference['\"]\s*\)", lowered):
                 errors.append(f"{spec.segment_id}: Boolean output must be created with exact feature tag {tag}.")
+        if not (
+            _difference_slot_contains_radius(normalized, "inner_ring", "input", "inner_race_outer_radius")
+            and _difference_slot_contains_radius(normalized, "inner_ring", "input2", "inner_diameter/2")
+        ):
+            errors.append(
+                f"{spec.segment_id}: inner_ring Difference must use the larger inner race cylinder "
+                "as input and subtract only the inner_diameter/2 bore as input2."
+            )
+        if not (
+            _difference_slot_contains_radius(normalized, "outer_ring", "input", "outer_diameter/2")
+            and _difference_slot_contains_radius(normalized, "outer_ring", "input2", "outer_race_inner_radius")
+        ):
+            errors.append(
+                f"{spec.segment_id}: outer_ring Difference must use the outer_diameter/2 cylinder "
+                "as input and subtract outer_race_inner_radius as input2."
+            )
+        if not (
+            _difference_slot_contains_radius(normalized, "cage_annulus", "input", "cage_outer_radius")
+            and _difference_slot_contains_radius(normalized, "cage_annulus", "input2", "cage_inner_radius")
+        ):
+            errors.append(
+                f"{spec.segment_id}: cage_annulus Difference must use cage_outer_radius as input "
+                "and subtract cage_inner_radius as input2."
+            )
     if spec.segment_id == "B_cage_pockets_and_rollers":
         expected_numeric_locals = {
             "roller_diameter": float(roller_diameter_mm),
@@ -765,6 +835,14 @@ def validate_segmented_3d_segment(
             errors.append(f"{spec.segment_id}: roller stabilization must use the audited 1e6 N/m^3 surface stiffness.")
         if not re.search(r"set\(\s*['\"]zeroinitgap['\"]\s*,\s*['\"]1['\"]\s*\)", lowered):
             errors.append(f"{spec.segment_id}: split global contacts must enable zeroInitGap='1'.")
+        if re.search(
+            r"feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\(",
+            lowered,
+        ):
+            errors.append(
+                f"{spec.segment_id}: pair-bound Solid Mechanics Contact features must bind only with set('pairs', ...); "
+                "their selection is not editable in this COMSOL runtime."
+            )
         expected_direction = ["0", "0", "0"]
         expected_direction[0 if load_axis.lower() == "x" else 1] = "1"
         direction_pattern = r"set\(\s*['\"]direction['\"]\s*,\s*\[\s*" + r"\s*,\s*".join(
@@ -825,7 +903,7 @@ def validate_segmented_3d_segment(
                 errors.append(f"{spec.segment_id}: missing local mesh Size {size_tag} on {selection_tag}.")
         explicit_geom_bind_count = lowered.count("selection().geom('geom1', 2)") + lowered.count('selection().geom("geom1", 2)')
         loop_binds_all_local_sizes = bool(
-            re.search(r"for\s+\w+\s*,\s*\w+\s+in\s+\w+", lowered)
+            re.search(r"for\s+\w+\s*,\s*\w+\s+in\s+(?:\w+|\[|\()", lowered)
             and all(tag in lowered for tag in (
                 "size_roller_inner_contacts",
                 "size_roller_outer_contacts",
@@ -1166,6 +1244,30 @@ def validate_3d_bearing_code_draft(
                     )
         if lowered.count("selresultshow") < 5:
             errors.append("Base rings/cage annulus, roller loop, and final cage must expose all result selections.")
+        if not (
+            _difference_slot_contains_radius(code_for_validation, "inner_ring", "input", "inner_race_outer_radius")
+            and _difference_slot_contains_radius(code_for_validation, "inner_ring", "input2", "inner_diameter/2")
+        ):
+            errors.append(
+                "Production inner_ring Difference must use the larger inner race cylinder as input "
+                "and subtract only the inner_diameter/2 bore as input2."
+            )
+        if not (
+            _difference_slot_contains_radius(code_for_validation, "outer_ring", "input", "outer_diameter/2")
+            and _difference_slot_contains_radius(code_for_validation, "outer_ring", "input2", "outer_race_inner_radius")
+        ):
+            errors.append(
+                "Production outer_ring Difference must use outer_diameter/2 as input "
+                "and subtract outer_race_inner_radius as input2."
+            )
+        if not (
+            _difference_slot_contains_radius(code_for_validation, "cage_annulus", "input", "cage_outer_radius")
+            and _difference_slot_contains_radius(code_for_validation, "cage_annulus", "input2", "cage_inner_radius")
+        ):
+            errors.append(
+                "Production cage_annulus Difference must use cage_outer_radius as input "
+                "and subtract cage_inner_radius as input2."
+            )
         if lowered.count("entitydim") < 9:
             errors.append("Production component selections must explicitly declare boundary/domain entitydim.")
         if re.search(r"set\(\s*['\"]entitydim['\"]\s*,\s*[23]\s*\)", lowered):
@@ -1179,6 +1281,11 @@ def validate_3d_bearing_code_draft(
             errors.append("Production steel properties must be assigned through propertyGroup('def').")
         if re.search(r"\.create\([^,\n]+,\s*['\"](?:contact|fixed|boundaryload|displacement2|springfoundation2)['\"]\s*,\s*1\s*\)", lowered):
             errors.append("All 3D Solid Mechanics boundary features must use entity dimension 2, not 1.")
+        if re.search(r"feature\(\s*['\"]contact[^'\"]*['\"]\s*\)\.selection\(\)\.(?:named|set)\(", lowered):
+            errors.append(
+                "Pair-bound Solid Mechanics Contact features must bind only with set('pairs', ...); "
+                "their selection is not editable in this COMSOL runtime."
+            )
         if "formassembly" in lowered or "geom.node(" in lowered or re.search(r"feature\(\)\.create\(\s*['\"]fin['\"]", lowered):
             errors.append("Generated code must configure the existing fin action as assembly, not create a new FormAssembly node.")
         if "cp_roller_" in lowered or "contact_roller_" in lowered:
@@ -2017,7 +2124,7 @@ def _count_3d_cage_pocket_contact_selection_tags(compact_code: str) -> int:
 
 
 def _has_segmented_loop_tag_evidence(java_code: str, prefix: str, suffix: str = "") -> bool:
-    if not _has_twelve_iteration_loop(java_code):
+    if not _has_indexed_iteration_loop(java_code):
         return False
     escaped_prefix = re.escape(prefix)
     escaped_suffix = re.escape(suffix)
@@ -2050,17 +2157,53 @@ def _has_twelve_iteration_loop(java_code: str) -> bool:
     )
 
 
+def _has_indexed_iteration_loop(java_code: str) -> bool:
+    return bool(
+        re.search(r"range\(\s*(?:verified_roller_count|num_rollers|roller_count|\d+)\s*\)", java_code, flags=re.IGNORECASE)
+        or re.search(r"range\(\s*1\s*,\s*(?:verified_roller_count|num_rollers|roller_count|\d+)\s*\+?\s*1?\s*\)", java_code, flags=re.IGNORECASE)
+        or re.search(r"\b(?:num_rollers|verified_roller_count|roller_count)\s*=\s*\d+\b", java_code, flags=re.IGNORECASE)
+    )
+
+
+def _loop_can_cover_index(java_code: str, index: int) -> bool:
+    if index <= 0:
+        return False
+    lowered = java_code.lower()
+    numeric_loop_bounds = [int(value) for value in re.findall(r"range\(\s*(\d+)\s*\)", lowered)]
+    numeric_loop_bounds.extend(
+        int(value) - 1
+        for value in re.findall(r"range\(\s*1\s*,\s*(\d+)\s*\)", lowered)
+    )
+    numeric_loop_bounds.extend(
+        int(value)
+        for value in re.findall(r"range\(\s*1\s*,\s*(\d+)\s*\+\s*1\s*\)", lowered)
+    )
+    variable_values = {
+        name: int(value)
+        for name, value in re.findall(
+            r"\b(num_rollers|verified_roller_count|roller_count)\s*=\s*(\d+)\b",
+            lowered,
+        )
+    }
+    for name, value in variable_values.items():
+        if re.search(rf"range\(\s*{re.escape(name)}\s*\)", lowered):
+            numeric_loop_bounds.append(value)
+        if re.search(rf"range\(\s*1\s*,\s*{re.escape(name)}\s*\+\s*1\s*\)", lowered):
+            numeric_loop_bounds.append(value)
+    return any(bound >= index for bound in numeric_loop_bounds)
+
+
 def _has_required_tag_loop_evidence(java_code: str, required_tag: str) -> bool:
     match = re.fullmatch(r"(.+?)(\d+)(.*)", required_tag)
     if not match:
         return False
     prefix, index_text, suffix = match.groups()
     index = int(index_text)
-    if index not in {1, VERIFIED_ROLLER_COUNT}:
+    if not _loop_can_cover_index(java_code, index):
         return False
     if _has_segmented_loop_tag_evidence(java_code, prefix, suffix):
         return True
-    return _has_twelve_iteration_loop(java_code) and prefix in java_code and (not suffix or suffix in java_code)
+    return prefix in java_code and (not suffix or suffix in java_code)
 
 
 def _detect_3d_runtime_api_risks(java_code: str) -> list[str]:
