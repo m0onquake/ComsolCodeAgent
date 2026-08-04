@@ -145,6 +145,7 @@ def _strict_force_continuation_chunks(
     target_load_n: float,
     reaction_force_n: float | None,
     directional_variant: bool = False,
+    roller_count: int = VERIFIED_ROLLER_COUNT,
 ) -> tuple[list[float], list[list[float]]]:
     # Directional variants need extra resolution at first force transfer because
     # the active load-side roller set can rotate or change sign relative to the
@@ -210,17 +211,52 @@ def _strict_force_continuation_chunks(
         if not combined_force_steps or not math.isclose(value, combined_force_steps[-1], rel_tol=1e-12, abs_tol=1e-15):
             combined_force_steps.append(float(value))
 
-    low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
-    if not low_contact_chunk:
-        low_contact_chunk = [combined_force_steps[0]]
-    high_design_chunk: list[float] = []
-    for value in (1.0, float(target_load_n)):
-        preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
-        if value > preceding_value * (1.0 + 1.0e-12):
-            high_design_chunk.append(float(value))
-    chunks = [low_contact_chunk]
-    if high_design_chunk:
-        chunks.append(high_design_chunk)
+    if directional_variant:
+        chunks = [
+            [value for value in combined_force_steps if value <= 0.02 * (1.0 + 1.0e-12)],
+            [
+                value
+                for value in combined_force_steps
+                if 0.02 * (1.0 + 1.0e-12) < value <= 0.08 * (1.0 + 1.0e-12)
+            ],
+            [
+                value
+                for value in combined_force_steps
+                if 0.08 * (1.0 + 1.0e-12) < value <= 0.101 * (1.0 + 1.0e-12)
+            ],
+        ]
+        chunks.extend([value] for value in combined_force_steps if value > 0.101 * (1.0 + 1.0e-12))
+        chunks = [chunk for chunk in chunks if chunk]
+    elif int(roller_count) <= 6 and target_load_n <= 1.0 * (1.0 + 1.0e-12):
+        sparse_steps: list[float] = []
+        for value in (1.0e-6, 1.0e-4, 0.02, 0.08, 0.101, 0.5, float(target_load_n)):
+            if value <= target_load_n * (1.0 + 1.0e-12) and (
+                not sparse_steps or not math.isclose(value, sparse_steps[-1], rel_tol=1e-12, abs_tol=1e-15)
+            ):
+                sparse_steps.append(float(value))
+        combined_force_steps = sparse_steps or [float(target_load_n)]
+        chunks = [
+            [value for value in combined_force_steps if value <= 0.02 * (1.0 + 1.0e-12)],
+            [
+                value
+                for value in combined_force_steps
+                if 0.02 * (1.0 + 1.0e-12) < value <= 0.101 * (1.0 + 1.0e-12)
+            ],
+        ]
+        chunks.extend([value] for value in combined_force_steps if value > 0.101 * (1.0 + 1.0e-12))
+        chunks = [chunk for chunk in chunks if chunk]
+    else:
+        low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
+        if not low_contact_chunk:
+            low_contact_chunk = [combined_force_steps[0]]
+        high_design_chunk: list[float] = []
+        for value in (1.0, float(target_load_n)):
+            preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
+            if value > preceding_value * (1.0 + 1.0e-12):
+                high_design_chunk.append(float(value))
+        chunks = [low_contact_chunk]
+        if high_design_chunk:
+            chunks.append(high_design_chunk)
     return combined_force_steps, chunks
 
 
@@ -1442,7 +1478,7 @@ def _remove_pair_bound_contact_feature_selection_edits(java_code: str) -> tuple[
     contact_vars = set(
         re.findall(
             r"(?m)^\s*(\w+)\s*=\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
-            r"\.feature\(\)\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
+            r"(?:\.feature\(\))?\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
             repaired,
             flags=re.IGNORECASE,
         )
@@ -8467,6 +8503,7 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
         target_load_n=target_load_n,
         reaction_force_n=reaction_force,
         directional_variant=directional_variant,
+        roller_count=variant.roller_count,
     )
     report["force_continuation_requested_checkpoints_n"] = list(combined_force_steps)
     combined_force_steps = force_continuation_chunks[0]

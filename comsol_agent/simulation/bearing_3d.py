@@ -70,7 +70,7 @@ def _contact_feature_variable_names(java_code: str) -> set[str]:
         variable
         for variable in re.findall(
             r"(?m)^\s*(\w+)\s*=\s*(?:model\.component\(\s*['\"]comp1['\"]\s*\)\.physics\(\s*['\"]solid['\"]\s*\)|solid)"
-            r"\.feature\(\)\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
+            r"(?:\.feature\(\))?\.create\(\s*['\"]contact[^'\"]*['\"]\s*,\s*['\"]contact['\"]",
             java_code,
             flags=re.IGNORECASE,
         )

@@ -2568,6 +2568,17 @@ class TestSimulationSkills:
         assert 0.005 in directional_steps
         assert regular_chunks[-1][-1] == 10.0
         assert directional_chunks[-1][-1] == 10.0
+        assert directional_chunks[0] == [1e-06, 0.0001, 0.005, 0.01, 0.015, 0.02]
+        assert directional_chunks[1] == [0.035, 0.05, 0.08]
+        assert directional_chunks[2] == [0.1, 0.1001, 0.1005, 0.101]
+        low_roller_steps, low_roller_chunks = _strict_force_continuation_chunks(
+            target_load_n=1.0,
+            reaction_force_n=None,
+            directional_variant=False,
+            roller_count=6,
+        )
+        assert low_roller_steps == [1e-06, 0.0001, 0.02, 0.08, 0.101, 0.5, 1.0]
+        assert low_roller_chunks == [[1e-06, 0.0001, 0.02], [0.08, 0.101], [0.5], [1.0]]
 
     def test_segment_validation_uses_variant_terminal_roller_count(self):
         from comsol_agent.simulation.bearing_3d import (
@@ -3413,6 +3424,9 @@ for i in range(num_rollers):
             "contact_all_rollers_inner = solid.feature().create('contact_all_rollers_inner', 'Contact', 2)\n"
             "contact_all_rollers_inner.selection().named('sel_all_roller_inner_contacts')\n"
             "contact_all_rollers_inner.set('pairs', ['cp_all_rollers_inner'])\n"
+            "contact_inner = solid.create('contact_all_rollers_outer', 'Contact', 2)\n"
+            "contact_inner.selection().named('sel_all_roller_outer_contacts')\n"
+            "contact_inner.set('pairs', ['cp_all_rollers_outer'])\n"
         )
         strict_variable_quality = validate_3d_bearing_code_draft(
             strict_contact_variable_code,
@@ -3425,10 +3439,12 @@ for i in range(num_rollers):
             quality_gate=lambda code: {"success": True, "errors": [], "warnings": []},
         )
         assert "contact_all_rollers_inner.selection().named" not in strict_variable_repaired
+        assert "contact_inner.selection().named" not in strict_variable_repaired
         assert "contact_all_rollers_inner.set('pairs', ['cp_all_rollers_inner'])" in strict_variable_repaired
+        assert "contact_inner.set('pairs', ['cp_all_rollers_outer'])" in strict_variable_repaired
         assert strict_variable_quality_after["success"] is True
         assert any(
-            "remove_pair_bound_contact_feature_selection:1" in report.get("changes", [])
+            "remove_pair_bound_contact_feature_selection:2" in report.get("changes", [])
             for report in strict_variable_reports
         )
         invalid_evalglobal_method_code = (
