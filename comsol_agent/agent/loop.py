@@ -94,6 +94,7 @@ class AgentLoop:
         llm_provider: LLMProvider,
         config: Config,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        on_tool_result: Callable[[str, str, bool], None] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
         session_store: SessionStore | None = None,
@@ -104,6 +105,7 @@ class AgentLoop:
             llm_provider: The LLM provider to use.
             config: Agent configuration.
             on_tool_call: Callback for tool execution events.
+            on_tool_result: Callback invoked after a tool returns.
             on_text_chunk: Callback for streaming text chunks.
             on_thinking: Callback for thinking/reasoning events.
         """
@@ -111,6 +113,7 @@ class AgentLoop:
         self.config = config
         self.state = AgentState()
         self.on_tool_call = on_tool_call
+        self.on_tool_result = on_tool_result
         self.on_text_chunk = on_text_chunk
         self.on_thinking = on_thinking
         self.session_store = session_store
@@ -219,6 +222,8 @@ class AgentLoop:
                 # Execute each tool call
                 for tc in response.tool_calls:
                     tool_result = await self._execute_tool(tc)
+                    if self.on_tool_result:
+                        self.on_tool_result(tc.name, tool_result.output, tool_result.is_error)
                     if tool_result.is_error:
                         signature = _tool_call_signature(tc)
                         repeated_failed_tool_calls[signature] = repeated_failed_tool_calls.get(signature, 0) + 1

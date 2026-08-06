@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="COMSOL Bearing Agent 本地演示与真实运行界面" />
+    <title>COMSOL Bearing Agent · Showcase</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="返回顶部">
+        <span class="brand-mark">CA</span>
+        <span><strong>COMSOL Bearing Agent</strong><small>GENERATIVE SIMULATION WORKSPACE</small></span>
+      </a>
+      <div class="runtime-status"><span id="healthDot" class="status-dot"></span><span id="healthText">检查运行环境</span></div>
+    </header>
+
+    <main id="top" class="page-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">FROM INTENT TO VERIFIED PHYSICS</p>
+          <h1>让轴承仿真过程<br /><span>可生成、可观察、可审计</span></h1>
+          <p class="hero-copy">同一界面串联需求理解、代码生成、COMSOL 求解和物理门禁。默认回放仓库中的真实 12 滚子案例，也可切换为实时 Agent。</p>
+        </div>
+        <div class="hero-orbit" aria-hidden="true">
+          <div class="orbit outer"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="orbit inner"></div>
+          <div class="orbit-core"><strong>12</strong><span>ROLLERS</span></div>
+        </div>
+      </section>
+
+      <section class="control-panel glass-panel">
+        <div class="control-head">
+          <div>
+            <p class="section-kicker">01 · REQUIREMENT</p>
+            <h2>描述你要验证的工程问题</h2>
+          </div>
+          <div class="mode-switch" role="group" aria-label="运行模式">
+            <button class="mode-btn active" data-mode="demo">案例回放</button>
+            <button class="mode-btn" data-mode="live">实时运行</button>
+          </div>
+        </div>
+        <label class="sr-only" for="requirement">仿真需求</label>
+        <textarea id="requirement" spellcheck="false"></textarea>
+        <div class="control-actions">
+          <div class="mode-note" id="modeNote">使用仓库内真实 COMSOL 结果，约 5 秒完成稳定回放。</div>
+          <button id="runBtn" class="run-button"><span>启动演示</span><b>→</b></button>
+        </div>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="glass-panel timeline-panel">
+          <div class="panel-title-row">
+            <div><p class="section-kicker">02 · AGENT TRACE</p><h2>执行时间线</h2></div>
+            <span id="sessionBadge" class="session-badge">WAITING</span>
+          </div>
+          <div id="timeline" class="timeline empty-state">
+            <div class="empty-symbol">◎</div>
+            <p>启动后，这里会实时展示 Agent 的规划、工具调用和检查结果。</p>
+          </div>
+        </article>
+
+        <article class="glass-panel code-panel">
+          <div class="panel-title-row">
+            <div><p class="section-kicker">03 · GENERATED CODE</p><h2>COMSOL API 代码</h2></div>
+            <button id="copyBtn" class="quiet-button" disabled>复制</button>
+          </div>
+          <pre id="codeView" class="code-view"><code>// 等待 Agent 生成代码...</code></pre>
+        </article>
+      </section>
+
+      <section class="results-section">
+        <div class="results-heading">
+          <div><p class="section-kicker">04 · VERIFIED OUTPUT</p><h2>结果不是终点，审计通过才是</h2></div>
+          <p id="agentResponse">运行完成后，这里将汇总 Agent 的最终判断。</p>
+        </div>
+        <div id="metricGrid" class="metric-grid">
+          <div class="metric-card skeleton"></div><div class="metric-card skeleton"></div><div class="metric-card skeleton"></div><div class="metric-card skeleton"></div>
+        </div>
+        <div class="result-grid">
+          <article class="glass-panel gallery-panel">
+            <div class="panel-title-row"><div><p class="section-kicker">COMSOL NATIVE</p><h2>原生仿真图像</h2></div><span id="artifactCount" class="session-badge">0 FILES</span></div>
+            <div id="gallery" class="gallery empty-gallery"><p>求解图像将在此处出现</p></div>
+          </article>
+          <article class="glass-panel chart-panel">
+            <div class="panel-title-row"><div><p class="section-kicker">LOAD DISTRIBUTION</p><h2>滚子载荷分布</h2></div><span class="axis-tag">N</span></div>
+            <canvas id="loadChart" width="720" height="420" aria-label="12 个滚子的载荷分布柱状图"></canvas>
+            <div class="chart-legend"><span><i class="legend-blue"></i>承载区</span><span><i class="legend-muted"></i>非承载区</span></div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer><span>COMSOL BEARING AGENT</span><span>LOCAL SHOWCASE · AUDITABLE BY DESIGN</span></footer>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

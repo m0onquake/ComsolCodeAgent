@@ -55,11 +55,16 @@ dev = [
     "mypy>=1.11.0",
 ]
 web = [
-    "gradio>=4.0.0",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
 ]
 
 [project.scripts]
 comsol-agent = "comsol_agent.main:main"
+comsol-agent-web = "comsol_agent.web.app:main"
+
+[tool.setuptools.package-data]
+"comsol_agent.web" = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.setuptools.packages.find]
 include = ["comsol_agent*"]
