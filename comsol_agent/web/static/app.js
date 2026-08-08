@@ -37,18 +37,21 @@ document.querySelectorAll(".mode-btn").forEach((button) => {
 
 function resetRun(preserveSession = false) {
   if (!preserveSession) state.sessionId = null;
-  state.code = "";
-  state.loads = [];
   timeline.className = "timeline";
   timeline.innerHTML = "";
-  codeView.textContent = "// Agent 正在准备生成路径...";
-  copyBtn.disabled = true;
-  el("gallery").className = "gallery empty-gallery";
-  el("gallery").innerHTML = "<p>正在等待 COMSOL 结果...</p>";
-  el("artifactCount").textContent = "0 FILES";
+  if (!preserveSession) {
+    state.code = "";
+    state.loads = [];
+    codeView.textContent = "// Agent 正在准备生成路径...";
+    copyBtn.disabled = true;
+    el("gallery").className = "gallery empty-gallery";
+    el("gallery").innerHTML = "<p>正在等待 COMSOL 结果...</p>";
+    el("fileList").innerHTML = "";
+    el("artifactCount").textContent = "0 FILES";
+    el("metricGrid").innerHTML = new Array(4).fill('<div class="metric-card skeleton"></div>').join("");
+    drawLoads([]);
+  }
   el("agentResponse").textContent = "Agent 正在执行，请关注左侧时间线。";
-  el("metricGrid").innerHTML = new Array(4).fill('<div class="metric-card skeleton"></div>').join("");
-  drawLoads([]);
 }
 
 function traceKey(event) {
@@ -109,7 +112,7 @@ function handleEvent(event) {
 async function run() {
   if (state.running || !requirement.value.trim()) return;
   state.running = true;
-  resetRun(state.mode === "live");
+  resetRun(state.mode === "live" && Boolean(state.sessionId));
   runBtn.disabled = true;
   runBtn.querySelector("span").textContent = "运行中";
   try {
@@ -147,9 +150,18 @@ function renderArtifacts(items, metrics, loads) {
   state.loads = loads;
   drawLoads(loads);
   const images = items.filter((item) => item.kind === "image");
+  const files = items.filter((item) => item.kind !== "image");
   el("artifactCount").textContent = `${items.length} FILES`;
   const gallery = el("gallery");
   gallery.innerHTML = "";
+  const fileList = el("fileList");
+  fileList.innerHTML = "";
+  files.forEach((item) => {
+    const link = document.createElement("a");
+    link.className = "file-chip"; link.href = item.url; link.target = "_blank"; link.rel = "noreferrer";
+    link.textContent = `${item.kind.toUpperCase()} · ${item.name}`;
+    fileList.append(link);
+  });
   gallery.className = images.length ? "gallery" : "gallery empty-gallery";
   if (!images.length) { gallery.innerHTML = "<p>本次运行尚未导出图像</p>"; return; }
   images.forEach((item) => {

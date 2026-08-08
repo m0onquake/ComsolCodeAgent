@@ -201,6 +201,7 @@ class AgentLoop:
             # Process tool calls
             if response.is_tool_calls:
                 stop_after_tool_batch = False
+                failed_tools_for_repair: list[tuple[ToolCall, ToolResult]] = []
                 # Record assistant message with tool calls
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
@@ -242,7 +243,12 @@ class AgentLoop:
                     })
 
                     if tool_result.is_error and self.config.agent.auto_repair:
-                        self._record_repair_detection(tc, tool_result)
+                        failed_tools_for_repair.append((tc, tool_result))
+                # OpenAI-compatible APIs require every tool result in a batch to
+                # immediately follow the assistant tool_calls message. Inject
+                # repair notices only after the complete batch is recorded.
+                for failed_call, failed_result in failed_tools_for_repair:
+                    self._record_repair_detection(failed_call, failed_result)
                 if stop_after_tool_batch:
                     self._append_message({
                         "role": "assistant",

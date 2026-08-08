@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from comsol_agent.cli.config import Config
 from comsol_agent.web.demo_case import build_demo_case
-from comsol_agent.web.runtime import WebSessionManager
+from comsol_agent.web.runtime import WebSession, WebSessionManager
 
 
 @pytest.mark.asyncio
@@ -97,6 +99,7 @@ async def test_demo_stream_completes_without_llm_or_comsol(monkeypatch):
     snapshot = events[-1]["session"]
     assert snapshot["status"] == "completed"
     assert len(snapshot["artifacts"]) >= 5
+    json.dumps(events, ensure_ascii=False)
 
 
 def test_web_health_and_demo_routes(monkeypatch):
@@ -127,3 +130,65 @@ def test_web_rejects_unknown_mode():
     )
 
     assert response.status_code == 422
+
+
+def test_live_callbacks_capture_code_metrics_and_artifacts(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    manager = WebSessionManager(Config())
+    session = WebSession(id="capture", mode="live")
+    session.agent = SimpleNamespace(on_tool_call=None, on_tool_result=None)
+    emitted = []
+    monkeypatch.setattr(manager, "_is_allowed_path", lambda path: tmp_path in path.parents)
+    image = tmp_path / "stress.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    def emit(event_type, **payload):
+        emitted.append((event_type, payload))
+
+    manager._attach_callbacks(session, emit)
+    session.agent.on_tool_result(
+        "simulation_read_template",
+        json.dumps({"success": True, "template": {"java_code": "model.study().create('std1');"}}),
+        False,
+    )
+    session.agent.on_tool_call("comsol_execute_java", {"java_code": "model.sol();"})
+    session.agent.on_tool_result(
+        "comsol_evaluate",
+        json.dumps(
+            {
+                "success": True,
+                "expression": "solid.mises/1[MPa]",
+                "statistics": {"max": 250.21},
+                "filepath": str(image),
+            }
+        ),
+        False,
+    )
+
+    assert session.code == "model.study().create('std1');"
+    assert session.metrics == [
+        {
+            "label": "solid.mises/1[MPa]",
+            "value": "250.21 MPa",
+            "expression": "solid.mises/1[MPa]",
+            "unit": "MPa",
+            "tone": "blue",
+        }
+    ]
+    assert any(item.path == image for item in session.artifacts.values())
+    assert any(event_type == "code" for event_type, _payload in emitted)
+    assert any(event_type == "artifacts" for event_type, _payload in emitted)
+
+
+def test_unnormalized_comsol_metric_is_not_displayed():
+    manager = WebSessionManager(Config())
+    session = WebSession(id="metric", mode="live")
+
+    manager._capture_metric(
+        session,
+        "comsol_evaluate",
+        {"success": True, "expression": "solid.disp", "statistics": {"max": 0.001}},
+    )
+
+    assert session.metrics == []

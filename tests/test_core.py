@@ -1084,6 +1084,13 @@ class TestRepairDetector:
         ]
         final_assistant_index = len(agent.state.messages) - 1
         assert agent.state.messages[final_assistant_index]["role"] == "assistant"
+        immediate_batch_messages = agent.state.messages[
+            last_batch_index + 1 : last_batch_index + 1 + len(last_tool_call_ids)
+        ]
+        assert [msg["role"] for msg in immediate_batch_messages] == [
+            "tool"
+        ] * len(last_tool_call_ids)
+        assert [msg["tool_call_id"] for msg in immediate_batch_messages] == last_tool_call_ids
         tool_messages_after_last_batch = [
             msg
             for msg in agent.state.messages[last_batch_index + 1 : final_assistant_index]
@@ -11205,7 +11212,10 @@ class TestCOMSOLRuntimeConfig:
         class FakeResult:
             def __init__(self):
                 self.exports = FakeExportList()
-                self.nodes = {"max_von_mises": FakeNumericalResult()}
+                self.nodes = {
+                    "max_von_mises": FakeNumericalResult(),
+                    "pg_old": FakePlotGroup("pg_old"),
+                }
 
             def tags(self):
                 return list(self.nodes)
@@ -11243,6 +11253,7 @@ class TestCOMSOLRuntimeConfig:
         assert result["success"] is True
         assert result["export_method"] == "java:Image2D"
         assert client._models["fake"].java_model.fake_result.nodes["pg_codex"].ran is True
+        assert client._models["fake"].java_model.fake_result.nodes["pg_old"].ran is False
         assert (
             client._models["fake"]
             .java_model.fake_result.nodes["pg_codex"]

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +20,7 @@ from comsol_agent.cli.config import Config, get_config_dir, load_config
 from comsol_agent.llm.router import create_provider_from_plan, plan_route
 from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.memory.session_store import SessionStore
+from comsol_agent.simulation.skills import seed_builtin_templates
 from comsol_agent.tools.comsol.client import COMSOLClient
 from comsol_agent.web.demo_case import DEMO_STAGES, PROJECT_ROOT, build_demo_case
 
@@ -76,7 +79,7 @@ class WebSession:
             "code": self.code,
             "metrics": self.metrics,
             "roller_loads": self.roller_loads,
-            "events": self.events,
+            "events": list(self.events),
             "artifacts": [item.public(self.id) for item in self.artifacts.values()],
         }
 
@@ -214,12 +217,7 @@ class WebSessionManager:
         if session.agent is None:
             session.agent = self._build_agent(session, emit)
         else:
-            session.agent.on_tool_call = lambda name, args: emit(
-                "tool_call", name=name, arguments=args, detail=_preview(args)
-            )
-            session.agent.on_tool_result = lambda name, output, failed: emit(
-                "tool_result", name=name, failed=failed, detail=_preview(output)
-            )
+            self._attach_callbacks(session, emit)
         emit(
             "stage",
             stage="agent",
@@ -227,15 +225,13 @@ class WebSessionManager:
             detail="进入自主规划与工具调用循环",
             status="running",
         )
-        session.response = await session.agent.run(requirement)
-        self._collect_live_artifacts(session)
+        try:
+            session.response = await session.agent.run(requirement)
+        finally:
+            # Keep completed COMSOL work visible even if a later LLM turn fails.
+            self._collect_live_artifacts(session)
+            self._emit_live_outputs(session, emit)
         emit("response", text=session.response)
-        emit(
-            "artifacts",
-            items=[item.public(session.id) for item in session.artifacts.values()],
-            metrics=session.metrics,
-            roller_loads=session.roller_loads,
-        )
 
     def _build_agent(self, session: WebSession, emit: Callable[..., None]) -> AgentLoop:
         register_all_tools()
@@ -251,37 +247,115 @@ class WebSessionManager:
         )
         app_dir = get_config_dir()
         archive_store = ArchiveStore(app_dir / "archive" / "archive.sqlite3")
+        seed_builtin_templates(archive_store)
         session_store = SessionStore(
             app_dir / "sessions",
             session_id=f"web_{session.id}",
             archive_store=archive_store,
         )
-        return AgentLoop(
+        agent = AgentLoop(
             llm_provider=provider,
             config=self.config,
-            on_tool_call=lambda name, args: emit(
-                "tool_call", name=name, arguments=args, detail=_preview(args)
-            ),
-            on_tool_result=lambda name, output, failed: emit(
-                "tool_result", name=name, failed=failed, detail=_preview(output)
-            ),
             session_store=session_store,
             archive_store=archive_store,
         )
+        session.agent = agent
+        self._attach_callbacks(session, emit)
+        return agent
+
+    def _attach_callbacks(self, session: WebSession, emit: Callable[..., None]) -> None:
+        if session.agent is None:
+            return
+
+        def on_tool_call(name: str, args: dict[str, Any]) -> None:
+            emit("tool_call", name=name, arguments=args, detail=_preview(args))
+            self._capture_code(session, name, args)
+            self._find_and_add_artifacts(session, args)
+            self._emit_live_outputs(session, emit)
+
+        def on_tool_result(name: str, output: str, failed: bool) -> None:
+            emit("tool_result", name=name, failed=failed, detail=_preview(output))
+            try:
+                payload = json.loads(output)
+            except (json.JSONDecodeError, TypeError):
+                payload = output
+            self._capture_code(session, name, payload)
+            self._capture_metric(session, name, payload)
+            self._find_and_add_artifacts(session, payload)
+            self._emit_live_outputs(session, emit)
+
+        session.agent.on_tool_call = on_tool_call
+        session.agent.on_tool_result = on_tool_result
+
+    def _emit_live_outputs(self, session: WebSession, emit: Callable[..., None]) -> None:
+        if session.code:
+            emit("code", code=session.code)
+        emit(
+            "artifacts",
+            items=[item.public(session.id) for item in session.artifacts.values()],
+            metrics=session.metrics,
+            roller_loads=session.roller_loads,
+        )
+
+    @staticmethod
+    def _capture_code(session: WebSession, tool_name: str, payload: Any) -> None:
+        if not isinstance(payload, dict):
+            return
+        candidates: list[Any] = [payload.get("java_code")]
+        template = payload.get("template")
+        if isinstance(template, dict):
+            candidates.append(template.get("java_code"))
+        for code in candidates:
+            if isinstance(code, str) and code.strip():
+                # Keep the primary model program visible instead of replacing it
+                # with a later one-line probe or repair snippet.
+                if len(code) >= len(session.code):
+                    session.code = code
+                return
+
+    @staticmethod
+    def _capture_metric(session: WebSession, tool_name: str, payload: Any) -> None:
+        valid_payload = isinstance(payload, dict) and payload.get("success")
+        if tool_name != "comsol_evaluate" or not valid_payload:
+            return
+        expression = str(payload.get("expression", ""))
+        match = re.search(r"/\s*1\s*\[([^\]]+)\]", expression)
+        if not match:
+            return
+        unit = match.group(1)
+        stats = payload.get("statistics")
+        value = stats.get("max") if isinstance(stats, dict) else payload.get("value")
+        if not isinstance(value, (int, float)):
+            return
+        metric = {
+            "label": expression,
+            "value": f"{value:.6g} {unit}",
+            "expression": expression,
+            "unit": unit,
+            "tone": "blue",
+        }
+        session.metrics = [item for item in session.metrics if item.get("expression") != expression]
+        session.metrics.append(metric)
 
     def _collect_live_artifacts(self, session: WebSession) -> None:
         if session.agent is None:
             return
-        candidates: set[Path] = set()
         for message in session.agent.state.messages:
-            if message.get("role") != "tool":
-                continue
-            content = message.get("content")
-            try:
-                payload = json.loads(content) if isinstance(content, str) else content
-            except json.JSONDecodeError:
-                continue
-            self._find_paths(payload, candidates)
+            role = message.get("role")
+            if role == "tool":
+                content = message.get("content")
+                try:
+                    payload = json.loads(content) if isinstance(content, str) else content
+                except json.JSONDecodeError:
+                    payload = content
+                self._find_and_add_artifacts(session, payload)
+            elif role == "assistant":
+                for tool_call in message.get("tool_calls") or []:
+                    self._find_and_add_artifacts(session, tool_call.get("arguments", {}))
+
+    def _find_and_add_artifacts(self, session: WebSession, value: Any) -> None:
+        candidates: set[Path] = set()
+        self._find_paths(value, candidates)
 
         allowed_extensions = {
             ".png",
@@ -295,14 +369,15 @@ class WebSessionManager:
             ".mph",
             ".md",
         }
-        for index, path in enumerate(sorted(candidates), start=1):
+        for path in sorted(candidates):
             resolved = path.expanduser().resolve()
             if not resolved.is_file() or resolved.suffix.lower() not in allowed_extensions:
                 continue
             if not self._is_allowed_path(resolved):
                 continue
             kind = self._kind_for_path(resolved)
-            artifact_id = f"live_{index}"
+            path_digest = hashlib.sha1(str(resolved).encode()).hexdigest()[:12]
+            artifact_id = f"live_{path_digest}"
             session.artifacts[artifact_id] = Artifact(artifact_id, resolved.name, kind, resolved)
             if kind == "code" and not session.code:
                 session.code = resolved.read_text(encoding="utf-8", errors="replace")
@@ -314,10 +389,17 @@ class WebSessionManager:
         elif isinstance(value, list):
             for child in value:
                 self._find_paths(child, paths)
-        elif isinstance(value, str) and 1 < len(value) < 600:
-            candidate = Path(value)
-            if candidate.is_absolute() or "/" in value:
-                paths.add(candidate if candidate.is_absolute() else PROJECT_ROOT / candidate)
+        elif isinstance(value, str):
+            if 1 < len(value) < 1200:
+                candidate = Path(value)
+                if candidate.is_absolute() or "/" in value:
+                    paths.add(candidate if candidate.is_absolute() else PROJECT_ROOT / candidate)
+            for match in re.findall(
+                r"(?:[A-Za-z]:)?[/~][^\n\r\"']+?\.(?:png|jpe?g|svg|json|csv|java|pyfrag|mph|md)",
+                value,
+                flags=re.IGNORECASE,
+            ):
+                paths.add(Path(match))
 
     @staticmethod
     def _kind_for_path(path: Path) -> str:

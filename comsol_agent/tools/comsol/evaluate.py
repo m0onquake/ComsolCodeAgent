@@ -205,13 +205,8 @@ def _select_or_create_plot_group(
     plot_type: str,
 ) -> str:
     if expression:
-        existing_plot_group = _first_existing_plot_group(java_model, result)
-        if existing_plot_group:
-            try:
-                java_model.result(existing_plot_group).run()
-            except Exception:
-                pass
-            return existing_plot_group
+        # An existing plot group can show another field or stale dataset. Build
+        # a dedicated group so the exported image represents the requested field.
         return _create_expression_plot_group(
             java_model,
             result,
