@@ -12,6 +12,10 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from comsol_agent.simulation.bearing_domain import (
+    BearingParameterError,
+    build_bearing_model_input,
+)
 
 CONTACT_POLICIES: tuple[str, ...] = (
     "frictionless",
@@ -114,12 +118,21 @@ BEARING_FAMILIES: tuple[BearingFamilySpec, ...] = (
         bearing_type="tapered_roller_bearing",
         rolling_element="tapered_roller",
         load_modes=("axial", "radial", "combined_radial_axial"),
-        geometry_slots=("cone_angle", "cup_angle", "inner_diameter", "outer_diameter", "bearing_width", "roller_count", "roller_length"),
-        required_slots=("bearing_type", "cone_angle", "roller_count", "load_mode", "contact_policy", "outputs"),
+        geometry_slots=(
+            "inner_diameter", "outer_diameter", "bearing_width", "rolling_element_count",
+            "pitch_diameter", "roller_large_diameter", "roller_small_diameter", "roller_length",
+            "roller_cone_angle", "inner_raceway_angle", "outer_raceway_angle", "contact_angle",
+            "flange_height", "flange_thickness", "axial_clearance",
+        ),
+        required_slots=(
+            "bearing_type", "roller_large_diameter", "roller_small_diameter", "roller_length",
+            "roller_cone_angle", "inner_raceway_angle", "outer_raceway_angle", "contact_angle",
+            "rolling_element_count", "load_mode", "contact_policy", "outputs",
+        ),
         contact_policies=CONTACT_POLICIES,
         default_assumptions={
             "topology": "Tapered roller bearing with cone/cup raceways and combined axial/radial load path.",
-            "starter_status": "Planner and quality gate only; do not reuse deep-groove ball templates for this topology.",
+            "starter_status": "Dedicated generated-code topology; radial baseline and contact-angle variant are COMSOL-verified, combined axial/radial remains experimental.",
         },
         starter_templates=(),
         output_expressions=("solid.mises", "solid.disp", "contact_pressure"),
@@ -142,6 +155,30 @@ BEARING_FAMILIES: tuple[BearingFamilySpec, ...] = (
         output_expressions=("solid.mises", "solid.disp", "contact_pressure"),
         quality_gate="validate_needle_roller_slender_geometry_and_no_ball_template_substitution",
         keywords=("needle roller", "needle bearing", "滚针", "滚针轴承"),
+    ),
+    BearingFamilySpec(
+        name="spherical_roller",
+        bearing_type="spherical_roller_bearing",
+        rolling_element="barrel_roller",
+        load_modes=("radial", "axial", "combined_radial_axial"),
+        geometry_slots=(
+            "inner_diameter", "outer_diameter", "bearing_width", "rolling_element_count",
+            "pitch_diameter", "roller_length", "roller_max_diameter", "roller_profile_radius",
+            "spherical_raceway_radius", "rows", "self_alignment_angle",
+        ),
+        required_slots=(
+            "bearing_type", "roller_profile_radius", "spherical_raceway_radius", "rows",
+            "self_alignment_angle", "load_mode", "contact_policy", "outputs",
+        ),
+        contact_policies=CONTACT_POLICIES,
+        default_assumptions={
+            "topology": "Double-row barrel rollers running on a common spherical outer raceway.",
+            "starter_status": "Typed planner support; production COMSOL topology is not verified yet.",
+        },
+        starter_templates=(),
+        output_expressions=("solid.mises", "solid.disp", "contact_pressure"),
+        quality_gate="validate_spherical_roller_profile_double_row_and_spherical_raceway",
+        keywords=("spherical roller", "self-aligning roller", "调心滚子", "调心滚子轴承"),
     ),
     BearingFamilySpec(
         name="thrust_bearing",
@@ -195,11 +232,18 @@ EXECUTABLE_PARAM_ALIASES: dict[str, str] = {
     "id": "inner_diameter",
     "od": "outer_diameter",
     "width": "bearing_width",
-    "滚子数量": "roller_count",
     "滚珠数量": "ball_count",
     "滚珠直径": "ball_diameter",
     "滚子直径": "roller_diameter",
     "滚子长度": "roller_length",
+    "滚子数量": "rolling_element_count",
+    "节圆直径": "pitch_diameter",
+    "滚子大端直径": "roller_large_diameter",
+    "滚子小端直径": "roller_small_diameter",
+    "滚子锥角": "roller_cone_angle",
+    "内滚道锥角": "inner_raceway_angle",
+    "外滚道锥角": "outer_raceway_angle",
+    "接触角": "contact_angle",
     "径向载荷": "radial_load",
     "轴向载荷": "axial_load",
     "过盈": "contact_interference",
@@ -276,13 +320,31 @@ def plan_bearing_modeling_request(
     )
     ready_to_generate = bool(allow_defaults or not missing_decisions)
     template_policy = _template_policy(spec, resolved_contact_policy)
-    if spec.name in {"tapered_roller", "thrust_bearing", "angular_contact_ball", "needle_roller"} and not spec.starter_templates:
+    if spec.name in {
+        "tapered_roller", "thrust_bearing", "angular_contact_ball", "needle_roller", "spherical_roller"
+    } and not spec.starter_templates:
         ready_to_generate = False if not allow_defaults else ready_to_generate
         template_policy["declared_unsupported_fidelity"] = (
             "No trusted full-topology starter template is registered for this bearing family. "
             "Generated-code planning may proceed only after topology-specific decisions are confirmed; "
             "deep-groove ball templates are rejected."
         )
+
+    domain_model: dict[str, Any] | None = None
+    domain_error: str | None = None
+    if spec.name in {"tapered_roller", "angular_contact_ball", "needle_roller", "thrust_bearing", "spherical_roller"}:
+        domain_params = _domain_param_aliases(executable_params)
+        try:
+            domain_model = build_bearing_model_input(
+                spec.name,
+                domain_params,
+                allow_defaults=allow_defaults,
+            ).to_dict()
+        except BearingParameterError as exc:
+            domain_error = str(exc)
+            ready_to_generate = False
+            if domain_error not in missing_decisions:
+                missing_decisions.append(domain_error)
 
     return {
         "bearing_family": spec.name,
@@ -293,6 +355,11 @@ def plan_bearing_modeling_request(
         "missing_decisions": [] if ready_to_generate else missing_decisions,
         "follow_up_questions": [] if ready_to_generate else _follow_up_questions(missing_decisions, spec),
         "resolved_executable_params": executable_params,
+        "domain_model": domain_model,
+        "domain_validation": {
+            "status": "passed" if domain_model is not None else ("failed" if domain_error else "not_applicable"),
+            "error": domain_error,
+        },
         "template_policy": template_policy,
         "recommended_workflow": _recommended_workflow(spec, ready_to_generate, allow_defaults),
         "quality_contract": {
@@ -371,6 +438,13 @@ def _normalize_executable_params(params: dict[str, Any]) -> dict[str, str]:
 
 def _extract_params_from_text(text: str) -> dict[str, str]:
     params: dict[str, str] = {}
+    for raw_name, value, unit in re.findall(
+        r"([A-Za-z_][A-Za-z0-9_]*|[\u4e00-\u9fff]{2,12})\s*[=:：]\s*"
+        r"([-+]?\d+(?:\.\d+)?)\s*(?:\[\s*([^\]]+)\s*\])?",
+        text,
+    ):
+        key = EXECUTABLE_PARAM_ALIASES.get(raw_name.strip().lower(), raw_name.strip())
+        params[key] = f"{value}[{unit}]" if unit else value
     load_match = re.search(r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?:\[?\s*N\s*\]?|牛)", text, flags=re.IGNORECASE)
     if load_match:
         if any(marker in text for marker in ("轴向", "axial", "推力")) and not any(marker in text for marker in ("径向", "radial")):
@@ -383,6 +457,23 @@ def _extract_params_from_text(text: str) -> dict[str, str]:
         key = "ball_count" if element in {"ball", "balls", "滚珠"} else "roller_count"
         params[key] = count_match.group(1)
     return params
+
+
+def _domain_param_aliases(params: dict[str, str]) -> dict[str, str]:
+    """Translate legacy planner names into the typed domain vocabulary."""
+    result = dict(params)
+    aliases = {
+        "roller_count": "rolling_element_count",
+        "needle_count": "rolling_element_count",
+        "ball_count": "rolling_element_count",
+        "cone_angle": "roller_cone_angle",
+        "cup_angle": "outer_raceway_angle",
+        "radial_load": "radial_load_y",
+    }
+    for old, new in aliases.items():
+        if old in result and new not in result:
+            result[new] = result[old]
+    return result
 
 
 def _looks_like_executable_value(value: str) -> bool:
@@ -413,8 +504,12 @@ def _missing_decisions(
     if spec.name == "angular_contact_ball" and "contact_angle" not in executable_params:
         missing.append("contact_angle")
     if spec.name == "tapered_roller":
-        for slot in ("cone_angle", "roller_count"):
-            if slot not in executable_params:
+        aliases = _domain_param_aliases(executable_params)
+        for slot in (
+            "roller_large_diameter", "roller_small_diameter", "roller_length", "roller_cone_angle",
+            "inner_raceway_angle", "outer_raceway_angle", "contact_angle", "rolling_element_count",
+        ):
+            if slot not in aliases:
                 missing.append(slot)
     if spec.name == "needle_roller" and "needle_count" not in executable_params and "roller_count" not in executable_params:
         missing.append("needle_count")
@@ -508,6 +603,13 @@ def _follow_up_questions(missing: list[str], spec: BearingFamilySpec) -> list[st
         "rolling_element": "请确认滚动体类型和数量。",
         "contact_angle": "角接触球轴承的接触角是多少？请给出数值，例如 15[deg]。",
         "cone_angle": "圆锥滚子轴承的锥角/滚道角是多少？请给出可执行参数，例如 cone_angle=12[deg]。",
+        "roller_cone_angle": "滚子母线对应的滚子锥角是多少？例如 roller_cone_angle=5.36[deg]。",
+        "roller_large_diameter": "圆锥滚子大端直径是多少？例如 roller_large_diameter=10[mm]。",
+        "roller_small_diameter": "圆锥滚子小端直径是多少？例如 roller_small_diameter=7[mm]。",
+        "roller_length": "圆锥滚子有效长度是多少？例如 roller_length=16[mm]。",
+        "inner_raceway_angle": "内滚道锥角是多少？例如 inner_raceway_angle=12[deg]。",
+        "outer_raceway_angle": "外滚道锥角是多少？例如 outer_raceway_angle=17.36[deg]。",
+        "rolling_element_count": "滚动体数量是多少？",
         "roller_count": "滚子数量是多少？",
         "needle_count": "滚针数量是多少？",
         "axial_load": "轴向载荷是多少？请给出带单位的值，例如 1000[N]。",
