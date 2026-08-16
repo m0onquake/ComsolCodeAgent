@@ -68,6 +68,14 @@ class OpenAIProvider(LLMProvider):
             "messages": openai_messages,
             **kwargs,
         }
+        if self._is_deepseek_v4():
+            # DeepSeek V4 thinking mode can produce long hidden reasoning and
+            # may require reasoning_content replay across turns. Keep all
+            # agent-style calls on the plain chat path, including segmented
+            # non-tool code generation.
+            extra_body = dict(params.get("extra_body") or {})
+            extra_body.setdefault("thinking", {"type": "disabled"})
+            params["extra_body"] = extra_body
         if openai_tools:
             params["tools"] = openai_tools
             if self._is_deepseek_v4():
@@ -76,9 +84,6 @@ class OpenAIProvider(LLMProvider):
                 # OpenAI-style agent loop compatible by using non-thinking mode
                 # whenever tools are present.
                 params.pop("tool_choice", None)
-                extra_body = dict(params.get("extra_body") or {})
-                extra_body.setdefault("thinking", {"type": "disabled"})
-                params["extra_body"] = extra_body
             else:
                 params.setdefault("tool_choice", "auto")
 

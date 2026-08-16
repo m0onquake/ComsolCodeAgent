@@ -24,6 +24,7 @@ from comsol_agent.llm.base import LLMProvider, LLMResponse, ToolCall, ToolResult
 from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.memory.compaction import compact_messages
 from comsol_agent.memory.retrieval import build_memory_context_message, retrieve_memories
+from comsol_agent.memory.requirements import RequirementState
 from comsol_agent.memory.session_store import SessionStore
 from comsol_agent.repair.analyzer import build_diagnosis_prompt, suggest_diagnosis
 from comsol_agent.repair.detector import detect_tool_error, format_repair_notice
@@ -41,6 +42,15 @@ def _is_authentication_error(exc: Exception) -> bool:
     message = str(exc).lower()
     auth_markers = ("auth", "unauthorized", "permission", "api key", "apikey")
     return any(marker in name or marker in message for marker in auth_markers)
+
+
+def _tool_call_signature(tool_call: ToolCall) -> str:
+    """Return a stable signature for repeated failed-tool-call detection."""
+    try:
+        arguments = json.dumps(tool_call.arguments or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        arguments = str(tool_call.arguments)
+    return f"{tool_call.name}:{arguments}"
 
 
 @dataclass
@@ -61,6 +71,7 @@ class AgentState:
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     turns: list[ConversationTurn] = field(default_factory=list)
+    requirement_state: RequirementState = field(default_factory=RequirementState)
     repair_reports: list[dict[str, Any]] = field(default_factory=list)
     total_tokens_used: int = 0
     tool_iterations_this_turn: int = 0
@@ -83,6 +94,7 @@ class AgentLoop:
         llm_provider: LLMProvider,
         config: Config,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        on_tool_result: Callable[[str, str, bool], None] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
         session_store: SessionStore | None = None,
@@ -93,6 +105,7 @@ class AgentLoop:
             llm_provider: The LLM provider to use.
             config: Agent configuration.
             on_tool_call: Callback for tool execution events.
+            on_tool_result: Callback invoked after a tool returns.
             on_text_chunk: Callback for streaming text chunks.
             on_thinking: Callback for thinking/reasoning events.
         """
@@ -100,6 +113,7 @@ class AgentLoop:
         self.config = config
         self.state = AgentState()
         self.on_tool_call = on_tool_call
+        self.on_tool_result = on_tool_result
         self.on_text_chunk = on_text_chunk
         self.on_thinking = on_thinking
         self.session_store = session_store
@@ -142,6 +156,7 @@ class AgentLoop:
         """
         # Add user message
         self._append_message({"role": "user", "content": user_input})
+        self.state.requirement_state.observe_user_message(user_input)
         self._inject_retrieved_memory(user_input)
         self._inject_skill_context(user_input)
         self.state.tool_iterations_this_turn = 0
@@ -149,6 +164,7 @@ class AgentLoop:
         log.info(f"Processing user input ({len(user_input)} chars)")
 
         final_response = ""
+        repeated_failed_tool_calls: dict[str, int] = {}
 
         for iteration in range(self.max_tool_iterations):
             self.state.tool_iterations_this_turn = iteration + 1
@@ -184,6 +200,8 @@ class AgentLoop:
 
             # Process tool calls
             if response.is_tool_calls:
+                stop_after_tool_batch = False
+                failed_tools_for_repair: list[tuple[ToolCall, ToolResult]] = []
                 # Record assistant message with tool calls
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
@@ -205,6 +223,18 @@ class AgentLoop:
                 # Execute each tool call
                 for tc in response.tool_calls:
                     tool_result = await self._execute_tool(tc)
+                    if self.on_tool_result:
+                        self.on_tool_result(tc.name, tool_result.output, tool_result.is_error)
+                    if tool_result.is_error:
+                        signature = _tool_call_signature(tc)
+                        repeated_failed_tool_calls[signature] = repeated_failed_tool_calls.get(signature, 0) + 1
+                        if repeated_failed_tool_calls[signature] >= 3:
+                            final_response = (
+                                "Stopped after the same tool call failed repeatedly. "
+                                f"Tool `{tc.name}` was called with the same arguments "
+                                f"{repeated_failed_tool_calls[signature]} times; inspect the last tool error before retrying."
+                            )
+                            stop_after_tool_batch = True
                     self._append_message({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -213,7 +243,18 @@ class AgentLoop:
                     })
 
                     if tool_result.is_error and self.config.agent.auto_repair:
-                        self._record_repair_detection(tc, tool_result)
+                        failed_tools_for_repair.append((tc, tool_result))
+                # OpenAI-compatible APIs require every tool result in a batch to
+                # immediately follow the assistant tool_calls message. Inject
+                # repair notices only after the complete batch is recorded.
+                for failed_call, failed_result in failed_tools_for_repair:
+                    self._record_repair_detection(failed_call, failed_result)
+                if stop_after_tool_batch:
+                    self._append_message({
+                        "role": "assistant",
+                        "content": final_response,
+                    })
+                    break
 
             # Safety: if we hit the max iterations, force a final response
             if iteration >= self.max_tool_iterations - 1:
@@ -231,6 +272,7 @@ class AgentLoop:
 
     async def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool call and return the result."""
+        tool_call = self._prepare_tool_call(tool_call)
         handler = get_tool_handler(tool_call.name)
 
         if handler is None:
@@ -273,6 +315,30 @@ class AgentLoop:
                 output=json.dumps({"success": False, "error": str(e)}),
                 is_error=True,
             )
+
+    def _prepare_tool_call(self, tool_call: ToolCall) -> ToolCall:
+        """Inject deterministic requirement memory into selected tool calls."""
+        if tool_call.name not in {"simulation_plan_generated_code", "simulation_plan_modeling_request"}:
+            return tool_call
+
+        arguments = dict(tool_call.arguments or {})
+        known_params = arguments.get("known_params")
+        if known_params is not None and not isinstance(known_params, dict):
+            return tool_call
+
+        if tool_call.name == "simulation_plan_modeling_request":
+            memory_params = self.state.requirement_state.to_modeling_request().executable_params
+            merged_params = dict(memory_params)
+            for key, value in (known_params or {}).items():
+                if value in (None, ""):
+                    continue
+                merged_params[str(key).strip()] = str(value).strip()
+        else:
+            merged_params = self.state.requirement_state.merge_known_params(known_params)
+        if merged_params:
+            arguments["known_params"] = merged_params
+
+        return ToolCall(id=tool_call.id, name=tool_call.name, arguments=arguments)
 
     async def _maybe_compact(self) -> None:
         """Check if context compaction is needed and perform it."""

@@ -14,10 +14,23 @@ from comsol_agent.memory.archive_store import ArchiveStore
 from comsol_agent.simulation.artifact_reader import read_archived_artifact
 from comsol_agent.simulation.artifacts import persist_sweep_result
 from comsol_agent.simulation.artifacts import persist_template_execution_result
-from comsol_agent.simulation.bearing_contact import plan_bearing_contact_setup
+from comsol_agent.simulation.bearing_3d import (
+    audit_3d_selection_binding,
+    build_selection_binding_probe_code,
+    parse_selection_binding_probe_output,
+)
+from comsol_agent.simulation.bearing_contact import (
+    plan_bearing_contact_setup,
+    plan_multiroller_bearing_setup,
+)
+from comsol_agent.simulation.bearing_families import plan_bearing_modeling_request
 from comsol_agent.simulation.comparison import compare_archived_sweeps
 from comsol_agent.simulation.examples import get_example, list_examples
 from comsol_agent.simulation.local_docs import build_index_from_directory
+from comsol_agent.simulation.model_families import (
+    ModelFamilySpec,
+    infer_model_family,
+)
 from comsol_agent.simulation.replay import build_replay_request, build_template_replay_request
 from comsol_agent.simulation.reporting import (
     write_comparison_report,
@@ -82,6 +95,103 @@ def simulation_plan_bearing_contact(
         return {"success": False, "error": str(exc)}
 
 
+def simulation_plan_multiroller_bearing(
+    user_request: str,
+    provided_params: dict | None = None,
+    allow_defaults: bool = False,
+) -> dict:
+    """Plan a real multi-roller bearing contact workflow."""
+    try:
+        plan = plan_multiroller_bearing_setup(
+            user_request=user_request,
+            provided_params=provided_params or {},
+            allow_defaults=allow_defaults,
+        )
+        return {
+            "success": True,
+            "plan": plan.to_dict(),
+            "note": (
+                "Use this plan for multi-roller/cylindrical-roller/needle-bearing requests. "
+                "Do not substitute unrelated plate/block structural simulations. If no true "
+                "multi-roller template fits, use generated-code fallback with explicit contact pairs."
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def simulation_plan_bearing_modeling_request(
+    user_request: str,
+    known_params: dict | None = None,
+    allow_defaults: bool = False,
+    preferred_bearing_type: str | None = None,
+    contact_policy: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Plan topology-specific bearing modeling without template substitution."""
+    try:
+        plan = plan_bearing_modeling_request(
+            user_request=user_request,
+            known_params=known_params or {},
+            allow_defaults=allow_defaults,
+            preferred_bearing_type=preferred_bearing_type,
+            contact_policy=contact_policy,
+            archive_path=archive_path,
+        )
+        return {
+            "success": True,
+            **plan,
+            "note": (
+                "Natural-language bearing intent is kept out of resolved_executable_params. "
+                "Deep-groove 2D contact cells are labeled smoke fidelity and are rejected for "
+                "tapered/thrust/needle/angular-contact topologies unless a matching topology template exists."
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "bearing_family": "general_bearing"}
+
+
+def simulation_probe_3d_selection_binding(
+    model_name: str,
+    java_code: str | None = None,
+    roller_count: int = 12,
+    component_tag: str = "comp1",
+) -> dict:
+    """Probe runtime COMSOL selection entity counts for the 3D bearing contract."""
+    try:
+        probe_code = build_selection_binding_probe_code(
+            roller_count=roller_count,
+            component_tag=component_tag,
+        )
+        execution = comsol_execute_java(probe_code, model_name)
+        if not execution.get("success"):
+            return {
+                "success": False,
+                "stage": "execute_selection_probe",
+                "model_name": model_name,
+                "execution": execution,
+                "probe_code": probe_code,
+            }
+        selection_report = parse_selection_binding_probe_output(execution.get("stdout") or execution.get("output") or "")
+        audit = audit_3d_selection_binding(
+            java_code=java_code,
+            selection_report=selection_report,
+            roller_count=roller_count,
+        )
+        return {
+            "success": bool(selection_report.get("success")) and audit.get("success"),
+            "model_name": model_name,
+            "roller_count": roller_count,
+            "component_tag": component_tag,
+            "selection_report": selection_report,
+            "selection_binding_audit": audit,
+            "execution": execution,
+            "probe_code": probe_code,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "model_name": model_name}
+
+
 def simulation_export_bearing_contact_package(
     model_name: str,
     template_run_id: str | None = None,
@@ -115,8 +225,17 @@ def simulation_export_bearing_contact_package(
 
         evaluations = [
             comsol_evaluate(model_name, "solid.mises"),
-            comsol_evaluate(model_name, "contact_pressure_guess"),
+            _evaluate_first_available(
+                model_name,
+                ["contact_pressure_guess", "contact_pressure_est", "max_contact_pressure"],
+            ),
         ]
+        displacement_evaluation = _evaluate_first_available(
+            model_name,
+            ["solid.disp", "sqrt(u^2+v^2+w^2)", "max_displacement"],
+        )
+        if displacement_evaluation.get("success"):
+            evaluations.append(displacement_evaluation)
         failed_eval = [item for item in evaluations if not item.get("success")]
         if failed_eval:
             return {
@@ -139,6 +258,9 @@ def simulation_export_bearing_contact_package(
                 template_artifact = {"error": str(exc), "run_id": template_run_id}
 
         plot = _package_plot_info(plot_path)
+        template_params = _template_artifact_params(template_artifact)
+        contact_summary = _bearing_contact_contact_summary(template_artifact)
+        assumptions = _bearing_contact_package_assumptions(template_params, contact_summary)
         summary = {
             "success": True,
             "kind": "bearing_contact_package",
@@ -149,12 +271,17 @@ def simulation_export_bearing_contact_package(
             "plot": plot,
             "evaluations": evaluations,
             "metrics": _bearing_contact_metrics(evaluations),
+            "result_interpretation": {
+                "max_stress_location_approx": contact_summary["max_stress_location_approx"],
+                "highest_risk_region": contact_summary["highest_risk_region"],
+                "contact_pair_status": contact_summary["contact_pair_status"],
+                "location_precision": (
+                    "approximate_region_from_model_setup; exact coordinates require point/coordinate probes"
+                ),
+            },
+            "model_parameters": template_params,
             "template_artifact": template_artifact,
-            "assumptions": [
-                "2D single-ball/raceway workflow unless the template states otherwise.",
-                "Inspect the template execution record to distinguish Hertz-style pressure and explicit COMSOL contact-pair models.",
-                "Use the package for workflow review; inspect boundary selections, mesh, and contact convergence before production bearing design.",
-            ],
+            "assumptions": assumptions,
         }
 
         json_path = package_dir / "summary.json"
@@ -365,6 +492,75 @@ def simulation_plan_generated_code(
         return {"success": False, "error": str(exc), "mode": "generated_code_fallback"}
 
 
+def simulation_plan_modeling_request(
+    user_request: str,
+    known_params: dict | None = None,
+    allow_defaults: bool = False,
+    preferred_model_name: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Plan a model-family-neutral COMSOL modeling request."""
+    try:
+        raw_known = known_params or {}
+        normalized_known = _normalize_modeling_intent_params(raw_known)
+        executable_known = _normalize_modeling_known_params(raw_known)
+        family = infer_model_family(user_request, preferred_model_name)
+        missing_decisions = _missing_model_family_decisions(
+            family=family,
+            user_request=user_request,
+            known_params=normalized_known,
+        )
+        ready_to_generate = allow_defaults or not missing_decisions
+
+        generated_plan = simulation_plan_generated_code(
+            user_request=user_request,
+            known_params=executable_known,
+            domain=family.domain,
+            allow_defaults=allow_defaults,
+            preferred_model_name=preferred_model_name,
+            max_doc_results=3,
+            archive_path=archive_path,
+        )
+        template_policy = _modeling_template_policy(
+            family=family,
+            generated_template_policy=(generated_plan.get("template_policy") or {}),
+        )
+
+        if not ready_to_generate:
+            generated_plan["ready_to_generate"] = False
+
+        return {
+            "success": True,
+            "model_family": family.name,
+            "domain": family.domain,
+            "ready_to_generate": ready_to_generate,
+            "missing_decisions": [] if ready_to_generate else missing_decisions,
+            "follow_up_questions": [] if ready_to_generate else _model_family_followups(missing_decisions),
+            "template_policy": template_policy,
+            "recommended_workflow": _modeling_recommended_workflow(
+                family=family,
+                ready_to_generate=ready_to_generate,
+                allow_defaults=allow_defaults,
+            ),
+            "quality_contract": {
+                "quality_gate": family.quality_gate,
+                "required_slots": list(family.required_slots),
+                "default_assumptions": dict(family.default_assumptions),
+                "output_expressions": list(family.output_expressions),
+                "preserve_family_specific_checks": family.name == "bearing_contact",
+            },
+            "next_tool_chain": _modeling_next_tool_chain(
+                family=family,
+                ready_to_generate=ready_to_generate,
+                generated_plan=generated_plan,
+            ),
+            "generated_code_plan": generated_plan,
+            "known_params": executable_known,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "model_family": "general"}
+
+
 def simulation_list_example_models(domain: str | None = None) -> dict:
     """List built-in COMSOL example models known to this project."""
     try:
@@ -514,7 +710,16 @@ def simulation_validate_template(
             code = template.java_code
             effective_params = template.params if params is None else params
         if code is None:
-            return {"success": False, "error": "Either name or java_code is required."}
+            return {
+                "success": False,
+                "error": "Either name or java_code is required.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
+                "repair_hint": (
+                    "Do not retry this tool with empty arguments. Pass the raw generated code as "
+                    "`java_code`, or pass an archived template `name` plus `archive_path`."
+                ),
+            }
         validation = _validate_template_code(name=name, java_code=code, params=effective_params)
         return {
             "success": not validation["errors"],
@@ -577,6 +782,7 @@ def simulation_run_template(
     params: dict | None = None,
     model_name: str | None = None,
     create_model_name: str | None = None,
+    execution_context: dict | None = None,
     validate_first: bool = True,
     close_model: bool | None = None,
     persist_results: bool = True,
@@ -594,9 +800,21 @@ def simulation_run_template(
             return {
                 "success": False,
                 "error": "Provide exactly one of model_name or create_model_name.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
             }
         if not name and java_code is None:
-            return {"success": False, "error": "Either name or java_code is required."}
+            return {
+                "success": False,
+                "error": "Either name or java_code is required.",
+                "error_type": "TOOL_INPUT_ERROR",
+                "retryable": False,
+                "repair_hint": (
+                    "Do not retry this tool with empty code. Pass raw setup code as `java_code`, "
+                    "or pass archived template `name`; also pass exactly one target model via "
+                    "`model_name` or `create_model_name`."
+                ),
+            }
 
         template = None
         effective_code = java_code
@@ -632,9 +850,11 @@ def simulation_run_template(
                 "model_name": model_name or create_model_name,
                 "source": source,
                 "params": effective_params,
+                "execution_context": execution_context or {},
                 "template": template_snapshot,
                 "validation": validation,
             }
+            artifact_kind = _execution_artifact_kind(source)
             if persist_results:
                 result["artifacts"] = persist_template_execution_result(
                     result,
@@ -642,6 +862,7 @@ def simulation_run_template(
                     run_name=artifact_name or _template_run_name(name, create_model_name or model_name),
                     archive_results=archive_results,
                     archive_path=archive_path,
+                    artifact_kind=artifact_kind,
                 )
             return result
 
@@ -657,10 +878,12 @@ def simulation_run_template(
                     "model_name": create_model_name,
                     "source": source,
                     "params": effective_params,
+                    "execution_context": execution_context or {},
                     "template": template_snapshot,
                     "validation": validation,
                     "create": create_result,
                 }
+                artifact_kind = _execution_artifact_kind(source)
                 if persist_results:
                     result["artifacts"] = persist_template_execution_result(
                         result,
@@ -668,6 +891,7 @@ def simulation_run_template(
                         run_name=artifact_name or _template_run_name(name, create_model_name),
                         archive_results=archive_results,
                         archive_path=archive_path,
+                        artifact_kind=artifact_kind,
                     )
                 return result
             active_model_name = create_result["model_name"]
@@ -676,37 +900,52 @@ def simulation_run_template(
             active_model_name = model_name
 
         execution = comsol_execute_java(effective_code, active_model_name)
+        parameter_override = None
+        parameter_override_details = _template_parameter_override_details(effective_params)
+        if execution.get("success") and effective_params:
+            parameter_override = comsol_execute_java(
+                parameter_override_details["java_code"],
+                active_model_name,
+            )
         close_result = _close_after_template_run(
             active_model_name,
             close_model=close_model,
             created_by_tool=created_by_tool,
         )
         result = {
-            "success": bool(execution.get("success")),
+            "success": bool(execution.get("success")) and (
+                parameter_override is None or bool(parameter_override.get("success"))
+            ),
             "executed": True,
             "template_name": name or (template.name if template else None),
             "model_name": active_model_name,
             "source": source,
             "params": effective_params,
+            "execution_context": execution_context or {},
             "template": template_snapshot,
             "validation": validation,
             "create": create_result,
             "execution": execution,
+            "parameter_override": parameter_override,
+            "parameter_override_details": parameter_override_details,
             "close": close_result,
             "tool_sequence": [
                 *(["comsol_create_model"] if create_result else []),
                 "simulation_validate_template" if validate_first else "template_validation_inline",
                 "comsol_execute_java",
+                *(["comsol_execute_java(parameter_override)"] if parameter_override else []),
                 *(["comsol_close_model"] if close_result else []),
             ],
         }
         if persist_results:
+            artifact_kind = _execution_artifact_kind(source)
             result["artifacts"] = persist_template_execution_result(
                 result,
                 output_dir=artifact_dir,
                 run_name=artifact_name or _template_run_name(name, active_model_name),
                 archive_results=archive_results,
                 archive_path=archive_path,
+                artifact_kind=artifact_kind,
             )
         return result
     except Exception as exc:
@@ -717,6 +956,61 @@ def simulation_run_template(
             "template_name": name,
             "model_name": active_model_name or model_name or create_model_name,
         }
+
+
+def _template_parameter_override_code(params: dict) -> str:
+    """Build safe COMSOL parameter override code for executable template params."""
+    return _template_parameter_override_details(params)["java_code"]
+
+
+def _template_parameter_override_details(params: dict) -> dict:
+    """Build safe override code and an audit record of applied/skipped params."""
+    lines: list[str] = []
+    applied: dict[str, str] = {}
+    skipped: dict[str, str] = {}
+    for raw_name, raw_value in sorted(params.items()):
+        name = str(raw_name)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            skipped[name] = "invalid_parameter_name"
+            continue
+        if isinstance(raw_value, (dict, list, tuple, set)):
+            skipped[name] = "non_scalar_value"
+            continue
+        value = str(raw_value)
+        if not _looks_like_executable_comsol_parameter_value(value):
+            skipped[name] = "not_unit_numeric_dimensionless_or_expression"
+            continue
+        lines.append(f"model.param().set({name!r}, {value!r});")
+        applied[name] = value
+    lines.extend([
+        "try:",
+        "    model.component('comp1').geom('geom1').run();",
+        "except Exception:",
+        "    pass",
+        "try:",
+        "    model.component('comp1').mesh('mesh1').run();",
+        "except Exception:",
+        "    pass",
+    ])
+    return {
+        "java_code": "\n".join(lines),
+        "applied_params": applied,
+        "skipped_params": skipped,
+        "rebuild_attempts": ["comp1/geom1", "comp1/mesh1"],
+    }
+
+
+def _looks_like_executable_comsol_parameter_value(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped or stripped.lower() in {"true", "false", "yes", "no"}:
+        return False
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", stripped):
+        return True
+    if "[" in stripped and "]" in stripped:
+        return True
+    if re.search(r"[+\-*/()]", stripped) and re.search(r"[A-Za-z0-9_]", stripped):
+        return True
+    return False
 
 
 def simulation_list_artifacts(
@@ -785,6 +1079,49 @@ def simulation_read_artifact(
         return {"success": False, "error": str(exc), "run_id": run_id}
 
 
+def simulation_answer_artifact_question(
+    question: str,
+    run_id: str | None = None,
+    query: str | None = None,
+    archive_path: str | None = None,
+) -> dict:
+    """Answer common result questions from archived artifact/package content."""
+    try:
+        store = _archive_store(archive_path)
+        artifact_id = run_id
+        if artifact_id is None:
+            search_query = query or "bearing_contact_package"
+            matches = store.search_simulation_artifacts(search_query, limit=10)
+            package_match = next(
+                (artifact for artifact in matches if artifact.kind in {"bearing_contact_package", "multiroller_bearing_package"}),
+                None,
+            )
+            artifact_id = (package_match or matches[0]).run_id if matches else None
+        if not artifact_id:
+            return {
+                "success": False,
+                "error": "No artifact run_id was provided and no matching artifact was found.",
+                "question": question,
+            }
+
+        artifact = read_archived_artifact(store, run_id=artifact_id, max_lines=120)
+        summary = (artifact.get("preview") or {}).get("summary") or {}
+        answer = _answer_from_artifact_summary(question, summary)
+        return {
+            "success": True,
+            "archive_path": str(store.db_path),
+            "run_id": artifact_id,
+            "question": question,
+            "answer": answer,
+            "evidence": {
+                "kind": (artifact.get("artifact") or {}).get("kind"),
+                "summary": summary,
+            },
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "question": question, "run_id": run_id}
+
+
 def simulation_compare_artifacts(
     run_ids: list[str] | None = None,
     query: str | None = None,
@@ -837,10 +1174,13 @@ def simulation_export_artifact_report(
             return {"success": False, "error": "direction must be 'max' or 'min'."}
         if output_format not in {"markdown", "html", "both"}:
             return {"success": False, "error": "output_format must be 'markdown', 'html', or 'both'."}
-        if kind not in {"parameter_sweep", "template_execution"}:
-            return {"success": False, "error": "kind must be 'parameter_sweep' or 'template_execution'."}
+        if kind not in {"parameter_sweep", "template_execution", "generated_code_execution"}:
+            return {
+                "success": False,
+                "error": "kind must be 'parameter_sweep', 'template_execution', or 'generated_code_execution'.",
+            }
         store = _archive_store(archive_path)
-        if kind == "template_execution":
+        if kind in {"template_execution", "generated_code_execution"}:
             report = write_template_execution_report(
                 store,
                 run_ids=run_ids,
@@ -851,6 +1191,7 @@ def simulation_export_artifact_report(
                 title=title,
                 output_format=output_format,
                 archive_path=archive_path,
+                artifact_kind=kind,
             )
             return {
                 "success": True,
@@ -914,7 +1255,7 @@ def simulation_rerun_artifact(
     try:
         store = _archive_store(archive_path)
         artifact = store.get_simulation_artifact(run_id)
-        if artifact.kind == "template_execution":
+        if artifact.kind in {"template_execution", "generated_code_execution"}:
             replay = build_template_replay_request(
                 store,
                 run_id=run_id,
@@ -1369,11 +1710,96 @@ def _bearing_contact_metrics(evaluations: list[dict]) -> dict:
             metrics["von_mises_mean"] = stats.get("mean")
         elif expression == "contact_pressure_guess":
             metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
+        elif expression in {"contact_pressure_est", "max_contact_pressure"}:
+            metrics["contact_pressure_guess"] = stats.get("mean", evaluation.get("value"))
+            metrics["contact_pressure_expression"] = expression
+        elif expression in {"solid.disp", "sqrt(u^2+v^2+w^2)", "max_displacement"}:
+            metrics["displacement_max"] = stats.get("max", evaluation.get("value"))
+            metrics["displacement_mean"] = stats.get("mean", evaluation.get("value"))
+            metrics["displacement_expression"] = expression
     return metrics
+
+
+def _evaluate_first_available(model_name: str, expressions: list[str]) -> dict:
+    last_result = None
+    for expression in expressions:
+        result = comsol_evaluate(model_name, expression)
+        if result.get("success"):
+            return result
+        last_result = result
+    return last_result or {
+        "success": False,
+        "model_name": model_name,
+        "expression": expressions[0] if expressions else "",
+        "error": "No expressions were provided.",
+    }
+
+
+def _template_artifact_params(template_artifact: dict | None) -> dict:
+    if not isinstance(template_artifact, dict):
+        return {}
+    preview = template_artifact.get("preview") or {}
+    summary = preview.get("summary") or {}
+    return summary.get("params") or {}
+
+
+def _bearing_contact_contact_summary(template_artifact: dict | None) -> dict:
+    template_name = ""
+    params = {}
+    if isinstance(template_artifact, dict):
+        preview = template_artifact.get("preview") or {}
+        summary = preview.get("summary") or {}
+        template_name = str(summary.get("template_name") or "")
+        params = summary.get("params") or {}
+    is_multiroller = "multiroller" in template_name or "roller_count" in params
+    has_contact_pair = (
+        is_multiroller
+        or "pair" in template_name
+        or "contact_pair" in template_name
+    )
+    if is_multiroller:
+        return {
+            "max_stress_location_approx": "roller/raceway contact patch near the loaded roller set",
+            "highest_risk_region": "roller-to-inner/outer-raceway contact pair region",
+            "contact_pair_status": "explicit COMSOL Contact pairs were created for roller-to-raceway interfaces",
+        }
+    return {
+        "max_stress_location_approx": (
+            "roller/raceway contact patch near the loaded rolling element"
+            if has_contact_pair
+            else "ball/raceway contact patch near the loaded rolling element"
+        ),
+        "highest_risk_region": (
+            "rolling-element to raceway contact pair"
+            if has_contact_pair
+            else "loaded rolling-element/raceway contact region"
+        ),
+        "contact_pair_status": (
+            "explicit COMSOL contact pair was requested by the template execution"
+            if has_contact_pair
+            else "Hertz-style pressure workflow; inspect template before claiming explicit Contact Pair"
+        ),
+    }
+
+
+def _bearing_contact_package_assumptions(params: dict, contact_summary: dict) -> list[str]:
+    if "roller_count" in params:
+        return [
+            "2D plane-strain multi-roller bearing contact workflow with explicit roller/raceway contact pairs.",
+            "Cage geometry is omitted in this first demo and preserved as a follow-up extension.",
+            "Boundary selections are generated for this smoke geometry; inspect mesh/contact convergence before production bearing design.",
+            f"Contact status: {contact_summary.get('contact_pair_status')}.",
+        ]
+    return [
+        "2D single-ball/raceway workflow unless the template states otherwise.",
+        "Inspect the template execution record to distinguish Hertz-style pressure and explicit COMSOL contact-pair models.",
+        "Use the package for workflow review; inspect boundary selections, mesh, and contact convergence before production bearing design.",
+    ]
 
 
 def _bearing_contact_package_markdown(summary: dict) -> str:
     metrics = summary.get("metrics") or {}
+    interpretation = summary.get("result_interpretation") or {}
     model_save = summary.get("model_save") or {}
     plot = summary.get("plot") or {}
     lines = [
@@ -1391,6 +1817,9 @@ def _bearing_contact_package_markdown(summary: dict) -> str:
         f"- von Mises max: `{metrics.get('von_mises_max')}`",
         f"- von Mises mean: `{metrics.get('von_mises_mean')}`",
         f"- Contact pressure estimate: `{metrics.get('contact_pressure_guess')}`",
+        f"- Max stress location: `{interpretation.get('max_stress_location_approx') or ''}`",
+        f"- Highest-risk region: `{interpretation.get('highest_risk_region') or ''}`",
+        f"- Contact pair status: `{interpretation.get('contact_pair_status') or ''}`",
         "",
         "## Assumptions",
         "",
@@ -1406,6 +1835,60 @@ def _bearing_contact_package_markdown(summary: dict) -> str:
         "",
     ])
     return "\n".join(lines)
+
+
+def _answer_from_artifact_summary(question: str, summary: dict) -> str:
+    lowered = question.lower()
+    metrics = summary.get("metrics") or {}
+    interpretation = summary.get("result_interpretation") or {}
+    params = summary.get("model_parameters") or {}
+    highest_risk_roller = summary.get("highest_risk_roller") or interpretation.get("highest_risk_roller")
+    cage_model = summary.get("cage_model") or interpretation.get("cage_status")
+    roller_risk = summary.get("roller_risk_ranking") or []
+    selection_status = summary.get("selection_status")
+    selection_plan = summary.get("selection_plan") or {}
+    probe_scope_status = summary.get("probe_scope_status")
+    plot_path = summary.get("plot_path") or (summary.get("plot") or {}).get("path")
+    model_path = summary.get("model_path") or (summary.get("model_save") or {}).get("saved_to")
+
+    if any(marker in lowered for marker in ("最大应力", "max stress", "von mises", "mises")):
+        value = summary.get("max_von_mises_pa") or metrics.get("von_mises_max")
+        location = interpretation.get("max_stress_location_approx")
+        region = interpretation.get("highest_risk_region")
+        return (
+            f"最大 von Mises 应力为 {value}；位置为 {location or '未记录'}；"
+            f"最高风险滚子为 {highest_risk_roller or '未记录'}；最高风险区域为 {region or '未记录'}。"
+        )
+    if any(marker in lowered for marker in ("位置", "where", "location", "哪个滚子", "哪一个滚子", "最高风险滚子")):
+        ranking = ""
+        if roller_risk:
+            ranking = "；风险排序为 " + ", ".join(
+                f"{item.get('roller')}({item.get('relative_risk')})" for item in roller_risk[:6]
+            )
+        return (
+            f"记录的近似位置是 {interpretation.get('max_stress_location_approx') or '未记录'}；"
+            f"最高风险滚子是 {highest_risk_roller or '未记录'}；"
+            f"最高风险区域是 {interpretation.get('highest_risk_region') or '未记录'}{ranking}。"
+        )
+    if any(marker in lowered for marker in ("保持架", "cage", "pocket")):
+        return f"保持架建模状态：{cage_model or 'artifact 中未记录保持架状态'}。"
+    if any(marker in lowered for marker in ("选择", "selection", "probe", "探针", "边界")):
+        global_selections = (selection_plan.get("global_selections") or {}) if isinstance(selection_plan, dict) else {}
+        return (
+            f"选择状态：{selection_status or '未记录'}；"
+            f"probe 作用域状态：{probe_scope_status or '未记录'}；"
+            f"计划的关键 named selections：{json.dumps(global_selections, ensure_ascii=False, sort_keys=True)}。"
+        )
+    if any(marker in lowered for marker in ("接触", "contact", "外圈", "内圈")):
+        return interpretation.get("contact_pair_status") or "artifact 中未记录接触对状态。"
+    if any(marker in lowered for marker in ("参数", "载荷", "材料", "load", "material", "params")):
+        return f"本次记录的模型参数为：{json.dumps(params, ensure_ascii=False, sort_keys=True)}"
+    if any(marker in lowered for marker in ("图", "png", "plot", "产物", "artifact")):
+        return f"应力图路径：{plot_path or '未记录'}；模型路径：{model_path or '未记录'}。"
+    return (
+        "已读取 artifact。可回答最大应力、近似位置、最高风险接触区域、接触对状态、"
+        "模型参数和图像/模型路径等问题。"
+    )
 
 
 def _utc_now_for_package() -> str:
@@ -1436,6 +1919,13 @@ def _template_run_name(template_name: str | None, model_name: str | None) -> str
     raw = "_".join(part for part in (template_name or "template", model_name or "model") if part)
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip()).strip("._-")
     return slug or "template_execution"
+
+
+def _execution_artifact_kind(source: dict[str, Any] | None) -> str:
+    source = source or {}
+    if source.get("type") == "raw_template":
+        return "generated_code_execution"
+    return "template_execution"
 
 
 def _template_execution_snapshot(
@@ -1488,9 +1978,329 @@ def _generated_code_validation_params(params: dict[str, str]) -> dict[str, str]:
         "boundary_conditions",
         "study_type",
         "outputs",
+        "contact_requirements",
+        "load_conditions",
+        "entity_binding",
+        "calibration",
+        "user_preferences",
         "assumptions",
     }
     return {key: value for key, value in params.items() if key not in decision_keys}
+
+
+def _normalize_modeling_known_params(params: dict) -> dict[str, str]:
+    normalized = _normalize_generated_code_params(
+        {key: value for key, value in params.items() if not isinstance(value, dict)}
+    )
+    decision_params = _generated_code_validation_params(normalized)
+    executable_markers = ("[", "]")
+    whitelisted = {
+        "E",
+        "nu",
+        "rho",
+        "power",
+        "T_ambient",
+        "voltage",
+        "current",
+        "torque",
+        "rpm",
+        "shaft_length",
+        "shaft_diameter",
+        "eccentricity",
+        "board_length",
+        "board_width",
+        "board_thickness",
+        "copper_thickness",
+        "chip_power",
+        "chip1_power",
+        "chip2_power",
+        "chip_size",
+        "chip_spacing",
+        "convection_h",
+        "k_fr4",
+        "k_copper",
+        "k_chip",
+        "rho_fr4",
+        "Cp_fr4",
+        "gear_module",
+        "tooth_count",
+        "pressure_angle",
+        "face_width",
+        "radial_load",
+        "ball_count",
+        "ball_diameter",
+        "inner_diameter",
+        "outer_diameter",
+        "bearing_width",
+        "material_name",
+    }
+    executable = {
+        key: value
+        for key, value in decision_params.items()
+        if key in whitelisted or any(marker in value for marker in executable_markers)
+    }
+    nested = params.get("executable_params") if isinstance(params, dict) else None
+    if isinstance(nested, dict):
+        executable.update(_normalize_generated_code_params(nested))
+    return executable
+
+
+def _normalize_modeling_intent_params(params: dict) -> dict[str, str]:
+    return _normalize_generated_code_params(
+        {key: value for key, value in params.items() if not isinstance(value, dict)}
+    )
+
+
+def _missing_model_family_decisions(
+    *,
+    family: ModelFamilySpec,
+    user_request: str,
+    known_params: dict[str, str],
+) -> list[str]:
+    missing = []
+    for slot in family.required_slots:
+        if _modeling_slot_present(slot, user_request, known_params):
+            continue
+        missing.append(slot)
+    return missing
+
+
+def _modeling_slot_present(slot: str, user_request: str, known_params: dict[str, str]) -> bool:
+    if slot in known_params and known_params[slot].strip():
+        return True
+    haystack = f"{user_request} {' '.join(known_params.values())}".lower()
+    markers = {
+        "geometry": (
+            "geometry",
+            "2d",
+            "3d",
+            "shaft",
+            "gear",
+            "pcb",
+            "board",
+            "bearing",
+            "cylinder",
+            "plate",
+            "几何",
+            "二维",
+            "三维",
+            "偏心轴",
+            "转轴",
+            "齿轮",
+            "齿轮副",
+            "pcb",
+            "电路板",
+            "线路板",
+            "轴承",
+        ),
+        "physics": (
+            "solid mechanics",
+            "heat transfer",
+            "electric currents",
+            "thermal",
+            "structural",
+            "contact",
+            "物理",
+            "固体力学",
+            "传热",
+            "热仿真",
+            "结构",
+            "接触",
+        ),
+        "material": (
+            "material",
+            "steel",
+            "fr4",
+            "copper",
+            "aluminum",
+            "材料",
+            "钢",
+            "钢材",
+            "铜",
+            "铝",
+            "基材",
+        ),
+        "boundary_conditions": (
+            "boundary",
+            "fixed",
+            "support",
+            "constraint",
+            "convection",
+            "cooling",
+            "底面",
+            "边界",
+            "固定",
+            "约束",
+            "支撑",
+            "对流",
+            "散热",
+        ),
+        "study_type": (
+            "stationary",
+            "steady",
+            "time",
+            "frequency",
+            "eigen",
+            "study",
+            "稳态",
+            "瞬态",
+            "频域",
+            "模态",
+            "研究",
+        ),
+        "outputs": (
+            "output",
+            "plot",
+            "evaluate",
+            "stress",
+            "displacement",
+            "temperature",
+            "pressure",
+            "结果",
+            "输出",
+            "云图",
+            "应力",
+            "位移",
+            "温度",
+            "温升",
+            "接触压力",
+            "齿根应力",
+        ),
+        "contact_requirements": (
+            "contact",
+            "contact pair",
+            "contact pressure",
+            "hertz",
+            "meshing",
+            "接触",
+            "接触对",
+            "接触压力",
+            "啮合",
+            "赫兹",
+        ),
+        "load_conditions": (
+            "load",
+            "force",
+            "torque",
+            "rpm",
+            "power",
+            "w",
+            "5w",
+            "载荷",
+            "力",
+            "扭矩",
+            "转速",
+            "功率",
+            "芯片",
+        ),
+    }
+    return any(marker in haystack for marker in markers.get(slot, ()))
+
+
+def _modeling_template_policy(
+    *,
+    family: ModelFamilySpec,
+    generated_template_policy: dict,
+) -> dict:
+    raw_candidates = generated_template_policy.get("candidates") or []
+    allowed_templates = set(family.starter_templates)
+    if family.name == "bearing_contact":
+        candidates = [
+            candidate
+            for candidate in raw_candidates
+            if candidate.get("name") in allowed_templates or "bearing" in str(candidate.get("name", ""))
+        ]
+        starter_templates = list(family.starter_templates)
+    else:
+        candidates = [
+            candidate
+            for candidate in raw_candidates
+            if candidate.get("name") in allowed_templates
+            and "bearing" not in str(candidate.get("name", "")).lower()
+        ]
+        starter_templates = list(family.starter_templates)
+    return {
+        "strategy": "model_family_registry_then_template_first_generated_code_fallback",
+        "family_starter_templates": starter_templates,
+        "use_template_if_fit": bool(candidates),
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "generated_code_fallback_allowed": True,
+        "reject_unrelated_bearing_templates": family.name != "bearing_contact",
+        "note": (
+            "For non-bearing families, do not use bearing starter templates even when the domain is structural."
+            if family.name != "bearing_contact"
+            else "For bearing_contact, keep the existing bearing planner and contact templates as the preferred path."
+        ),
+    }
+
+
+def _model_family_followups(missing_decisions: list[str]) -> list[str]:
+    questions = {
+        "geometry": "请补充几何对象、维度和关键尺寸。",
+        "physics": "请确认物理场接口或主要耦合关系。",
+        "material": "请说明材料或允许使用默认材料假设。",
+        "boundary_conditions": "请补充固定/支撑/散热/电气等边界条件。",
+        "study_type": "请确认研究类型，例如稳态、瞬态、模态或频域。",
+        "outputs": "请说明需要输出哪些物理量和图/指标。",
+        "contact_requirements": "请说明接触/啮合简化、接触对象和是否需要接触压力。",
+        "load_conditions": "请补充载荷、转速、扭矩、功率或电气/热激励。",
+    }
+    return [questions[item] for item in missing_decisions if item in questions]
+
+
+def _modeling_recommended_workflow(
+    *,
+    family: ModelFamilySpec,
+    ready_to_generate: bool,
+    allow_defaults: bool,
+) -> dict:
+    if not ready_to_generate:
+        return {
+            "action": "ask_follow_up_questions",
+            "default_policy": "do_not_generate_until_missing_decisions_are_resolved",
+        }
+    if family.name == "bearing_contact":
+        return {
+            "action": "use_bearing_family_planner_then_existing_contact_or_3d_workflow",
+            "default_policy": "existing_bearing_defaults_allowed" if allow_defaults else "respect_user_params",
+        }
+    return {
+        "action": "use_generated_code_fallback_with_family_quality_contract",
+        "default_policy": "explicit_family_defaults_allowed" if allow_defaults else "use_only_user_supplied_values",
+    }
+
+
+def _modeling_next_tool_chain(
+    *,
+    family: ModelFamilySpec,
+    ready_to_generate: bool,
+    generated_plan: dict,
+) -> list[str]:
+    if not ready_to_generate:
+        return ["ask_follow_up_questions", "simulation_plan_modeling_request"]
+    if family.name == "bearing_contact":
+        return [
+            "simulation_plan_bearing_modeling_request",
+            "simulation_plan_bearing_contact",
+            "simulation_search_templates",
+            "simulation_read_template if bearing_contact_pair_seed or bearing_contact_hertz_seed fits",
+            "simulation_run_template(validate_first=true)",
+            "simulation_probe_3d_selection_binding for 3D bearing workflows",
+            "comsol_solve",
+            "comsol_evaluate / comsol_plot",
+            "simulation_export_bearing_contact_package",
+        ]
+    return [
+        "simulation_search_templates",
+        "simulation_retrieve_api_docs",
+        "LLM returns raw COMSOL Java/API code using generated_code_plan.controlled_prompt_block",
+        "simulation_validate_template(java_code=generated_code, params=known_params)",
+        "simulation_run_template(java_code=generated_code, params=known_params, create_model_name=... or model_name=..., validate_first=true)",
+        "comsol_solve",
+        "comsol_evaluate / comsol_plot",
+        "simulation_export_artifact_report or future simulation_export_model_package",
+    ]
 
 
 def _infer_simulation_domain(user_request: str, domain: str | None) -> str:

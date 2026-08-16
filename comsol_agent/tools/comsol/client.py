@@ -5,13 +5,19 @@ Manages the lifecycle of the COMSOL session — start, stop, and model tracking.
 
 from __future__ import annotations
 
-import threading
+import os
 import textwrap
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from comsol_agent.utils.logger import log
+
+
+def _free_tcp_port() -> int:
+    """Choose a per-process high port without sandbox-prohibited socket binding."""
+    return 30_000 + os.getpid() % 30_000
 
 
 @dataclass
@@ -80,6 +86,7 @@ class COMSOLClient:
         cores: int | None = None,
         version: str | None = None,
         executable_path: str | Path | None = None,
+        port: int | None = None,
     ) -> None:
         """Start the COMSOL session via MPh.
 
@@ -89,6 +96,8 @@ class COMSOLClient:
             executable_path: Optional configured COMSOL executable path. MPh still
                 performs backend discovery, but this is validated early to catch
                 stale configuration before starting a COMSOL process.
+            port: Server port. Pass 0 to derive a per-process high port before
+                starting COMSOL (its macOS automatic port scan can overflow).
         """
         if self._started:
             return
@@ -116,6 +125,8 @@ class COMSOLClient:
             kwargs["cores"] = cores
         if version:
             kwargs["version"] = version
+        if port is not None:
+            kwargs["port"] = _free_tcp_port() if port == 0 else port
 
         self._mph_client = mph.start(**kwargs)
         self._started = True
@@ -277,7 +288,6 @@ class COMSOLClient:
         import io
 
         # Redirect Java stdout
-        old_out = None
         output_buffer = io.StringIO()
 
         try:

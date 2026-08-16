@@ -58,9 +58,9 @@ def build_template_replay_request(
 ) -> dict[str, Any]:
     """Build a `simulation_run_template` request from an archived template run."""
     artifact = archive_store.get_simulation_artifact(run_id)
-    if artifact.kind != "template_execution":
+    if artifact.kind not in {"template_execution", "generated_code_execution"}:
         raise ValueError(
-            f"Artifact {run_id!r} is {artifact.kind!r}, not a template_execution artifact."
+            f"Artifact {run_id!r} is {artifact.kind!r}, not a replayable execution artifact."
         )
 
     payload = _load_payload(artifact)

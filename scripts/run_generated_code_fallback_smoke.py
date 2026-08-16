@@ -135,6 +135,12 @@ def main() -> None:
             name=args.template_name,
             java_code=GENERATED_STRUCTURAL_CODE,
             params=GENERATED_CODE_PARAMS,
+            execution_context={
+                "workflow": "generated_code_structural_smoke",
+                "draft_quality": validation,
+                "repair_history": [],
+                "require_free_generated_code": False,
+            },
             create_model_name=model_name,
             close_model=False,
             artifact_dir=args.artifact_dir,

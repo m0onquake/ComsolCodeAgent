@@ -7,6 +7,16 @@ import time
 from .client import COMSOLClient
 
 
+def _safe_exception_text(error: BaseException) -> str:
+    try:
+        return str(error)
+    except Exception as stringify_error:
+        return (
+            f"{type(error).__name__} "
+            f"(exception stringification failed: {type(stringify_error).__name__}: {stringify_error!r})"
+        )
+
+
 def get_client() -> COMSOLClient:
     """Get the COMSOL client singleton."""
     return COMSOLClient.get_instance()
@@ -69,9 +79,9 @@ def comsol_solve(model_name: str, study_name: str | None = None) -> dict:
             "message": f"Solve completed in {elapsed:.1f}s.",
         }
     except KeyError as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": _safe_exception_text(e)}
     except Exception as e:
-        return {"success": False, "error": f"Solve failed: {e}"}
+        return {"success": False, "error": f"Solve failed: {_safe_exception_text(e)}"}
 
 
 def comsol_evaluate(model_name: str, expression: str) -> dict:

@@ -69,6 +69,7 @@ class SessionStore:
             },
             "messages": getattr(state, "messages", []),
             "turns": [_to_jsonable(turn) for turn in getattr(state, "turns", [])],
+            "requirement_state": _to_jsonable(getattr(state, "requirement_state", None)),
             "repair_reports": _to_jsonable(getattr(state, "repair_reports", [])),
             "metadata": metadata or {},
         }

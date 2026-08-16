@@ -15,6 +15,7 @@ COMSOL Agent is an interactive CLI tool that enables engineers and researchers t
 - 🛠️ **Tool-based Architecture** — Agent uses specialized tools for each COMSOL operation
 - 💬 **Conversational Memory** — Maintains context across multiple turns
 - 🎨 **Rich Terminal UI** — Codex-like interface with syntax highlighting and status indicators
+- 🖥️ **Local Showcase UI** — FastAPI/SSE dashboard for recorded demos and live Agent runs
 
 ### Roadmap
 
@@ -92,6 +93,24 @@ comsol-agent --provider openai --model gpt-4o
 > /artifacts
 > /artifacts report agent_sweep_smoke mean T max html
 ```
+
+### Web showcase
+
+The repository includes a local presentation UI with two modes:
+
+- **Case replay** uses the existing strict 12-roller COMSOL artifacts under
+  `runtime_smoke/` and completes deterministically for screen recording.
+- **Live run** sends the requirement to the same `AgentLoop` used by the CLI and
+  streams tool calls, results, generated code, images, and audit artifacts over SSE.
+
+```bash
+pip install -e '.[web]'
+comsol-agent-web
+```
+
+Open <http://127.0.0.1:7860>. Set `COMSOL_AGENT_WEB_DEMO_DELAY=0` for an
+instant replay, or `COMSOL_AGENT_WEB_AUTOSTART_COMSOL=0` when demonstrating a
+live LLM conversation without starting COMSOL automatically.
 
 ### Example Session
 

@@ -95,18 +95,20 @@ def persist_template_execution_result(
     run_name: str | None = None,
     archive_results: bool = True,
     archive_path: str | Path | None = None,
+    artifact_kind: str = "template_execution",
 ) -> dict[str, Any]:
-    """Persist a template execution result as JSON and a small manifest."""
+    """Persist a template or generated-code execution result as JSON and a small manifest."""
     target_dir = Path(output_dir or "runtime_smoke/template_runs").expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    run_id = _make_run_id(run_name or "template_execution")
+    run_id = _make_run_id(run_name or artifact_kind)
     json_path = target_dir / f"{run_id}.json"
     manifest_path = target_dir / f"{run_id}.manifest.json"
 
     payload = dict(result)
     payload.pop("artifacts", None)
     payload["artifact_run_id"] = run_id
+    payload["artifact_kind"] = artifact_kind
     json_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -115,7 +117,7 @@ def persist_template_execution_result(
     manifest = {
         "run_id": run_id,
         "created_at": _utc_now(),
-        "kind": "template_execution",
+        "kind": artifact_kind,
         "model_name": result.get("model_name"),
         "source": result.get("source") or {},
         "executed_cases": 1 if result.get("executed") else 0,
@@ -136,6 +138,12 @@ def persist_template_execution_result(
             execution = result.get("execution") or {}
             validation = result.get("validation") or {}
             template = result.get("template") or {}
+            execution_context = result.get("execution_context") or {}
+            repair_history = execution_context.get("repair_history") or []
+            draft_quality = execution_context.get("draft_quality") or {}
+            selection_binding_audit = execution_context.get("selection_binding_audit") or {}
+            physical_result_audit = execution_context.get("physical_result_audit") or {}
+            contact_convergence_report = execution_context.get("contact_convergence_report") or {}
             archive_record = _index_manifest(
                 manifest,
                 archive_path=archive_path,
@@ -149,6 +157,20 @@ def persist_template_execution_result(
                     "execution_success": result.get("success"),
                     "execution_error_type": execution.get("error_type"),
                     "execution_exception_type": execution.get("exception_type"),
+                    "artifact_kind": artifact_kind,
+                    "workflow": execution_context.get("workflow"),
+                    "quality_gate_success": draft_quality.get("success"),
+                    "quality_gate_level": draft_quality.get("quality_level"),
+                    "selection_binding_success": selection_binding_audit.get("success"),
+                    "selection_binding_runtime_checked": selection_binding_audit.get("runtime_checked"),
+                    "physical_result_success": physical_result_audit.get("success"),
+                    "physical_result_quality_level": physical_result_audit.get("quality_level"),
+                    "physical_result_production_ready": physical_result_audit.get("production_ready"),
+                    "contact_convergence_level": contact_convergence_report.get("quality_level"),
+                    "contact_runtime_verified": contact_convergence_report.get("runtime_verified"),
+                    "repair_history_count": len(repair_history),
+                    "last_repair_stage": repair_history[-1].get("stage") if repair_history else None,
+                    "require_free_generated_code": execution_context.get("require_free_generated_code"),
                     "tool_sequence": result.get("tool_sequence") or [],
                 },
             )

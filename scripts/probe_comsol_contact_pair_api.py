@@ -161,6 +161,198 @@ output.write('physics_features=' + str(list(model.component('comp1').physics('so
         "code": MANUAL_PAIR_CONTACT_PROBE_CODE,
     },
     {
+        "name": "named_box_selection_candidates",
+        "code": BASE_GEOMETRY
+        + """model.component('comp1').geom('geom1').feature('fin').set('action', 'assembly');
+model.component('comp1').geom('geom1').run();
+for selection_type in ['Box', 'Ball', 'Explicit']:
+    tag = 'sel_' + selection_type.lower()
+    try:
+        sel = model.component('comp1').selection().create(tag, selection_type)
+        output.write(selection_type + ': create_ok class=' + str(sel.getClass().getName()) + '\\n')
+        for key, value in [
+            ('entitydim', 1),
+            ('xmin', '-1[mm]'),
+            ('xmax', '1[mm]'),
+            ('ymin', '-1[mm]'),
+            ('ymax', '8[mm]'),
+            ('condition', 'intersects'),
+        ]:
+            try:
+                sel.set(key, value)
+                output.write(selection_type + ': set_' + key + '_ok\\n')
+            except Exception as error:
+                output.write(selection_type + ': set_' + key + '_error=' + str(error) + '\\n')
+        try:
+            output.write(selection_type + ': entities=' + str(list(sel.entities())) + '\\n')
+        except Exception as error:
+            output.write(selection_type + ': entities_error=' + str(error) + '\\n')
+    except Exception as error:
+        output.write(selection_type + ': create_error=' + str(error) + '\\n')
+model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+model.component('comp1').physics('solid').create('load_named_probe', 'BoundaryLoad', 1);
+for call in ['named', 'set']:
+    try:
+        if call == 'named':
+            model.component('comp1').physics('solid').feature('load_named_probe').selection().named('sel_box')
+        else:
+            model.component('comp1').physics('solid').feature('load_named_probe').selection().set([1])
+        output.write('physics_selection_' + call + '_ok\\n')
+    except Exception as error:
+        output.write('physics_selection_' + call + '_error=' + str(error) + '\\n')
+pair = model.component('comp1').pair().create('cp_named_probe', 'Contact');
+pair.manualSelection(True);
+pair.source().geom('geom1', 1);
+pair.destination().geom('geom1', 1);
+for side_name, side in [('source', pair.source()), ('destination', pair.destination())]:
+    for call in ['named', 'set']:
+        try:
+            if call == 'named':
+                side.named('sel_box')
+            else:
+                side.set([1])
+            output.write('pair_' + side_name + '_' + call + '_ok\\n')
+        except Exception as error:
+            output.write('pair_' + side_name + '_' + call + '_error=' + str(error) + '\\n')
+output.write('selection_tags=' + str(list(model.component('comp1').selection().tags())) + '\\n');
+""",
+    },
+    {
+        "name": "named_box_selection_3d_candidates",
+        "code": """model.component().create('comp1', True);
+model.component('comp1').geom().create('geom1', 3);
+model.component('comp1').geom('geom1').lengthUnit('mm');
+model.component('comp1').geom('geom1').create('left_cyl', 'Cylinder');
+model.component('comp1').geom('geom1').feature('left_cyl').set('r', '4[mm]');
+model.component('comp1').geom('geom1').feature('left_cyl').set('h', '8[mm]');
+model.component('comp1').geom('geom1').feature('left_cyl').set('pos', ['-4[mm]', '0', '-4[mm]']);
+model.component('comp1').geom('geom1').create('right_cyl', 'Cylinder');
+model.component('comp1').geom('geom1').feature('right_cyl').set('r', '4[mm]');
+model.component('comp1').geom('geom1').feature('right_cyl').set('h', '8[mm]');
+model.component('comp1').geom('geom1').feature('right_cyl').set('pos', ['4[mm]', '0', '-4[mm]']);
+model.component('comp1').geom('geom1').feature('fin').set('action', 'assembly');
+model.component('comp1').geom('geom1').run();
+sel_left = model.component('comp1').selection().create('sel_left_contact', 'Box');
+for key, value in [('entitydim', '2'), ('xmin', '-8[mm]'), ('xmax', '0.5[mm]'), ('ymin', '-5[mm]'), ('ymax', '5[mm]'), ('zmin', '-5[mm]'), ('zmax', '5[mm]'), ('condition', 'intersects')]:
+    try:
+        sel_left.set(key, value)
+        output.write('sel_left_set_' + key + '_ok\\n')
+    except Exception as error:
+        output.write('sel_left_set_' + key + '_error=' + str(error) + '\\n')
+sel_right = model.component('comp1').selection().create('sel_right_contact', 'Box');
+for key, value in [('entitydim', '2'), ('xmin', '-0.5[mm]'), ('xmax', '8[mm]'), ('ymin', '-5[mm]'), ('ymax', '5[mm]'), ('zmin', '-5[mm]'), ('zmax', '5[mm]'), ('condition', 'intersects')]:
+    try:
+        sel_right.set(key, value)
+        output.write('sel_right_set_' + key + '_ok\\n')
+    except Exception as error:
+        output.write('sel_right_set_' + key + '_error=' + str(error) + '\\n')
+try:
+    output.write('sel_left_entities=' + str(list(sel_left.entities())) + '\\n')
+    output.write('sel_right_entities=' + str(list(sel_right.entities())) + '\\n')
+except Exception as error:
+    output.write('selection_entities_error=' + str(error) + '\\n')
+model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+model.component('comp1').physics('solid').create('load_named_probe', 'BoundaryLoad', 2);
+try:
+    model.component('comp1').physics('solid').feature('load_named_probe').selection().named('sel_left_contact')
+    output.write('physics_selection_named_ok\\n')
+except Exception as error:
+    output.write('physics_selection_named_error=' + str(error) + '\\n')
+pair = model.component('comp1').pair().create('cp_named_probe', 'Contact');
+pair.manualSelection(True);
+pair.source().geom('geom1', 2);
+pair.destination().geom('geom1', 2);
+try:
+    pair.source().named('sel_left_contact')
+    output.write('pair_source_named_ok\\n')
+except Exception as error:
+    output.write('pair_source_named_error=' + str(error) + '\\n')
+try:
+    pair.destination().named('sel_right_contact')
+    output.write('pair_destination_named_ok\\n')
+except Exception as error:
+    output.write('pair_destination_named_error=' + str(error) + '\\n')
+output.write('selection_tags=' + str(list(model.component('comp1').selection().tags())) + '\\n');
+""",
+    },
+    {
+        "name": "numerical_named_selection_3d_candidates",
+        "code": """model.param().set('E', '210[GPa]');
+model.param().set('nu', '0.3');
+model.component().create('comp1', True);
+model.component('comp1').geom().create('geom1', 3);
+model.component('comp1').geom('geom1').lengthUnit('mm');
+model.component('comp1').geom('geom1').create('blk1', 'Block');
+model.component('comp1').geom('geom1').feature('blk1').set('size', ['2[mm]', '2[mm]', '2[mm]']);
+model.component('comp1').geom('geom1').run();
+sel = model.component('comp1').selection().create('sel_blk_body', 'Box');
+sel.set('entitydim', '3');
+sel.set('xmin', '-1[mm]');
+sel.set('xmax', '3[mm]');
+sel.set('ymin', '-1[mm]');
+sel.set('ymax', '3[mm]');
+sel.set('zmin', '-1[mm]');
+sel.set('zmax', '3[mm]');
+sel.set('condition', 'intersects');
+output.write('selection_entities=' + str(list(sel.entities())) + '\\n');
+model.component('comp1').material().create('mat1', 'Common');
+model.component('comp1').material('mat1').propertyGroup('def').set('youngsmodulus', 'E');
+model.component('comp1').material('mat1').propertyGroup('def').set('poissonsratio', 'nu');
+model.component('comp1').physics().create('solid', 'SolidMechanics', 'geom1');
+model.result().numerical().create('probe_named_method', 'MaxVolume');
+model.result().numerical('probe_named_method').set('expr', 'solid.mises');
+try:
+    model.result().numerical('probe_named_method').selection().named('sel_blk_body');
+    output.write('numerical_selection_named_ok\\n');
+except Exception as error:
+    output.write('numerical_selection_named_error=' + str(error) + '\\n');
+model.result().numerical().create('probe_set_method', 'MaxVolume');
+model.result().numerical('probe_set_method').set('expr', 'solid.mises');
+try:
+    model.result().numerical('probe_set_method').selection().set(list(sel.entities()));
+    output.write('numerical_selection_set_ok\\n');
+except Exception as error:
+    output.write('numerical_selection_set_error=' + str(error) + '\\n');
+model.result().numerical().create('probe_selection_prop_method', 'MaxVolume');
+model.result().numerical('probe_selection_prop_method').set('expr', 'solid.mises');
+try:
+    model.result().numerical('probe_selection_prop_method').set('selection', 'sel_blk_body');
+    output.write('numerical_set_selection_prop_ok\\n');
+except Exception as error:
+    output.write('numerical_set_selection_prop_error=' + str(error) + '\\n');
+model.result().numerical().create('probe_maximumobj_method', 'MaxVolume');
+model.result().numerical('probe_maximumobj_method').set('expr', 'solid.mises');
+for value in ['sel_blk_body', ['sel_blk_body'], 'blk1', ['blk1']]:
+    try:
+        model.result().numerical('probe_maximumobj_method').set('maximumobj', value);
+        output.write('numerical_set_maximumobj_' + str(value) + '_ok\\n');
+    except Exception as error:
+        output.write('numerical_set_maximumobj_' + str(value) + '_error=' + str(error) + '\\n');
+try:
+    output.write('probe_named_props=' + str(list(model.result().numerical('probe_named_method').properties())) + '\\n');
+except Exception as error:
+    output.write('probe_props_error=' + str(error) + '\\n');
+try:
+    maxop = model.component('comp1').cpl().create('maxop_sel_body', 'Maximum');
+    output.write('cpl_max_create_ok\\n');
+    try:
+        maxop.selection().named('sel_blk_body');
+        output.write('cpl_max_selection_named_ok\\n');
+    except Exception as error:
+        output.write('cpl_max_selection_named_error=' + str(error) + '\\n');
+    try:
+        maxop.selection().set(list(sel.entities()));
+        output.write('cpl_max_selection_set_ok\\n');
+    except Exception as error:
+        output.write('cpl_max_selection_set_error=' + str(error) + '\\n');
+    model.result().numerical().create('probe_cpl_eval_method', 'EvalGlobal');
+    model.result().numerical('probe_cpl_eval_method').set('expr', 'maxop_sel_body(solid.mises)');
+    output.write('cpl_evalglobal_create_ok\\n');
+except Exception as error:
+    output.write('cpl_max_create_error=' + str(error) + '\\n');
+""",
+    },
+    {
         "name": "solid_contact_feature_solve_smoke",
         "solve": True,
         "code": BASE_GEOMETRY

@@ -27,6 +27,7 @@ from comsol_agent.tools.comsol.solve import (
 from comsol_agent.tools.comsol.evaluate import comsol_export_results, comsol_plot
 from comsol_agent.tools.file_ops import file_list, file_read, file_write, shell_execute
 from comsol_agent.tools.simulation import (
+    simulation_answer_artifact_question,
     simulation_compare_artifacts,
     simulation_export_bearing_contact_package,
     simulation_export_template,
@@ -34,9 +35,13 @@ from comsol_agent.tools.simulation import (
     simulation_list_artifacts,
     simulation_list_example_models,
     simulation_list_templates,
+    simulation_plan_bearing_modeling_request,
+    simulation_plan_modeling_request,
     simulation_plan_generated_code,
     simulation_plan_bearing_contact,
+    simulation_plan_multiroller_bearing,
     simulation_plan_parameter_sweep,
+    simulation_probe_3d_selection_binding,
     simulation_read_artifact,
     simulation_read_template,
     simulation_rerun_artifact,
@@ -412,6 +417,97 @@ def register_all_tools() -> None:
     # --- Simulation Planning ---
 
     register_sync(
+        name="simulation_plan_bearing_modeling_request",
+        description=(
+            "Plan a topology-specific bearing modeling request before choosing COMSOL templates or generated code. "
+            "Classifies deep_groove_ball, angular_contact_ball, cylindrical_roller, tapered_roller, "
+            "needle_roller, thrust_bearing, or general_bearing; separates natural-language intent from "
+            "COMSOL executable parameters; returns contact policy, quality contract, template policy, and next tool chain. "
+            "Use this for bearing-family requests so tapered/thrust/roller bearings are not silently routed "
+            "to deep-groove ball smoke templates."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's bearing modeling request in natural language.",
+                },
+                "known_params": {
+                    "type": "object",
+                    "description": (
+                        "Executable COMSOL parameters only, e.g. radial_load='1000[N]', "
+                        "contact_interference='2[um]', ball_diameter='7.94[mm]', roller_count='12'."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "Whether low-risk bearing defaults may be used while recording assumptions.",
+                },
+                "preferred_bearing_type": {
+                    "type": "string",
+                    "description": "Optional bearing-family hint such as tapered_roller or thrust_bearing.",
+                },
+                "contact_policy": {
+                    "type": "string",
+                    "description": (
+                        "Optional explicit contact policy: frictionless, frictional, interference_fit, "
+                        "radial_preload, axial_preload, clearance, staged_contact_activation, "
+                        "or cage_pocket_contact_load_transfer."
+                    ),
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path for downstream template lookup.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_bearing_modeling_request,
+    )
+
+    register_sync(
+        name="simulation_plan_modeling_request",
+        description=(
+            "Plan a model-family-neutral COMSOL modeling request before choosing templates or generated code. "
+            "Classifies bearing_contact, eccentric_shaft, gear_pair, pcb_thermal_electric, or general; "
+            "returns missing decisions, follow-up questions, template policy, quality contract, and next tool chain. "
+            "Use this first for non-bearing or uncertain modeling requests so gear/PCB/shaft requests are not routed "
+            "to bearing templates."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's modeling request in natural language.",
+                },
+                "known_params": {
+                    "type": "object",
+                    "description": (
+                        "Executable or directly verifiable parameters only, e.g. {'rpm': '3000[1/min]', "
+                        "'power': '5[W]', 'torque': '20[N*m]'}. Do not put broad natural-language intent here."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "Whether family defaults may be used for low-risk missing decisions.",
+                },
+                "preferred_model_name": {
+                    "type": "string",
+                    "description": "Optional model name hint for the generated workflow.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path for template lookup.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_modeling_request,
+    )
+
+    register_sync(
         name="simulation_plan_bearing_contact",
         description=(
             "Plan a bearing-contact simulation from a natural-language request and known parameters. "
@@ -440,6 +536,70 @@ def register_all_tools() -> None:
             "required": ["user_request"],
         },
         handler=simulation_plan_bearing_contact,
+    )
+
+    register_sync(
+        name="simulation_plan_multiroller_bearing",
+        description=(
+            "Plan a real multi-roller/cylindrical-roller/needle-bearing contact workflow. "
+            "Use this before generated-code fallback for bearing requests that require inner ring, "
+            "outer ring, multiple rollers, and explicit roller-raceway Contact Pair/Contact features. "
+            "Returns follow-up questions or defaulted parameters plus mandatory contact requirements."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_request": {
+                    "type": "string",
+                    "description": "User's multi-roller bearing simulation request.",
+                },
+                "provided_params": {
+                    "type": "object",
+                    "description": (
+                        "Known parameters such as inner_diameter, outer_diameter, roller_count, "
+                        "roller_diameter, roller_length, radial_load, cage_included."
+                    ),
+                },
+                "allow_defaults": {
+                    "type": "boolean",
+                    "description": "If true, use clear engineering defaults while recording assumptions.",
+                },
+            },
+            "required": ["user_request"],
+        },
+        handler=simulation_plan_multiroller_bearing,
+    )
+
+    register_sync(
+        name="simulation_probe_3d_selection_binding",
+        description=(
+            "Probe runtime COMSOL entity counts for the 3D bearing named-selection contract. "
+            "Use after generated/template setup execution and geometry finalization, before trusting "
+            "roller/raceway contact, load, support, cage, or per-roller probe bindings."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "type": "string",
+                    "description": "Loaded COMSOL model name to probe.",
+                },
+                "java_code": {
+                    "type": "string",
+                    "description": "Optional setup code to cross-check declared selection tags against runtime entity counts.",
+                },
+                "roller_count": {
+                    "type": "integer",
+                    "description": "Expected rolling element count. Defaults to 12.",
+                },
+                "component_tag": {
+                    "type": "string",
+                    "description": "COMSOL component tag. Defaults to comp1.",
+                },
+            },
+            "required": ["model_name"],
+        },
+        handler=simulation_probe_3d_selection_binding,
     )
 
     register_sync(
@@ -736,7 +896,8 @@ def register_all_tools() -> None:
         name="simulation_validate_template",
         description=(
             "Validate an archived COMSOL Java/API template or raw Java/API seed code offline "
-            "before saving, exporting, or executing it in COMSOL."
+            "before saving, exporting, or executing it in COMSOL. Always provide either "
+            "`java_code` or an archived template `name`; never call this tool with empty arguments."
         ),
         parameters={
             "type": "object",
@@ -801,7 +962,8 @@ def register_all_tools() -> None:
         name="simulation_run_template",
         description=(
             "Validate and execute an archived or raw COMSOL Java/API template against an explicitly "
-            "selected loaded model or a newly created model, then persist a template_execution artifact."
+            "selected loaded model or a newly created model. Archived templates persist template_execution "
+            "artifacts; raw generated code persists generated_code_execution artifacts."
         ),
         parameters={
             "type": "object",
@@ -825,6 +987,10 @@ def register_all_tools() -> None:
                 "create_model_name": {
                     "type": "string",
                     "description": "Create a new empty model with this name before running. Mutually exclusive with model_name.",
+                },
+                "execution_context": {
+                    "type": "object",
+                    "description": "Optional structured audit context to persist with the execution artifact, such as workflow, repair history, quality-gate status, or selection evidence.",
                 },
                 "validate_first": {
                     "type": "boolean",
@@ -943,6 +1109,39 @@ def register_all_tools() -> None:
     )
 
     register_sync(
+        name="simulation_answer_artifact_question",
+        description=(
+            "Answer common follow-up questions about a saved simulation artifact/package using "
+            "archived evidence, not guesses. Use for questions such as maximum stress, approximate "
+            "max-stress location, highest-risk roller/contact region, contact-pair status, model "
+            "parameters, and plot/model paths."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "User follow-up question about a saved simulation result.",
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional artifact run ID. If omitted, query is used to search artifacts.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional artifact search query when run_id is not known.",
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional archive SQLite path.",
+                },
+            },
+            "required": ["question"],
+        },
+        handler=simulation_answer_artifact_question,
+    )
+
+    register_sync(
         name="simulation_compare_artifacts",
         description=(
             "Compare archived parameter sweep artifacts using their persisted CSV metrics. "
@@ -1040,8 +1239,8 @@ def register_all_tools() -> None:
                 },
                 "kind": {
                     "type": "string",
-                    "enum": ["parameter_sweep", "template_execution"],
-                    "description": "Artifact report type. Defaults to parameter_sweep; use template_execution for template run artifacts.",
+                    "enum": ["parameter_sweep", "template_execution", "generated_code_execution"],
+                    "description": "Artifact report type. Defaults to parameter_sweep; use template_execution for archived template runs and generated_code_execution for raw generated-code runs.",
                 },
                 "archive_path": {
                     "type": "string",

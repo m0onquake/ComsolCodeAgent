@@ -1,0 +1,119 @@
+{
+  "success": true,
+  "kind": "bearing_3d_outer_contact_selection_alignment_report",
+  "source_mph_root": "runtime_smoke/bearing_family_p12_boundaryload_outer_x31_box_intersection",
+  "reference_nonzero_rollers": [
+    "roller_2",
+    "roller_12"
+  ],
+  "reference_abs_radial_delta_mm": 2.246617394014775,
+  "rows": [
+    {
+      "roller": "roller_1",
+      "nominal_angle_deg": 0,
+      "source_selection": "boundary_entity_map_sel_roller1_outer_source",
+      "destination_selection": "boundary_entity_map_sel_roller1_outer_raceway",
+      "source_entities": [
+        188,
+        187
+      ],
+      "destination_entities": [
+        9,
+        8
+      ],
+      "source": {
+        "success": true,
+        "area": 0.00020104945977083723,
+        "x_m": 0.02954631658330991,
+        "y_m": 1.8886492027772203e-09,
+        "radius_m": 0.02954631658330997,
+        "angle_deg": 3.6624405615760797e-06,
+        "radial_projection_m": 0.02954631658330991
+      },
+      "destination": {
+        "success": true,
+        "area": 0.0017530079070228136,
+        "x_m": 0.01973520447418017,
+        "y_m": -3.435933402762792e-10,
+        "radius_m": 0.019735204474180174,
+        "angle_deg": 359.99999900247053,
+        "radial_projection_m": 0.01973520447418017
+      },
+      "signed_destination_minus_source_m": -0.00981111210912974,
+      "abs_radial_delta_m": 0.00981111210912974,
+      "abs_radial_delta_mm": 9.81111210912974,
+      "delta_vs_reference_ratio": 4.36705962273219
+    },
+    {
+      "roller": "roller_2",
+      "nominal_angle_deg": 30,
+      "source_selection": "boundary_entity_map_sel_roller2_outer_source",
+      "destination_selection": "boundary_entity_map_sel_roller2_outer_raceway",
+      "source_entities": [
+        181,
+        182
+      ],
+      "destination_entities": [
+        9
+      ],
+      "source": {
+        "success": true,
+        "area": 0.00020104942524602648,
+        "x_m": 0.025929283226847073,
+        "y_m": 0.013499985563970428,
+        "radius_m": 0.029233154788449758,
+        "angle_deg": 27.50357275173329,
+        "radial_projection_m": 0.029205410758356525
+      },
+      "destination": {
+        "success": true,
+        "area": 0.0008765039535114066,
+        "x_m": 0.01973520522204921,
+        "y_m": 0.019735204612620447,
+        "radius_m": 0.027909794450307116,
+        "angle_deg": 44.999999115344984,
+        "radial_projection_m": 0.026958791377504156
+      },
+      "signed_destination_minus_source_m": -0.002246619380852369,
+      "abs_radial_delta_m": 0.002246619380852369,
+      "abs_radial_delta_mm": 2.2466193808523687,
+      "delta_vs_reference_ratio": 1.0000008843684727
+    },
+    {
+      "roller": "roller_12",
+      "nominal_angle_deg": 330,
+      "source_selection": "boundary_entity_map_sel_roller12_outer_source",
+      "destination_selection": "boundary_entity_map_sel_roller12_outer_raceway",
+      "source_entities": [
+        175,
+        176
+      ],
+      "destination_entities": [
+        8
+      ],
+      "source": {
+        "success": true,
+        "area": 0.00020104942551910256,
+        "x_m": 0.025929283488874123,
+        "y_m": -0.01349997525926822,
+        "radius_m": 0.029233150262112605,
+        "angle_deg": 332.4964453996263,
+        "radial_projection_m": 0.0292054058329275
+      },
+      "destination": {
+        "success": true,
+        "area": 0.0008765039535114069,
+        "x_m": 0.019735203726311133,
+        "y_m": -0.01973520529980712,
+        "radius_m": 0.02790979387857495,
+        "angle_deg": 314.99999771589194,
+        "radial_projection_m": 0.02695879042575032
+      },
+      "signed_destination_minus_source_m": -0.0022466154071771813,
+      "abs_radial_delta_m": 0.0022466154071771813,
+      "abs_radial_delta_mm": 2.246615407177181,
+      "delta_vs_reference_ratio": 0.9999991156315271
+    }
+  ],
+  "conclusion": "roller_1 outer source/destination selections are geometrically mismatched relative to nonzero roller_2/12 references; repair should create matched local patches before solve."
+}
