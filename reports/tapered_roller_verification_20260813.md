@@ -66,12 +66,15 @@ This changes the roller axes and both raceway cones, not a global scale factor.
   as verified.
 - A frictionless `4 N` radial plus `-0.2 N` axial case was also exported as an
   unsolved MPH and launched through COMSOL batch so that continuation progress
-  is externally visible. The solver reached `load_scale=1`, rejected that
-  trial, and was still adaptively bisecting near `load_scale=0.566406` at 95%
-  progress when this development snapshot was prepared. The setup MPH and
-  live batch log are under
-  `runtime_smoke/tapered_roller_3_combined_batch_setup/`; this remains
-  **experimental**, not a passed case.
+  was externally visible. The solver reached `load_scale=1`, rejected that
+  trial, and adaptively bisected back through `0.75`, `0.625`, and values near
+  `0.566406`. After `115661 s` (1 day, 8 hours, 7 minutes, 41 seconds), COMSOL
+  reported that it could not find solutions for all parameter values even at
+  the minimum continuation step: the Solid Mechanics relative step became too
+  small and the returned solution was nonconverged. The setup MPH, partially
+  solved MPH, recovery file, and 5.3 MB batch log are under
+  `runtime_smoke/tapered_roller_3_combined_batch_setup/`; this is retained as
+  **failed experimental evidence**, not a passed case.
 
 ## Evidence policy
 
