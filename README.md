@@ -26,6 +26,21 @@ COMSOL Agent is an interactive CLI tool that enables engineers and researchers t
 Current development status and the next engineering plan are recorded in
 [`docs/development_progress_roadmap.md`](docs/development_progress_roadmap.md).
 
+### V2 architecture and development
+
+V2 is being developed as a domain-neutral agent kernel with versioned contracts,
+dynamic extensions, multi-level memory and RAG, controlled COMSOL execution,
+bounded repair loops, and independently testable domain plugins.
+
+- Start with the [V2 documentation map](docs/v2/README.md).
+- Read the [architecture](docs/v2/ARCHITECTURE.md) and
+  [test and acceptance requirements](docs/v2/TEST_AND_ACCEPTANCE.md) before implementation.
+- Follow the milestone order in the [V2 roadmap](docs/v2/ROADMAP.md).
+- Use the copy-ready commands in the [Codex `/goal` playbook](docs/v2/GOAL_PLAYBOOK.md)
+  when starting a new development conversation.
+- Record cross-cutting or difficult-to-reverse decisions as
+  [architecture decision records](docs/v2/adr/README.md).
+
 ## Installation
 
 ### Prerequisites
