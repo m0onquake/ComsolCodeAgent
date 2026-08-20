@@ -247,3 +247,25 @@ Manifest/配置校验发生在代码导入之前；激活、健康和调用故�
 仍同分时产生结构化冲突。运行快照固定 active 扩展及版本；禁用对新解析立即生效，但已有快照
 关闭前延迟 deactivation 并阻止卸载，因此不会改变正在执行的 Goal。信任、生命周期和解析决策见
 [ADR 0002](adr/0002-extension-trust-lifecycle-and-resolution.md)。
+
+## 12. M3 实现映射
+
+M3 的领域无关 Code Agent 执行层位于 `comsol_agent/v2/tools/` 和
+`comsol_agent/v2/runtime/`：
+
+- `Workspace` 只接受工作区相对路径，拒绝 `..`、绝对路径和符号链接组件；搜索和 UTF-8
+  分段读取有结果数、文件大小边界；`PatchSet` 只执行带期望次数的精确文本替换，歧义或陈旧
+  上下文产生结构化冲突，不猜测修改位置；
+- 文件修改采用临时文件原子替换。每个候选补丁和修复补丁之前建立受字节预算约束的文件检查点，
+  执行失败、取消、同错重复或修复预算耗尽时按逆序 rollback；
+- `ShellSandbox` 不调用 shell，只运行解析后 executable allowlist 与 argv profile 同时允许的命令，
+  cwd 必须位于工作区，环境变量采用白名单，超时或取消会终止整个进程组；该策略是可信开发命令
+  的策略沙箱，不把同进程权限下的恶意程序误称为 OS/容器隔离；
+- `TestRunner` 在沙箱中运行 pytest 和 Ruff。pytest 以 JUnit XML 产生测试节点、消息和定位信息，
+  Ruff 使用 JSON 输出；超时、执行错误、测试/静态检查失败分别返回结构化 `Observation`；
+- `CodeIterationLoop` 要求修复补丁引用触发它的 `Observation`，限制修复次数，以结构化失败指纹
+  阻止同错循环，并在每次补丁后使用真实测试 runner 复验；修复策略通过
+  `EvidenceRepairStrategy` 注入，执行层不包含轴承或 COMSOL 规则；
+- `CodeToolExecutor` 以能力名到 handler 的映射实现 Kernel `ToolExecutor` 合同，文件、沙箱与测试
+  失败无需在 Kernel 增加条件分支。更严格的外部隔离边界和 rollback 决策见
+  [ADR 0003](adr/0003-workspace-sandbox-and-code-iteration-boundary.md)。
