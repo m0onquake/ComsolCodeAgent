@@ -196,14 +196,15 @@ V2 达到可用状态至少要求：
 
 - `tests/test_v2_code_tools.py` 覆盖工作区搜索/读取、绝对路径与 `..` 越界、符号链接拒绝、
   exact replacement 冲突、文件 checkpoint/rollback、executable/argv profile 拒绝、命令超时、
-  执行中取消、pytest JUnit 结构化失败、Ruff JSON diagnostics 和 Kernel ToolExecutor 错误归一化；
+  执行中取消、真实大输出触顶时的流式保留预算与进程终止、pytest JUnit 结构化失败、Ruff JSON
+  diagnostics 和 Kernel ToolExecutor 错误归一化；
 - 独立 `tests/fixtures/m3_code_repo/` 的临时副本完成“发现缺陷—lowercase 最小补丁—pytest 暴露
   空值缺陷—修复策略引用该 Observation—第二次最小补丁—pytest 通过”的完整路径；另一个案例
   在修复预算为零时证明候选补丁被恢复；
-- `.venv/bin/python -m pytest tests/test_v2_code_tools.py -q`：13 passed；
+- `.venv/bin/python -m pytest tests/test_v2_code_tools.py -q`：14 passed；
 - `.venv/bin/python -m pytest tests/test_v2_kernel.py tests/test_v2_extensions.py
-  tests/test_v2_code_tools.py -q`：54 passed；
-- `.venv/bin/python -m pytest -q`：284 passed，1 个既有 Starlette/httpx 弃用 warning；
+  tests/test_v2_code_tools.py -q`：55 passed；
+- `.venv/bin/python -m pytest -q`：285 passed，1 个既有 Starlette/httpx 弃用 warning；
 - `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_kernel.py tests/test_v2_extensions.py
   tests/test_v2_code_tools.py`：通过；
 - 全仓 `.venv/bin/ruff check comsol_agent tests scripts --statistics` 报告 3136 个 M3 之前或当前
@@ -211,4 +212,5 @@ V2 达到可用状态至少要求：
 - M3 不调用 COMSOL，不需要本地求解或物理 gate，也没有将候选写入 verified memory；
 - 新增并接受 ADR 0003；实现提交为
   `477e2102d950b9e4ea3d4bfac87c0e092dbbb9d9`，领域中立守卫提交为
-  `2fe8e1789bc366b7cc37ee9effad08ffbc8a8619`。
+  `2fe8e1789bc366b7cc37ee9effad08ffbc8a8619`，流式输出资源边界修复提交为
+  `3d53a65015de7e15e53135948a6622f60a7bc190`。

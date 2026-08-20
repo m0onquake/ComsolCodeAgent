@@ -120,7 +120,7 @@ flowchart LR
   checkpoint rollback 的通用代码迭代 loop；
 - 独立 fixture：`tests/fixtures/m3_code_repo/` 在临时副本中完成搜索/读取、第一次 exact patch、
   真实 pytest 失败、依据结构化失败的第二次 patch 及复验通过，不依赖轴承或 COMSOL 规则；
-- 测试：M3 定向 13 passed；M1–M3 联合 54 passed；完整非 COMSOL 套件 284 passed，1 个既有
+- 测试：M3 定向 14 passed；M1–M3 联合 55 passed；完整非 COMSOL 套件 285 passed，1 个既有
   Starlette/httpx 弃用 warning；
 - Ruff：`comsol_agent/v2` 与 M1–M3 测试范围通过；全仓仍有 3136 个 M3 之前或当前无关用户
   工作树中的旧问题，未在本里程碑批量改写；
@@ -129,7 +129,8 @@ flowchart LR
 - ADR：新增 Accepted 的 ADR 0003，明确路径/补丁/回滚合同、executable + argv profile、
   timeout/cancellation，以及策略沙箱不等于恶意代码 OS 隔离；
 - commits：实现 `477e2102d950b9e4ea3d4bfac87c0e092dbbb9d9`；领域中立守卫
-  `2fe8e1789bc366b7cc37ee9effad08ffbc8a8619`；
+  `2fe8e1789bc366b7cc37ee9effad08ffbc8a8619`；流式输出资源边界修复
+  `3d53a65015de7e15e53135948a6622f60a7bc190`；
 - 未解决风险：checkpoint 只支持单进程内恢复；获准命令仍使用宿主用户权限，不可用于恶意代码；
 - M6 输入：结构化 pytest/Ruff Observation、证据绑定的局部补丁合同、失败指纹、修复预算和
   文件 rollback；M4/M5 可继续按既有依赖关系独立推进。
