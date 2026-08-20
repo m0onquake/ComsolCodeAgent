@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import shutil
@@ -104,6 +105,30 @@ def initial_lowercase_patch() -> PatchSet:
 
 
 class TestWorkspaceTools:
+    def test_execution_layer_imports_no_domain_implementation(self):
+        execution_roots = (
+            Path(__file__).parents[1] / "comsol_agent" / "v2" / "tools",
+            Path(__file__).parents[1] / "comsol_agent" / "v2" / "runtime",
+        )
+        imported_modules: set[str] = set()
+        for root in execution_roots:
+            for path in root.glob("*.py"):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        imported_modules.update(alias.name for alias in node.names)
+                    elif isinstance(node, ast.ImportFrom) and node.module:
+                        imported_modules.add(node.module)
+
+        forbidden_prefixes = (
+            "comsol_agent.simulation",
+            "comsol_agent.tools.comsol",
+            "comsol_agent.v2.domains",
+        )
+        assert not any(
+            module.startswith(forbidden_prefixes) for module in imported_modules
+        )
+
     def test_search_read_exact_patch_and_checkpoint_rollback(self, tmp_path: Path):
         root = copy_fixture_repository(tmp_path)
         workspace = Workspace(root)
