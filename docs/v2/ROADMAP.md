@@ -61,7 +61,7 @@ flowchart LR
 - Ruff：M1 修改范围通过；全仓仍有 3135 个既有问题，未混入本里程碑；
 - COMSOL gate：不适用，M1 的验收环境是 fake tools；
 - ADR：沿用 Accepted 的 ADR 0001，无架构不变量变化；
-- commit：当前工作树尚未提交，由维护者提交时回填；
+- commit：`80689ab6c1181d7dfd62d08882372bb21fac1729`；
 - 未解决风险：M2 尚未提供动态扩展 Registry；M1 `ToolExecutor` 是其稳定执行边界；
 - M2 输入：已版本化合同、状态机、Context Manager、预算/取消、事件/Trace 和 fake-tool
   Agent Loop。
