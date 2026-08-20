@@ -18,6 +18,33 @@ class SandboxPolicyError(RuntimeError):
     """Raised before starting a command that exceeds sandbox policy."""
 
 
+class _BoundedOutput:
+    """Drain both process pipes while retaining at most one shared byte budget."""
+
+    _CHUNK_BYTES = 64 * 1024
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.stdout = bytearray()
+        self.stderr = bytearray()
+        self.total_retained = 0
+        self.exceeded = asyncio.Event()
+
+    async def drain(
+        self,
+        stream: asyncio.StreamReader,
+        destination: bytearray,
+    ) -> None:
+        while chunk := await stream.read(self._CHUNK_BYTES):
+            remaining = max(0, self.limit - self.total_retained)
+            retained = min(remaining, len(chunk))
+            if retained:
+                destination.extend(chunk[:retained])
+                self.total_retained += retained
+            if retained < len(chunk):
+                self.exceeded.set()
+
+
 class ShellSandbox:
     """Run argv-only commands under an explicit executable allowlist.
 
@@ -38,6 +65,10 @@ class ShellSandbox:
         max_output_bytes: int = 1_000_000,
         base_env: dict[str, str] | None = None,
     ) -> None:
+        if max_timeout_seconds <= 0:
+            raise ValueError("max_timeout_seconds must be positive")
+        if max_output_bytes <= 0:
+            raise ValueError("max_output_bytes must be positive")
         self.workspace = workspace
         self.allowed_executables = frozenset(
             str(Path(executable).resolve(strict=True)) for executable in allowed_executables
@@ -80,41 +111,47 @@ class ShellSandbox:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            limit=_BoundedOutput._CHUNK_BYTES,
         )
-        communication = asyncio.create_task(process.communicate())
+        if process.stdout is None or process.stderr is None:
+            raise RuntimeError("sandbox process pipes were not created")
+        output = _BoundedOutput(self.max_output_bytes)
+        stdout_reader = asyncio.create_task(output.drain(process.stdout, output.stdout))
+        stderr_reader = asyncio.create_task(output.drain(process.stderr, output.stderr))
+        readers = (stdout_reader, stderr_reader)
+        process_waiter = asyncio.create_task(process.wait())
         status = SandboxStatus.COMPLETED
         try:
-            while not communication.done():
+            while not process_waiter.done():
                 if cancellation.cancelled:
-                    await self._terminate(process, communication)
+                    await self._terminate(process, process_waiter)
                     raise RunCancelledError(cancellation.reason)
+                if output.exceeded.is_set():
+                    status = SandboxStatus.OUTPUT_LIMIT
+                    await self._terminate(process, process_waiter)
+                    break
                 if monotonic() - started_at >= spec.timeout_seconds:
                     status = SandboxStatus.TIMED_OUT
-                    await self._terminate(process, communication)
+                    await self._terminate(process, process_waiter)
                     break
                 await asyncio.sleep(0.02)
-            stdout_bytes, stderr_bytes = await communication
+            await process_waiter
+            await asyncio.gather(*readers)
         except BaseException:
             if process.returncode is None:
-                await self._terminate(process, communication)
+                await self._terminate(process, process_waiter)
+            await asyncio.gather(*readers, return_exceptions=True)
             raise
-        combined_size = len(stdout_bytes) + len(stderr_bytes)
-        truncated = combined_size > self.max_output_bytes
-        if truncated:
-            status = (
-                SandboxStatus.OUTPUT_LIMIT
-                if status == SandboxStatus.COMPLETED
-                else status
-            )
-            stdout_bytes = stdout_bytes[: self.max_output_bytes // 2]
-            stderr_bytes = stderr_bytes[: self.max_output_bytes // 2]
+        truncated = output.exceeded.is_set()
+        if truncated and status == SandboxStatus.COMPLETED:
+            status = SandboxStatus.OUTPUT_LIMIT
         return SandboxResult(
             argv=[executable, *spec.argv[1:]],
             cwd=cwd.relative_to(self.workspace.root).as_posix() or ".",
             status=status,
             exit_code=process.returncode,
-            stdout=stdout_bytes.decode("utf-8", errors="replace"),
-            stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            stdout=output.stdout.decode("utf-8", errors="replace"),
+            stderr=output.stderr.decode("utf-8", errors="replace"),
             duration_ms=(monotonic() - started_at) * 1000,
             output_truncated=truncated,
         )
@@ -138,7 +175,7 @@ class ShellSandbox:
     @staticmethod
     async def _terminate(
         process: asyncio.subprocess.Process,
-        communication: asyncio.Task[tuple[bytes, bytes]],
+        process_waiter: asyncio.Task[int],
     ) -> None:
         if process.returncode is None:
             try:
@@ -146,11 +183,11 @@ class ShellSandbox:
             except ProcessLookupError:
                 pass
         try:
-            await asyncio.wait_for(asyncio.shield(communication), timeout=0.5)
+            await asyncio.wait_for(asyncio.shield(process_waiter), timeout=0.5)
         except TimeoutError:
             if process.returncode is None:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            await communication
+            await process_waiter

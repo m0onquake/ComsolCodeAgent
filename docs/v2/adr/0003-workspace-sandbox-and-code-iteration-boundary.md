@@ -31,7 +31,9 @@ M3 需要让 V2 搜索和修改代码、执行 pytest/Ruff，并根据真实失�
 - Code iteration 在每个候选补丁之前另建文件检查点；失败、取消、非可修复 Observation、预算
   耗尽或相同失败指纹再次出现时逆序恢复。修复补丁必须引用触发它的 Observation ID。
 - Shell 不解释字符串命令。宿主同时配置 resolved executable allowlist 和 argv prefix profile；cwd
-  由 Workspace 校验，环境变量采用白名单，stdout/stderr 有大小边界，超时/取消终止进程组。
+  由 Workspace 校验，环境变量采用白名单。stdout/stderr 使用固定大小块并发流式读取，共享严格的
+  原始字节保留预算；达到上限后立即终止进程组，管道剩余内容只排空而不缓存。超时和取消同样
+  终止进程组。
 - Python、pytest、Ruff 以及被测仓库代码仍以宿主用户权限运行。因此 M3 Shell Sandbox 是面向可信
   工具和受审查 fixture/工作区代码的策略与生命周期边界，不是恶意代码隔离。未来若 Goal 需要
   执行不可信代码，必须接入容器/VM/系统 sandbox，并通过新的 ADR 固化网络、挂载、资源和平台
@@ -60,7 +62,7 @@ M3 需要让 V2 搜索和修改代码、执行 pytest/Ruff，并根据真实失�
 ## 验证
 
 - 单元测试覆盖绝对路径、`..`、符号链接、陈旧补丁、检查点恢复、非 allowlist executable、
-  argv profile、超时和执行中取消。
+  argv profile、真实大输出触顶时的流式内存边界与进程终止、超时和执行中取消。
 - runner 测试用真实 pytest/Ruff 子进程验证结构化失败、JUnit artifact 哈希和 JSON diagnostics。
 - 独立 fixture 仓库测试覆盖搜索与读取、第一次最小补丁、真实测试失败、引用该 Observation 的
   第二次补丁及复验通过。

@@ -260,7 +260,8 @@ M3 的领域无关 Code Agent 执行层位于 `comsol_agent/v2/tools/` 和
   执行失败、取消、同错重复或修复预算耗尽时按逆序 rollback；
 - `ShellSandbox` 不调用 shell，只运行解析后 executable allowlist 与 argv profile 同时允许的命令，
   cwd 必须位于工作区，环境变量采用白名单，超时或取消会终止整个进程组；该策略是可信开发命令
-  的策略沙箱，不把同进程权限下的恶意程序误称为 OS/容器隔离；
+  的策略沙箱；stdout/stderr 由固定块流式排空并共享保留字节预算，触顶立即终止进程组，避免把
+  全部输出收入 Agent 内存；它不把同进程权限下的恶意程序误称为 OS/容器隔离；
 - `TestRunner` 在沙箱中运行 pytest 和 Ruff。pytest 以 JUnit XML 产生测试节点、消息和定位信息，
   Ruff 使用 JSON 输出；超时、执行错误、测试/静态检查失败分别返回结构化 `Observation`；
 - `CodeIterationLoop` 要求修复补丁引用触发它的 `Observation`，限制修复次数，以结构化失败指纹

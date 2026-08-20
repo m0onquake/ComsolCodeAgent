@@ -170,6 +170,37 @@ class TestWorkspaceTools:
 
 class TestShellSandbox:
     @pytest.mark.asyncio
+    async def test_output_limit_is_enforced_while_process_is_running(self, tmp_path: Path):
+        workspace = Workspace(copy_fixture_repository(tmp_path))
+        sandbox = ShellSandbox(
+            workspace,
+            allowed_executables=(sys.executable,),
+            allowed_argument_prefixes={Path(sys.executable): (("-c",),)},
+            max_output_bytes=1024,
+        )
+        program = (
+            "import os, time; "
+            "os.write(1, b'x' * 200_000); "
+            "os.write(2, b'y' * 200_000); "
+            "time.sleep(10)"
+        )
+
+        result = await sandbox.run(
+            CommandSpec(
+                argv=[sys.executable, "-c", program],
+                timeout_seconds=15,
+            ),
+            CancellationToken(),
+        )
+
+        retained_bytes = len(result.stdout.encode()) + len(result.stderr.encode())
+        assert result.status == "output_limit"
+        assert result.output_truncated is True
+        assert retained_bytes <= 1024
+        assert result.duration_ms < 5000
+        assert result.exit_code is not None
+
+    @pytest.mark.asyncio
     async def test_timeout_kills_command_and_returns_structured_result(self, tmp_path: Path):
         _, sandbox, _ = make_tools(copy_fixture_repository(tmp_path))
 
