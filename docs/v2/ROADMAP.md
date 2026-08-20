@@ -90,7 +90,7 @@ flowchart LR
 - Ruff：M2 修改范围通过；全仓旧代码问题未混入本里程碑；
 - COMSOL gate：不适用，M2 使用 fake extension 验证合同、生命周期和隔离；
 - ADR：新增 Accepted 的 ADR 0002；
-- commit：未创建（保留为当前 Goal 的可审查工作树变更）；
+- commit：`260f0876cb3c199880778223a26d94938478cb36`；
 - 未解决风险：Python entrypoint 是可信进程内代码而非进程级沙箱；隐式能力依赖必须由扩展作者
   转为显式 dependency；
 - M3 输入：版本化 Manifest、可信 Loader、权限/兼容策略、动态 Registry、固定快照、结构化
