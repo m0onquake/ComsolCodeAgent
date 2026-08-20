@@ -43,6 +43,8 @@ flowchart LR
 
 目标：实现领域无关的最小 Agent Loop。
 
+状态：`complete`（2026-08-20）。
+
 交付物：
 
 - GoalSpec、Plan、Action、Observation、RunManifest；
@@ -51,6 +53,18 @@ flowchart LR
 - fake tool 驱动的执行循环。
 
 验收：使用 fake tools 完成一次成功、一次可修复失败和一次预算耗尽流程。
+
+完成记录：
+
+- 实现：`comsol_agent/v2/contracts/`、`comsol_agent/v2/kernel/`；
+- 测试：M1 定向 12 passed；完整非 COMSOL 套件 242 passed；
+- Ruff：M1 修改范围通过；全仓仍有 3135 个既有问题，未混入本里程碑；
+- COMSOL gate：不适用，M1 的验收环境是 fake tools；
+- ADR：沿用 Accepted 的 ADR 0001，无架构不变量变化；
+- commit：当前工作树尚未提交，由维护者提交时回填；
+- 未解决风险：M2 尚未提供动态扩展 Registry；M1 `ToolExecutor` 是其稳定执行边界；
+- M2 输入：已版本化合同、状态机、Context Manager、预算/取消、事件/Trace 和 fake-tool
+  Agent Loop。
 
 ## M2：动态扩展系统
 

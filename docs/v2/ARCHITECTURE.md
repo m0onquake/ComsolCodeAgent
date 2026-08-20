@@ -217,3 +217,22 @@ comsol_agent/v2/
 - COMSOL 执行隔离或权限模型变化；
 - 物理审计门槛降低；
 - 新的持久化格式或兼容策略。
+
+## 10. M1 实现映射
+
+M1 的领域无关骨架位于 `comsol_agent/v2/`：
+
+- `contracts/` 提供严格且可生成 JSON Schema 的 `GoalSpec`、`Plan`、`Action`、
+  `Observation` 和 `RunManifest`；
+- `kernel/state.py` 实现显式状态转换，失败和取消是独立终态；
+- `kernel/context.py` 定义保留来源的 `ContextManager` 协议，并提供只组合 Goal、Plan、
+  Observation 和预算的最小内存实现；
+- `kernel/budget.py` 与 `kernel/cancellation.py` 在安全检查点约束动作、修复、时间和取消；
+- `kernel/events.py` 提供有序事件总线与 append-only Trace；订阅者故障不会中断运行；
+- `kernel/loop.py` 只依赖通用 `ToolExecutor` 协议，以结构化 Observation 驱动执行、验证、
+  有界重试和终止，并把事实写入 RunManifest。
+
+M1 的 `Repair` 只表示对 `retryable` Observation 的预算化重试。错误分类、动态修复规则、
+rollback 和领域复验器仍分别属于 M2、M3 与 M6，不能通过在 Kernel 中增加条件分支实现。
+运行因失败、预算耗尽或执行中取消进入终态时，当前 `in_progress` PlanStep 必须同步标记为
+`failed`；已完成和尚未开始的步骤分别保持 `complete` 与 `pending`。

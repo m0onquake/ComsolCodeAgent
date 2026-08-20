@@ -156,3 +156,19 @@ V2 达到可用状态至少要求：
 - 参数修改不触发全量自由生成；
 - 规定的 COMSOL 和物理回归通过；
 - Web/CLI 明确展示阶段、修复、结果和失败原因。
+
+## 10. M1 验收记录
+
+日期：2026-08-20。
+
+- `tests/test_v2_kernel.py` 使用不含领域逻辑的 fake executor 覆盖一次直接成功、一次可修复失败后
+  成功、一次修复预算耗尽，以及取消、工具异常结构化、状态机、事件隔离和合同 schema；
+- `.venv/bin/python -m pytest tests/test_v2_kernel.py -q`：12 passed；覆盖预算耗尽和执行中取消时
+  active step 收敛为 `failed`，未开始步骤保持 `pending`；
+- `.venv/bin/python -m pytest -q`：242 passed，1 个既有依赖弃用 warning；
+- `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_kernel.py`：通过；
+- 全仓 `.venv/bin/ruff check comsol_agent tests scripts` 仍报告 3135 个 M1 之前已存在于旧代码和
+  测试中的问题。本里程碑未改写这些无关文件，修改范围没有新增 Ruff 问题；
+- M1 只验收 fake-tool Kernel 闭环，不要求本地 COMSOL 或物理 gate，也未发生 verified memory
+  晋升；
+- 实现保持 ADR 0001，不需要新增 ADR。
