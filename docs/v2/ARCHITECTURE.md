@@ -236,3 +236,14 @@ M1 的 `Repair` 只表示对 `retryable` Observation 的预算化重试。错误
 rollback 和领域复验器仍分别属于 M2、M3 与 M6，不能通过在 Kernel 中增加条件分支实现。
 运行因失败、预算耗尽或执行中取消进入终态时，当前 `in_progress` PlanStep 必须同步标记为
 `failed`；已完成和尚未开始的步骤分别保持 `complete` 与 `pending`。
+
+## 11. M2 实现映射
+
+M2 在 `comsol_agent/v2/extensions/` 实现统一扩展合同、可信发现/加载、兼容与权限策略、Registry、
+Resolver、Health 和租约式固定运行快照。Function 与 MCP Tool 通过 `RegistryToolExecutor` 实现 M1 的
+`ToolExecutor` 协议，因此 Kernel 不导入扩展系统，也没有扩展 kind、能力 ID 或领域实现分支。
+
+Manifest/配置校验发生在代码导入之前；激活、健康和调用故障被隔离到单个扩展；同能力最高候选
+仍同分时产生结构化冲突。运行快照固定 active 扩展及版本；禁用对新解析立即生效，但已有快照
+关闭前延迟 deactivation 并阻止卸载，因此不会改变正在执行的 Goal。信任、生命周期和解析决策见
+[ADR 0002](adr/0002-extension-trust-lifecycle-and-resolution.md)。

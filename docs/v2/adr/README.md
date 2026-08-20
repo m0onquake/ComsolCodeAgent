@@ -15,6 +15,7 @@
 | 编号 | 决策 | 状态 |
 | --- | --- | --- |
 | [0001](0001-extension-first-agent-kernel.md) | 采用扩展优先的领域无关 Agent Kernel | Accepted |
+| [0002](0002-extension-trust-lifecycle-and-resolution.md) | 扩展信任、生命周期与确定性解析策略 | Accepted |
 
 ## 新建模板
 

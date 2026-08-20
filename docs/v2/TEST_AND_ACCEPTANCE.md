@@ -172,3 +172,20 @@ V2 达到可用状态至少要求：
 - M1 只验收 fake-tool Kernel 闭环，不要求本地 COMSOL 或物理 gate，也未发生 verified memory
   晋升；
 - 实现保持 ADR 0001，不需要新增 ADR。
+
+## 11. M2 验收记录
+
+日期：2026-08-20。
+
+- `tests/test_v2_extensions.py` 覆盖 manifest/schema、可信发现与动态加载、配置 schema、Agent/
+  COMSOL 兼容、权限上限与动作权限、12 种扩展 kind 的注册/启停/健康/卸载、租约式固定快照、
+  重复 ID/版本、缺失和反向依赖、路径 capability 依赖与 provider 卸载保护、结构化冲突、
+  显式选择、`sys.path`/`sys.modules` 同名模块遮蔽拒绝、阻塞 deactivation 并发隔离、
+  activation/handler 故障隔离，以及通过 Registry Function 执行完整 Kernel 流程；
+- `.venv/bin/python -m pytest tests/test_v2_extensions.py tests/test_v2_kernel.py -q`：41 passed；
+- `.venv/bin/python -m pytest -q`：271 passed，1 个既有 Starlette/httpx 弃用 warning；
+- `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_extensions.py tests/test_v2_kernel.py`：通过；
+- 全仓 Ruff 继续受 M2 之前的旧代码问题影响；M2 修改范围没有新增问题；
+- M2 是纯合同、Registry 和 fake extension 验收，不需要本地 COMSOL 或物理 gate，也未发生
+  verified memory 晋升；
+- 新增并接受 ADR 0002，固化可信加载、权限/兼容硬拒绝、固定快照和冲突策略。

@@ -70,6 +70,8 @@ flowchart LR
 
 目标：使能力可发现、验证、启停和隔离。
 
+状态：`complete`（2026-08-20）。
+
 交付物：
 
 - Extension manifest/schema；
@@ -79,6 +81,20 @@ flowchart LR
 - 冲突和权限模型。
 
 验收：注册/禁用/删除无需编辑 Kernel；冲突和异常扩展不静默覆盖或拖垮主循环。
+
+完成记录：
+
+- 实现：`comsol_agent/v2/extensions/`，通过固定快照和 `RegistryToolExecutor` 接入 M1 Kernel
+  合同，Kernel 没有导入具体扩展；
+- 测试：M1+M2 定向 41 passed；完整非 COMSOL 套件 271 passed；
+- Ruff：M2 修改范围通过；全仓旧代码问题未混入本里程碑；
+- COMSOL gate：不适用，M2 使用 fake extension 验证合同、生命周期和隔离；
+- ADR：新增 Accepted 的 ADR 0002；
+- commit：未创建（保留为当前 Goal 的可审查工作树变更）；
+- 未解决风险：Python entrypoint 是可信进程内代码而非进程级沙箱；隐式能力依赖必须由扩展作者
+  转为显式 dependency；
+- M3 输入：版本化 Manifest、可信 Loader、权限/兼容策略、动态 Registry、固定快照、结构化
+  Resolver/Health 和 Kernel ToolExecutor 适配器。
 
 ## M3：文件编辑、沙箱执行与测试迭代
 

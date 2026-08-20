@@ -258,3 +258,30 @@ acceptance:
 - 兼容性拒绝；
 - 依赖扩展缺失；
 - 在无 LLM 条件下的确定性测试。
+
+## 14. M2 实现映射
+
+M2 的领域无关实现位于 `comsol_agent/v2/extensions/`：
+
+- `models.py` 定义 `comsol-agent/v2alpha1` 严格 Manifest、四类显式权限、兼容、扩展版本依赖与
+  `(kind, capability)` 能力依赖、候选、
+  校验、生命周期、健康、冲突和 Trace 合同；`ExtensionManifest.model_json_schema()` 是规范化
+  manifest JSON Schema 来源；
+- `interfaces.py` 提供 Function、MCP Server/Tool、Skill、Hook、Repair Rule、Deterministic
+  Path、Builder、Validator、Auditor、Memory Adapter 和 Retriever 协议；
+- `loader.py` 将无代码执行的 YAML/JSON discovery 与可信 entrypoint import 分离，按 Python
+  实际生效顺序检查 `sys.path`/`sys.modules` 及父包来源，导入后复验来源，并对扩展配置执行
+  Draft 2020-12 JSON Schema 校验；
+- `policy.py` 在 import/注册前硬检查 Agent API、COMSOL 版本和安装权限上限，并在调用时检查
+  Action 所需权限；
+- `registry.py` 实现注册、启停、健康、卸载、显式依赖、结构化冲突、生命周期 Trace 和异步
+  租约式运行快照；注册时拒绝缺失能力，卸载唯一 provider 时报告受影响路径/扩展；逐扩展锁
+  串行化生命周期变化，禁用在等待 deactivation 前立即阻止新解析，已有快照关闭前延迟清理并
+  拒绝卸载；故障扩展进入 `unhealthy` 而不阻断其他扩展；
+- `executor.py` 将固定快照适配到 M1 `ToolExecutor`，对 Function/MCP Tool 的输入输出 schema、
+  权限和异常做统一 Observation 标准化。
+
+运行中的 Goal 必须用 `async with registry.snapshot()` 获取一次 `ExtensionSnapshot` 并记录其
+`versions`；后续 Registry 热更新只影响新运行，退出上下文时释放租约和延迟清理。直接
+`register()` 实例是宿主进程内可信装配；不可信安装必须经过 Loader。
+该策略由 [ADR 0002](adr/0002-extension-trust-lifecycle-and-resolution.md) 固化。
