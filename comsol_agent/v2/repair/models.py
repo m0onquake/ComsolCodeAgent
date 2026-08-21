@@ -72,6 +72,9 @@ class RepairStatus(StrEnum):
     CANCELLED = "cancelled"
     UNSAFE = "unsafe"
     USER_DECISION_REQUIRED = "user_decision_required"
+    CHECKPOINT_FAILED = "checkpoint_failed"
+    ROLLBACK_FAILED = "rollback_failed"
+    COMMIT_FAILED = "commit_failed"
 
 
 class CauseSummary(ContractModel):
@@ -123,6 +126,28 @@ class VersionCompatibility(ContractModel):
     agent_api: str = Field(min_length=1)
     comsol: tuple[str, ...] = Field(default_factory=tuple)
     builders: dict[str, str] = Field(default_factory=dict)
+
+
+class RepairExecutionContext(ContractModel):
+    """Policy-owned runtime facts used to execute declarative repair contracts."""
+
+    agent_version: str = Field(default="2.0.0", min_length=1)
+    comsol_version: str | None = None
+    builder_versions: dict[str, str] = Field(default_factory=dict)
+    satisfied_preconditions: frozenset[str] = Field(default_factory=frozenset)
+    mandatory_gates: frozenset[str] = Field(default_factory=frozenset)
+    solve_attempts_used: int = Field(default=0, ge=0)
+    core_hours_used: float = Field(default=0.0, ge=0.0)
+
+
+class RepairExecutionLimits(ContractModel):
+    """Immutable limits supplied by the orchestrator to the controlled executor."""
+
+    max_solves: int | None = Field(default=None, ge=1)
+    core_hour_budget: float | None = Field(default=None, gt=0)
+    required_checkpoint: str | None = None
+    required_gates: frozenset[str] = Field(min_length=1)
+    success_criteria: tuple[str, ...] = Field(default_factory=tuple)
 
 
 class RepairRuleContract(ContractModel):
@@ -177,7 +202,7 @@ class RepairCandidate(ContractModel):
     extension_id: str | None = None
     extension_version: str | None = None
     repair_case_id: str | None = None
-    required_gates: frozenset[str] = Field(default_factory=frozenset)
+    required_gates: frozenset[str] = Field(min_length=1)
 
     @model_validator(mode="after")
     def source_fields_are_consistent(self) -> RepairCandidate:
@@ -203,6 +228,7 @@ class RepairAttempt(ContractModel):
     success: bool = False
     rolled_back: bool = False
     failure_reason: str | None = None
+    rollback_failure: str | None = None
 
 
 class RepairResult(ContractModel):
@@ -212,3 +238,4 @@ class RepairResult(ContractModel):
     trace: list[RepairTraceEvent] = Field(default_factory=list)
     final_observation_id: str | None = None
     user_message: str
+    manual_recovery_required: bool = False

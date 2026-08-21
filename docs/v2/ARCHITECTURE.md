@@ -313,3 +313,9 @@ Repair Rule 与 Solver Strategy 是独立扩展 kind；`NON_CONVERGENCE` 只进�
 严格兼容的 RepairCase 并回写采用后结果；M5 继续提供 RuntimeFailure、B checkpoint 和受控 MCP。
 Kernel 不导入 `repair/`，也没有 COMSOL 错误字符串或轴承分支。决策见
 [ADR 0006](adr/0006-diagnosis-bounded-repair-and-worker-execution.md)。
+
+M6 P0 加固将声明式合同接入真实执行：固定扩展快照提供运行版本，`RepairExecutionContext` 提供
+Builder 版本、前置条件、强制门禁和已消耗 solver 预算，`RepairExecutionLimits` 把剩余额度与验收
+要求传给受控 executor。成功条件由 Policy/Goal 最低门禁与候选附加门禁取并集；checkpoint、commit
+和 rollback 二级故障均产生结构化终态，未确认回滚必须人工恢复。决策见
+[ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。

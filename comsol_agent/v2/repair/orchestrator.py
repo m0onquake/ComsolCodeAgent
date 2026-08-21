@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from fnmatch import fnmatchcase
 from typing import Protocol
+
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from comsol_agent.v2.contracts import Observation, RepairRecord, RunManifest
 from comsol_agent.v2.extensions import ExtensionKind, ExtensionSnapshot, ResolutionContext
@@ -15,12 +19,15 @@ from .models import (
     ErrorCode,
     RepairAttempt,
     RepairCandidate,
+    RepairExecutionContext,
+    RepairExecutionLimits,
     RepairKind,
     RepairResult,
     RepairRuleContract,
     RepairStatus,
     RepairTraceEvent,
     SolverStrategyContract,
+    VersionCompatibility,
 )
 
 
@@ -29,7 +36,9 @@ class RepairExecutor(Protocol):
         self, diagnosis: Diagnosis, candidate: RepairCandidate
     ) -> str: ...
 
-    async def apply(self, candidate: RepairCandidate) -> None: ...
+    async def apply(
+        self, candidate: RepairCandidate, limits: RepairExecutionLimits
+    ) -> None: ...
 
     async def verify(
         self, candidate: RepairCandidate, trigger: Observation
@@ -59,6 +68,7 @@ class RepairOrchestrator:
         llm_patch: CandidateProvider | None = None,
         max_attempts_per_stage: int = 3,
         max_llm_attempts: int = 2,
+        execution_context: RepairExecutionContext | None = None,
     ) -> None:
         if not 1 <= max_attempts_per_stage <= 3:
             raise ValueError("max_attempts_per_stage must be between one and three")
@@ -72,6 +82,13 @@ class RepairOrchestrator:
         self.llm_patch = llm_patch
         self.max_attempts_per_stage = max_attempts_per_stage
         self.max_llm_attempts = max_llm_attempts
+        self.execution_context = execution_context or RepairExecutionContext(
+            agent_version=snapshot.agent_version,
+            comsol_version=snapshot.comsol_version,
+        )
+        self._extension_attempts: dict[tuple[str, str], int] = {}
+        self._solve_attempts_used = self.execution_context.solve_attempts_used
+        self._core_hours_used = self.execution_context.core_hours_used
 
     async def repair(
         self,
@@ -128,6 +145,32 @@ class RepairOrchestrator:
                     if llm_attempts >= self.max_llm_attempts:
                         continue
                     llm_attempts += 1
+                contract = self._contract(source)
+                contract_error = self._contract_execution_error(
+                    contract, diagnosis, source
+                )
+                if contract_error:
+                    self._trace(
+                        trace,
+                        "contract_rejected",
+                        diagnosis,
+                        detail={
+                            "kind": kind,
+                            "extension_id": getattr(
+                                getattr(source, "manifest", None), "id", None
+                            ),
+                            "reason": contract_error,
+                        },
+                    )
+                    if contract_error.startswith("solver budget exhausted"):
+                        return self._finish(
+                            RepairStatus.BUDGET_EXHAUSTED,
+                            diagnosis,
+                            attempts,
+                            trace,
+                            contract_error,
+                        )
+                    continue
                 candidate = await self._propose(source, kind, diagnosis, observation, trace)
                 if candidate is None:
                     continue
@@ -144,16 +187,48 @@ class RepairOrchestrator:
                         RepairAttempt(candidate=candidate, failure_reason=safety)
                     )
                     continue
-                checkpoint = await self.executor.create_checkpoint(diagnosis, candidate)
-                attempt = RepairAttempt(candidate=candidate, checkpoint=checkpoint)
+                limits = self._execution_limits(candidate, diagnosis, contract)
+                attempt = RepairAttempt(candidate=candidate)
                 attempts.append(attempt)
-                self._trace(
-                    trace, "checkpoint", diagnosis, candidate=candidate, checkpoint=checkpoint
-                )
+                if candidate.extension_id:
+                    key = (diagnosis.stage, candidate.extension_id)
+                    self._extension_attempts[key] = self._extension_attempts.get(key, 0) + 1
                 try:
-                    await self.executor.apply(candidate)
+                    checkpoint = await self.executor.create_checkpoint(diagnosis, candidate)
+                    if not checkpoint:
+                        raise ValueError("executor returned an empty checkpoint reference")
+                    attempt.checkpoint = checkpoint
+                    self._trace(
+                        trace,
+                        "checkpoint",
+                        diagnosis,
+                        candidate=candidate,
+                        checkpoint=checkpoint,
+                    )
+                except RunCancelledError:
+                    attempt.failure_reason = "RunCancelledError: checkpoint creation cancelled"
+                    raise
+                except Exception as error:
+                    attempt.failure_reason = f"{type(error).__name__}: {error}"
+                    self._trace(
+                        trace,
+                        "checkpoint_failed",
+                        diagnosis,
+                        candidate=candidate,
+                        detail={"error": attempt.failure_reason},
+                    )
+                    return self._finish(
+                        RepairStatus.CHECKPOINT_FAILED,
+                        diagnosis,
+                        attempts,
+                        trace,
+                        "无法创建修复检查点；候选未执行，已安全停止。",
+                    )
+                try:
+                    await self.executor.apply(candidate, limits)
                     self._trace(trace, "repair", diagnosis, candidate=candidate)
                     verified = await self.executor.verify(candidate, observation)
+                    self._account_solver_usage(verified, contract)
                     attempt.verification_observation_id = verified.observation_id
                     self._trace(
                         trace,
@@ -163,11 +238,36 @@ class RepairOrchestrator:
                         observation_id=verified.observation_id,
                         detail={"success": verified.success, "gates": verified.data.get("gates")},
                     )
-                    if self._verified(candidate, verified):
-                        attempt.success = True
+                    verified_ok, verification_error = self._verified(
+                        candidate, verified, limits
+                    )
+                    if verified_ok:
                         commit = getattr(self.executor, "commit", None)
-                        if commit is not None:
-                            await commit(checkpoint)
+                        try:
+                            if commit is not None:
+                                await commit(checkpoint)
+                        except Exception as error:
+                            attempt.failure_reason = f"{type(error).__name__}: {error}"
+                            rollback_ok = await self._safe_rollback(
+                                checkpoint,
+                                attempt,
+                                diagnosis,
+                                trace,
+                                reason="commit failed",
+                            )
+                            return self._finish(
+                                RepairStatus.COMMIT_FAILED
+                                if rollback_ok
+                                else RepairStatus.ROLLBACK_FAILED,
+                                diagnosis,
+                                attempts,
+                                trace,
+                                "提交修复检查点失败；已回滚。"
+                                if rollback_ok
+                                else "提交与回滚均失败；运行已隔离，需要人工恢复。",
+                                manual_recovery_required=not rollback_ok,
+                            )
+                        attempt.success = True
                         self._record_repair_case_outcome(candidate, True)
                         self._trace(trace, "complete", diagnosis, candidate=candidate)
                         return RepairResult(
@@ -181,22 +281,28 @@ class RepairOrchestrator:
                     repeated = self.diagnostics.from_observation(
                         verified, affected_scope=diagnosis.affected_scope
                     ).fingerprint == diagnosis.fingerprint
-                    await self.executor.rollback(checkpoint)
-                    attempt.rolled_back = True
                     attempt.failure_reason = (
                         "same failure fingerprint repeated"
                         if repeated
-                        else "verifier or postcondition failed"
+                        else verification_error or "verifier or postcondition failed"
                     )
                     self._record_repair_case_outcome(candidate, False)
-                    self._trace(
-                        trace,
-                        "rollback",
+                    rollback_ok = await self._safe_rollback(
+                        checkpoint,
+                        attempt,
                         diagnosis,
-                        candidate=candidate,
-                        checkpoint=checkpoint,
-                        detail={"reason": attempt.failure_reason},
+                        trace,
+                        reason=attempt.failure_reason,
                     )
+                    if not rollback_ok:
+                        return self._finish(
+                            RepairStatus.ROLLBACK_FAILED,
+                            diagnosis,
+                            attempts,
+                            trace,
+                            "复验失败且无法确认回滚；运行已隔离，需要人工恢复。",
+                            manual_recovery_required=True,
+                        )
                     if repeated:
                         return self._finish(
                             RepairStatus.REPEATED_FAILURE,
@@ -206,25 +312,39 @@ class RepairOrchestrator:
                             "复验返回相同失败指纹，已停止原样重试并回滚。",
                         )
                 except RunCancelledError:
-                    await self.executor.rollback(checkpoint)
-                    attempt.rolled_back = True
-                    self._trace(
-                        trace, "rollback", diagnosis, candidate=candidate, checkpoint=checkpoint
+                    attempt.failure_reason = "RunCancelledError: repair cancelled"
+                    rollback_ok = await self._safe_rollback(
+                        checkpoint, attempt, diagnosis, trace, reason="repair cancelled"
                     )
+                    if not rollback_ok:
+                        return self._finish(
+                            RepairStatus.ROLLBACK_FAILED,
+                            diagnosis,
+                            attempts,
+                            trace,
+                            "修复已取消但回滚失败；运行已隔离，需要人工恢复。",
+                            manual_recovery_required=True,
+                        )
                     raise
                 except Exception as error:
-                    await self.executor.rollback(checkpoint)
-                    attempt.rolled_back = True
                     attempt.failure_reason = f"{type(error).__name__}: {error}"
                     self._record_repair_case_outcome(candidate, False)
-                    self._trace(
-                        trace,
-                        "rollback",
+                    rollback_ok = await self._safe_rollback(
+                        checkpoint,
+                        attempt,
                         diagnosis,
-                        candidate=candidate,
-                        checkpoint=checkpoint,
-                        detail={"reason": attempt.failure_reason},
+                        trace,
+                        reason=attempt.failure_reason,
                     )
+                    if not rollback_ok:
+                        return self._finish(
+                            RepairStatus.ROLLBACK_FAILED,
+                            diagnosis,
+                            attempts,
+                            trace,
+                            "修复执行失败且无法确认回滚；运行已隔离，需要人工恢复。",
+                            manual_recovery_required=True,
+                        )
             status = (
                 RepairStatus.BUDGET_EXHAUSTED
                 if len(attempts) >= self.max_attempts_per_stage
@@ -325,6 +445,143 @@ class RepairOrchestrator:
         )
         return strategy is not None and diagnosis.error_code in strategy.error_codes
 
+    @staticmethod
+    def _contract(source: object) -> RepairRuleContract | SolverStrategyContract | None:
+        manifest = getattr(source, "manifest", None)
+        declared_rule = getattr(manifest, "repair_contract", None)
+        if declared_rule:
+            return RepairRuleContract.model_validate(declared_rule)
+        declared_strategy = getattr(manifest, "solver_strategy_contract", None)
+        if declared_strategy:
+            return SolverStrategyContract.model_validate(declared_strategy)
+        return None
+
+    def _contract_execution_error(
+        self,
+        contract: RepairRuleContract | SolverStrategyContract | None,
+        diagnosis: Diagnosis,
+        source: object,
+    ) -> str | None:
+        if contract is None:
+            return None
+        automatic = {"structured_evidence"} if diagnosis.evidence else set()
+        if diagnosis.compatible_checkpoint:
+            automatic.add("compatible_checkpoint")
+        satisfied = self.execution_context.satisfied_preconditions | automatic
+        missing = [item for item in contract.preconditions if item not in satisfied]
+        if missing:
+            return f"contract precondition not satisfied: {', '.join(missing)}"
+        compatibility_error = self._compatibility_error(contract.compatibility)
+        if compatibility_error:
+            return compatibility_error
+        if isinstance(contract, RepairRuleContract):
+            extension_id = getattr(getattr(source, "manifest", None), "id", "")
+            extension_attempts = self._extension_attempts.get(
+                (diagnosis.stage, extension_id), 0
+            )
+            if extension_attempts >= contract.max_attempts:
+                return f"repair rule attempt budget exhausted ({contract.max_attempts})"
+            return None
+        if self._solve_attempts_used >= contract.max_solves:
+            return f"solver budget exhausted: max_solves={contract.max_solves}"
+        if self._core_hours_used >= contract.core_hour_budget:
+            return (
+                "solver budget exhausted: "
+                f"core_hour_budget={contract.core_hour_budget}"
+            )
+        if (
+            diagnosis.compatible_checkpoint is None
+            or diagnosis.compatible_checkpoint != contract.rollback_checkpoint
+        ):
+            return "solver rollback checkpoint is unavailable or incompatible"
+        return None
+
+    def _compatibility_error(self, compatibility: object) -> str | None:
+        declared = VersionCompatibility.model_validate(compatibility)
+        try:
+            if Version(self.execution_context.agent_version) not in SpecifierSet(
+                declared.agent_api
+            ):
+                return "contract is incompatible with the active Agent version"
+        except (InvalidSpecifier, InvalidVersion) as error:
+            return f"invalid Agent compatibility contract: {error}"
+        if declared.comsol:
+            actual = self.execution_context.comsol_version
+            if actual is None:
+                return "contract requires a known COMSOL version"
+            if not any(
+                fnmatchcase(actual, pattern.replace("x", "*"))
+                for pattern in declared.comsol
+            ):
+                return "contract is incompatible with the active COMSOL version"
+        for builder_id, constraint in declared.builders.items():
+            actual = self.execution_context.builder_versions.get(builder_id)
+            if actual is None:
+                return f"required Builder version is unknown: {builder_id}"
+            try:
+                if Version(actual) not in SpecifierSet(constraint):
+                    return f"contract is incompatible with Builder {builder_id} {actual}"
+            except (InvalidSpecifier, InvalidVersion) as error:
+                return f"invalid Builder compatibility contract for {builder_id}: {error}"
+        return None
+
+    def _execution_limits(
+        self,
+        candidate: RepairCandidate,
+        diagnosis: Diagnosis,
+        contract: RepairRuleContract | SolverStrategyContract | None,
+    ) -> RepairExecutionLimits:
+        required_gates = (
+            self._mandatory_gates(diagnosis)
+            | self.execution_context.mandatory_gates
+            | candidate.required_gates
+        )
+        if isinstance(contract, SolverStrategyContract):
+            return RepairExecutionLimits(
+                max_solves=contract.max_solves
+                - self._solve_attempts_used,
+                core_hour_budget=contract.core_hour_budget
+                - self._core_hours_used,
+                required_checkpoint=contract.rollback_checkpoint,
+                required_gates=required_gates,
+                success_criteria=contract.success_criteria,
+            )
+        return RepairExecutionLimits(required_gates=required_gates)
+
+    def _account_solver_usage(
+        self,
+        observation: Observation,
+        contract: RepairRuleContract | SolverStrategyContract | None,
+    ) -> None:
+        if not isinstance(contract, SolverStrategyContract):
+            return
+        usage = observation.data.get("usage", {})
+        solves = usage.get("solves")
+        core_hours = usage.get("core_hours")
+        if type(solves) is int and solves >= 0:
+            self._solve_attempts_used += solves
+        if (
+            isinstance(core_hours, (int, float))
+            and not isinstance(core_hours, bool)
+            and core_hours >= 0
+        ):
+            self._core_hours_used += float(core_hours)
+
+    @staticmethod
+    def _mandatory_gates(diagnosis: Diagnosis) -> frozenset[str]:
+        gate_by_class = {
+            "api_code_error": "api",
+            "geometry_error": "api",
+            "mesh_error": "api",
+            "solve_or_convergence_error": "solve",
+            "physics_audit_failure": "audit",
+            "test_failure": "pytest",
+            "static_analysis_failure": "ruff",
+            "file_patch_failure": "static",
+        }
+        gate = gate_by_class.get(str(diagnosis.error_class))
+        return frozenset({gate}) if gate else frozenset({"runtime"})
+
     async def _propose(
         self,
         source: object,
@@ -407,11 +664,82 @@ class RepairOrchestrator:
         return None
 
     @staticmethod
-    def _verified(candidate: RepairCandidate, observation: Observation) -> bool:
+    def _verified(
+        candidate: RepairCandidate,
+        observation: Observation,
+        limits: RepairExecutionLimits,
+    ) -> tuple[bool, str | None]:
         if not observation.success:
-            return False
+            return False, "verifier Observation reported failure"
         gates = observation.data.get("gates", {})
-        return all(gates.get(gate) is True for gate in candidate.required_gates)
+        missing_gates = [
+            gate for gate in sorted(limits.required_gates) if gates.get(gate) is not True
+        ]
+        if missing_gates:
+            return False, f"mandatory gates failed or missing: {', '.join(missing_gates)}"
+        criteria = observation.data.get("criteria", {})
+        failed_criteria = [
+            criterion
+            for criterion in limits.success_criteria
+            if criteria.get(criterion) is not True
+        ]
+        if failed_criteria:
+            return False, f"success criteria failed or missing: {', '.join(failed_criteria)}"
+        usage = observation.data.get("usage", {})
+        solves = usage.get("solves", 0)
+        core_hours = usage.get("core_hours", 0.0)
+        if type(solves) is not int or solves < 0:
+            return False, "invalid solver usage evidence"
+        if (
+            not isinstance(core_hours, (int, float))
+            or isinstance(core_hours, bool)
+            or core_hours < 0
+        ):
+            return False, "invalid core-hour usage evidence"
+        if limits.max_solves is not None and solves > limits.max_solves:
+            return False, "solver max_solves budget exceeded"
+        if (
+            limits.core_hour_budget is not None
+            and core_hours > limits.core_hour_budget
+        ):
+            return False, "solver core-hour budget exceeded"
+        return True, None
+
+    async def _safe_rollback(
+        self,
+        checkpoint: str,
+        attempt: RepairAttempt,
+        diagnosis: Diagnosis,
+        trace: list[RepairTraceEvent],
+        *,
+        reason: str,
+    ) -> bool:
+        try:
+            await self.executor.rollback(checkpoint)
+        except Exception as error:
+            attempt.rollback_failure = f"{type(error).__name__}: {error}"
+            self._trace(
+                trace,
+                "rollback_failed",
+                diagnosis,
+                candidate=attempt.candidate,
+                checkpoint=checkpoint,
+                detail={
+                    "reason": reason,
+                    "rollback_error": attempt.rollback_failure,
+                },
+            )
+            return False
+        attempt.rolled_back = True
+        self._trace(
+            trace,
+            "rollback",
+            diagnosis,
+            candidate=attempt.candidate,
+            checkpoint=checkpoint,
+            detail={"reason": reason},
+        )
+        return True
 
     def _record_repair_case_outcome(
         self, candidate: RepairCandidate, success: bool
@@ -462,6 +790,8 @@ class RepairOrchestrator:
         attempts: list[RepairAttempt],
         trace: list[RepairTraceEvent],
         message: str,
+        *,
+        manual_recovery_required: bool = False,
     ) -> RepairResult:
         if not trace or trace[-1].event not in {"complete", "failure"}:
             RepairOrchestrator._trace(
@@ -473,4 +803,5 @@ class RepairOrchestrator:
             attempts=attempts,
             trace=trace,
             user_message=message,
+            manual_recovery_required=manual_recovery_required,
         )

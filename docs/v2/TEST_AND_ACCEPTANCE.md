@@ -297,3 +297,22 @@ V2 达到可用状态至少要求：
   memory；
 - 新增并接受 ADR 0006。剩余生产风险是进程内线程不能硬杀阻塞 Java；可回收进程 Worker 和真实
   卡死 kill 仍留给 M7/M9 前的独立加固。
+
+## 16. M6 P0 加固验收记录
+
+日期：2026-08-21。
+
+- `tests/test_v2_repair.py` 新增合同执行和恢复故障测试：候选空 gates 拒绝、Policy 门禁不可降低、
+  precondition/Builder 兼容拒绝、solve/核时预算、成功判据、rollback checkpoint、checkpoint 创建
+  失败、commit 失败和 rollback 二级失败；
+- Governed RepairCase 现在强制附加 static/runtime gates；Solver executor 必须接收剩余预算、
+  checkpoint、成功判据和最终 gates；
+- checkpoint/commit/rollback 故障都返回 `RepairResult`；rollback 未确认时要求人工恢复且停止
+  后续候选；
+- `.venv/bin/python -m pytest tests/test_v2_repair.py -q`：25 passed；M1–M6 联合：116 passed；
+  完整 `.venv/bin/python -m pytest -q`：346 passed，1 个既有 Starlette/httpx warning；core 203、
+  bearing domain 14、web 13 passed；修改范围 Ruff 通过；
+- `.venv/bin/python scripts/run_v2_repair_smoke.py --version 6.2 --cores 1` 再次通过：真实 MPh 1.3.1
+  + COMSOL 6.2 产生 `INVALID_PROPERTY`，从 B checkpoint 局部恢复并通过 API gate；Trace 为
+  diagnosis→candidate→checkpoint→repair→verify→complete，未运行 solve/audit；
+- 新增并接受 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。

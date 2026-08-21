@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from comsol_agent.v2.contracts import Observation
 from comsol_agent.v2.tools import PatchSet, Workspace
 
-from .models import Diagnosis, RepairCandidate
+from .models import Diagnosis, RepairCandidate, RepairExecutionLimits
 
 
 class WorkspaceRepairExecutor:
@@ -32,7 +32,9 @@ class WorkspaceRepairExecutor:
         self._checkpoints[candidate.candidate_id] = checkpoint.checkpoint_id
         return checkpoint.checkpoint_id
 
-    async def apply(self, candidate: RepairCandidate) -> None:
+    async def apply(
+        self, candidate: RepairCandidate, limits: RepairExecutionLimits
+    ) -> None:
         patch = PatchSet.model_validate(candidate.payload["patch"])
         self.workspace.apply_patch(patch)
 

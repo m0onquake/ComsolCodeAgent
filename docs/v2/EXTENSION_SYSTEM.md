@@ -298,3 +298,9 @@ M6 为 `repair_rule` 增加严格 `RepairRuleContract`：匹配错误类/code/�
 `ExtensionSnapshot.candidates()` 返回按 priority、quality、stable ID 排序的全部健康候选，供 M6 在
 高优先 handler 故障时隔离后继续；最高 priority/quality 同分时 Orchestrator 返回结构化冲突。
 删除或禁用规则不需要修改 Kernel。候选不得扩大 manifest 权限、合同权限或声明 scope。
+
+M6 P0 加固后，固定快照同时固化 Registry 已验证的 Agent/COMSOL 版本。Orchestrator 在调用
+handler 前执行合同 preconditions、Agent/COMSOL/Builder 兼容、Rule 尝试次数、Solver solve/核时
+预算和 rollback checkpoint。`RepairExecutor.apply` 接收 Policy 生成的 `RepairExecutionLimits`，
+扩展只能增加 acceptance gates，不能删除按错误类别或 Goal 强制的 API/pytest/Ruff/solve/audit
+门禁。详细决策见 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。

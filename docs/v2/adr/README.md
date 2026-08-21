@@ -20,6 +20,7 @@
 | [0004](0004-memory-governance-persistence-and-retrieval.md) | 记忆治理、持久化与检索执行门禁 | Accepted |
 | [0005](0005-comsol-runtime-worker-checkpoint-and-tool-boundary.md) | COMSOL 单客户端、Worker、检查点与工具权限边界 | Accepted |
 | [0006](0006-diagnosis-bounded-repair-and-worker-execution.md) | 诊断、有限修复与同步 COMSOL handler 执行边界 | Accepted |
+| [0007](0007-repair-contract-enforcement-and-recovery-failure.md) | 修复合同执行、验收治理与恢复二级故障 | Accepted |
 
 ## 新建模板
 

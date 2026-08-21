@@ -100,10 +100,15 @@ class ExtensionSnapshot:
         self,
         records: tuple[_SnapshotRecord, ...],
         release: Callable[[tuple[str, ...]], Awaitable[None]],
+        *,
+        agent_version: str,
+        comsol_version: str | None,
     ) -> None:
         self._records = records
         self._release = release
         self._closed = False
+        self.agent_version = agent_version
+        self.comsol_version = comsol_version
         self.versions = MappingProxyType(
             {
                 record.extension.manifest.id: record.extension.manifest.version
@@ -427,7 +432,12 @@ class ExtensionRegistry:
             _SnapshotRecord(extension=record.extension, health=record.health.model_copy(deep=True))
             for record in active_records
         )
-        return ExtensionSnapshot(records, self._release_snapshot)
+        return ExtensionSnapshot(
+            records,
+            self._release_snapshot,
+            agent_version=self.loader.compatibility.agent_version,
+            comsol_version=self.loader.compatibility.comsol_version,
+        )
 
     def state(self, extension_id: str) -> LifecycleState:
         return self._get(extension_id).state

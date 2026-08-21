@@ -98,6 +98,7 @@ class GovernedRepairCaseSource:
             payload=payload,
             provenance=f"memory:{hit.record.id}",
             repair_case_id=hit.record.id,
+            required_gates=frozenset({"static", "runtime"}),
         )
 
     def record_result(self, candidate: RepairCandidate, success: bool) -> None:

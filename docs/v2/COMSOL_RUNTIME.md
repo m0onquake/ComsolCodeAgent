@@ -255,3 +255,16 @@ Solver Strategy 或轴承物理 Auditor；这些由 M6/M7 扩展注入，严格�
 
 M6 真实门只触发安全、可预测的 API/property 错误并局部修复，不运行轴承物理回归。执行与修复
 边界见 [ADR 0006](adr/0006-diagnosis-bounded-repair-and-worker-execution.md)。
+
+## 16. M6 P0 合同与恢复故障加固
+
+- `RepairExecutionContext` 提供当前 Agent/COMSOL/Builder 版本、已满足前置条件、Goal/Policy
+  强制门禁以及已消耗 solve/核时；未知的必需版本不视为兼容；
+- Solver Strategy 只有在 preconditions、兼容、剩余 solve/核时和声明的 rollback checkpoint 全部
+  满足时才会执行。Executor 收到剩余额度，复验必须返回独立 gates、success criteria 和 usage；
+- 验收要求是错误类别最低门禁、Goal/Policy 门禁和候选附加门禁的并集。候选不得以空 gates 或
+  少声明 solve/audit 降低成功标准；
+- checkpoint 创建、commit 与 rollback 失败分别产生结构化终态。rollback 二级失败保留原始错误，
+  标记 `manual_recovery_required` 并禁止继续自动修复。
+
+决策见 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。

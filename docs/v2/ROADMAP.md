@@ -248,6 +248,19 @@ flowchart LR
   候选排序、受控 executor、严格 RepairCase adapter、RunManifest/Trace 和已加固 Runtime；
 - commit：M6 独立提交（以本里程碑最终 `git log` 为准）。
 
+M7 前 P0 加固（2026-08-21）：
+
+- Repair Rule/Solver Strategy 的 preconditions、合同级 Agent/COMSOL/Builder 兼容、尝试/solve/核时
+  预算、成功判据和 rollback checkpoint 已由编排器执行，不再只是 manifest 声明；
+- 验收门禁改为 Policy/Goal 最低要求与候选附加要求的并集，空 gates 被合同拒绝，RepairCase
+  强制 static/runtime gates；M7 可注入不可降低的 solve/audit gates；
+- checkpoint 创建、commit、rollback 二级失败均返回结构化安全终态；rollback 未确认时设置
+  `manual_recovery_required` 并停止后续修复；
+- `RepairExecutor.apply` 接收类型化剩余预算与门禁；固定扩展快照携带已验证运行版本；
+- 测试：M6 定向 25、M1–M6 联合 116、完整 346、core 203、bearing 14、web 13 passed；修改范围
+  Ruff 通过；真实 MPh 1.3.1 + COMSOL 6.2 API repair smoke 再次通过，未运行 solve/audit；
+- 架构决策记录于 Accepted ADR 0007；提交证据以本 follow-up 最终记录为准。
+
 ## M7：轴承领域插件与确定性 Builder
 
 目标：在通用架构上实现当前支持的轴承需求。

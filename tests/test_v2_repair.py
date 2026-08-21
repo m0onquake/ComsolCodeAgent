@@ -53,6 +53,7 @@ from comsol_agent.v2.repair import (
     ErrorCode,
     GovernedRepairCaseSource,
     RepairCandidate,
+    RepairExecutionContext,
     RepairKind,
     RepairOrchestrator,
     RepairRuleContract,
@@ -124,18 +125,33 @@ def runtime_diagnosis(
 
 class FakeExecutor:
     def __init__(self, verifications: list[Observation] | None = None) -> None:
-        self.verifications = verifications or [observation(success=True, data={"gates": {}})]
+        self.verifications = verifications or [
+            observation(
+                success=True,
+                data={
+                    "gates": {
+                        "api": True,
+                        "pytest": True,
+                        "ruff": True,
+                        "static": True,
+                        "runtime": True,
+                    }
+                },
+            )
+        ]
         self.applied: list[RepairCandidate] = []
         self.rolled_back: list[str] = []
         self.committed: list[str] = []
+        self.limits: list[Any] = []
 
     async def create_checkpoint(
         self, diagnosis: Diagnosis, candidate: RepairCandidate
     ) -> str:
         return f"checkpoint:{candidate.candidate_id}"
 
-    async def apply(self, candidate: RepairCandidate) -> None:
+    async def apply(self, candidate: RepairCandidate, limits: Any) -> None:
         self.applied.append(candidate)
+        self.limits.append(limits)
 
     async def verify(
         self, candidate: RepairCandidate, trigger: Observation
@@ -158,22 +174,27 @@ class Rule:
         priority: int = 100,
         candidate_scope: AffectedScope | None = None,
         fail_proposal: bool = False,
+        preconditions: tuple[str, ...] = ("structured_evidence",),
+        compatibility: VersionCompatibility | None = None,
+        required_gates: frozenset[str] = frozenset({"api"}),
     ) -> None:
         self.active = False
         self.diagnosis = diagnosis
         self.fail_proposal = fail_proposal
         self.candidate_scope = candidate_scope or diagnosis.affected_scope
+        self.required_gates = required_gates
         self.repair_contract = RepairRuleContract(
             error_classes=frozenset({diagnosis.error_class}),
             error_codes=frozenset({diagnosis.error_code}),
             stages=frozenset({diagnosis.stage}),
-            preconditions=("structured evidence exists",),
+            preconditions=preconditions,
             modification_scope=diagnosis.affected_scope,
             required_permissions=frozenset(),
             max_attempts=1,
             verifier="fixture.verify",
             rollback_required=True,
-            compatibility=VersionCompatibility(agent_api=">=2.0,<3", comsol=("6.x",)),
+            compatibility=compatibility
+            or VersionCompatibility(agent_api=">=2.0,<3", comsol=("6.x",)),
             provenance="tests/test_v2_repair.py",
         )
         self.manifest = ExtensionManifest(
@@ -227,7 +248,7 @@ class Rule:
             verifier="fixture.verify",
             payload={"operation": "local-only"},
             provenance=f"extension:{self.manifest.id}",
-            required_gates=frozenset({"api"}),
+            required_gates=self.required_gates,
         ).model_dump(mode="json")
 
     async def verify(self, trigger: Observation) -> bool:
@@ -369,11 +390,12 @@ async def test_pytest_failure_uses_m3_exact_patch_checkpoint_and_verifier(
             verifier="pytest",
             payload={"patch": patch.model_dump(mode="json")},
             provenance="bounded-llm-fixture",
+            required_gates=frozenset({"pytest"}),
         )
 
     async def verify(candidate: RepairCandidate, trigger: Observation) -> Observation:
         assert source.read_text(encoding="utf-8") == "value = 2\n"
-        return observation(success=True, stage="test")
+        return observation(success=True, stage="test", data={"gates": {"pytest": True}})
 
     extensions = registry(tmp_path)
     async with extensions.snapshot() as snapshot:
@@ -399,7 +421,18 @@ async def test_non_convergence_enters_only_solver_strategy(tmp_path: Path) -> No
     )
     extensions = registry(tmp_path)
     await extensions.register(SolverRule(diagnosis))
-    executor = FakeExecutor([observation(success=True, data={"gates": {"solve": True}})])
+    executor = FakeExecutor(
+        [
+            observation(
+                success=True,
+                data={
+                    "gates": {"solve": True},
+                    "criteria": {"target step converged": True},
+                    "usage": {"solves": 1, "core_hours": 0.1},
+                },
+            )
+        ]
+    )
     local_called = False
 
     async def local(*_: Any) -> None:
@@ -467,6 +500,7 @@ async def test_physics_audit_cannot_be_repaired_by_relaxing_threshold(tmp_path: 
             scope=AffectedScope(kind="audit_threshold"),
             verifier="audit",
             provenance="unsafe-fixture",
+            required_gates=frozenset({"audit"}),
         )
 
     executor = FakeExecutor()
@@ -496,6 +530,7 @@ async def test_same_failure_fingerprint_stops_and_rolls_back(tmp_path: Path) -> 
             scope=diagnosis.affected_scope,
             verifier="pytest",
             provenance="local-pattern",
+            required_gates=frozenset({"pytest"}),
         )
 
     executor = FakeExecutor([repeated])
@@ -549,10 +584,11 @@ async def test_cancellation_after_checkpoint_rolls_back_and_preserves_truth(
             scope=diagnosis.affected_scope,
             verifier="pytest",
             provenance="cancel-fixture",
+            required_gates=frozenset({"pytest"}),
         )
 
     class CancellingExecutor(FakeExecutor):
-        async def apply(self, candidate: RepairCandidate) -> None:
+        async def apply(self, candidate: RepairCandidate, limits: Any) -> None:
             raise RunCancelledError("operator cancellation")
 
     executor = CancellingExecutor()
@@ -585,6 +621,7 @@ async def test_budget_exhaustion_rolls_back_each_failed_candidate(tmp_path: Path
                 verifier="verify",
                 provenance=kind,
                 repair_case_id="mem_case" if kind == RepairKind.REPAIR_CASE else None,
+                required_gates=frozenset({"pytest"}),
             )
 
         return propose
@@ -742,6 +779,9 @@ async def test_repair_case_requires_exact_signature_versions_topology_and_govern
         ).repair(trigger, diagnosis)
     assert result.status == RepairStatus.COMPLETED
     assert result.attempts[0].candidate.repair_case_id == repair.id
+    assert result.attempts[0].candidate.required_gates == frozenset(
+        {"static", "runtime"}
+    )
     assert evaluator.metrics().repair_success_rate == 1.0
 
 
@@ -781,3 +821,284 @@ async def test_trace_rebuilds_diagnosis_candidate_repair_verify_complete(
     assert manifest.repairs[0].outcome == "success"
     assert manifest.checkpoints
     assert [item["event"] for item in manifest.trace_events] == events
+
+
+def test_candidate_cannot_omit_all_acceptance_gates() -> None:
+    trigger = observation(error_class="pytest_failure", stage="test")
+    diagnosis = DiagnosticService().from_observation(trigger)
+    with pytest.raises(ValueError, match="required_gates"):
+        RepairCandidate(
+            kind=RepairKind.LOCAL_PATTERN,
+            observation_id=trigger.observation_id,
+            diagnosis_fingerprint=diagnosis.fingerprint,
+            scope=diagnosis.affected_scope,
+            verifier="pytest",
+            provenance="unsafe-empty-gates",
+            required_gates=frozenset(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_policy_gate_cannot_be_lowered_by_candidate(tmp_path: Path) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.INVALID_PROPERTY, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(
+        Rule(diagnosis, required_gates=frozenset({"static"}))
+    )
+    executor = FakeExecutor(
+        [observation(success=True, data={"gates": {"static": True}})]
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(), snapshot=snapshot, executor=executor
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.UNSAFE
+    assert "mandatory gates" in result.attempts[0].failure_reason
+    assert executor.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_rule_max_attempts_persists_for_orchestrator_run(tmp_path: Path) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.INVALID_PROPERTY, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(Rule(diagnosis))
+    executor = FakeExecutor([observation(error_class="ruff_failure", stage="test")])
+    async with extensions.snapshot() as snapshot:
+        orchestrator = RepairOrchestrator(
+            diagnostics=DiagnosticService(), snapshot=snapshot, executor=executor
+        )
+        first = await orchestrator.repair(trigger, diagnosis)
+        second = await orchestrator.repair(trigger, diagnosis)
+    assert first.status == RepairStatus.UNSAFE
+    assert second.status == RepairStatus.FAILED
+    assert len(executor.applied) == 1
+    assert any(
+        item.event == "contract_rejected"
+        and "attempt budget" in item.detail["reason"]
+        for item in second.trace
+    )
+
+
+@pytest.mark.asyncio
+async def test_contract_precondition_and_builder_compatibility_are_enforced(
+    tmp_path: Path,
+) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.UNKNOWN_FEATURE, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(
+        Rule(
+            diagnosis,
+            preconditions=("geometry_is_finalized",),
+            compatibility=VersionCompatibility(
+                agent_api=">=2.0,<3",
+                comsol=("6.x",),
+                builders={"fixture.builder": ">=2,<3"},
+            ),
+        )
+    )
+    executor = FakeExecutor()
+    context = RepairExecutionContext(
+        agent_version="2.0.0",
+        comsol_version="6.2",
+        builder_versions={"fixture.builder": "1.5.0"},
+        satisfied_preconditions=frozenset(),
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=executor,
+            execution_context=context,
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.FAILED
+    assert not executor.applied
+    contract_events = [item for item in result.trace if item.event == "contract_rejected"]
+    assert contract_events
+    assert "precondition" in contract_events[0].detail["reason"]
+
+    compatible_precondition = RepairExecutionContext(
+        agent_version="2.0.0",
+        comsol_version="6.2",
+        builder_versions={"fixture.builder": "1.5.0"},
+        satisfied_preconditions=frozenset({"geometry_is_finalized"}),
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=executor,
+            execution_context=compatible_precondition,
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.FAILED
+    assert "Builder fixture.builder" in next(
+        item.detail["reason"]
+        for item in result.trace
+        if item.event == "contract_rejected"
+    )
+
+
+@pytest.mark.asyncio
+async def test_solver_contract_budgets_criteria_and_checkpoint_are_enforced(
+    tmp_path: Path,
+) -> None:
+    trigger = observation(error_class="runtime_failure", stage="solve")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.NON_CONVERGENCE,
+        RuntimeErrorClass.SOLVE_CONVERGENCE,
+        trigger,
+        stage=RuntimeStage.SOLVE,
+        scope=AffectedScope(kind="solver", targets=("study.sol1",)),
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(SolverRule(diagnosis))
+    exhausted = RepairExecutionContext(
+        agent_version="2.0.0",
+        comsol_version="6.2",
+        solve_attempts_used=3,
+        core_hours_used=0.1,
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=FakeExecutor(),
+            execution_context=exhausted,
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.BUDGET_EXHAUSTED
+    assert not result.attempts
+
+    executor = FakeExecutor(
+        [
+            observation(
+                success=True,
+                data={
+                    "gates": {"solve": True},
+                    "criteria": {"target step converged": False},
+                    "usage": {"solves": 1, "core_hours": 0.2},
+                },
+            )
+        ]
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(), snapshot=snapshot, executor=executor
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.UNSAFE
+    assert executor.rolled_back
+    assert executor.limits[0].max_solves == 3
+    assert executor.limits[0].core_hour_budget == 1.0
+
+    no_core_budget = RepairExecutionContext(
+        agent_version="2.0.0", comsol_version="6.2", core_hours_used=1.0
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=FakeExecutor(),
+            execution_context=no_core_budget,
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.BUDGET_EXHAUSTED
+
+    wrong_checkpoint_diagnosis = diagnosis.model_copy(
+        update={"compatible_checkpoint": "checkpoint-C"}
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(), snapshot=snapshot, executor=FakeExecutor()
+        ).repair(trigger, wrong_checkpoint_diagnosis)
+    assert result.status == RepairStatus.FAILED
+    assert any(
+        item.event == "contract_rejected"
+        and "checkpoint" in item.detail["reason"]
+        for item in result.trace
+    )
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_creation_failure_is_structured(tmp_path: Path) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.INVALID_PROPERTY, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(Rule(diagnosis))
+
+    class BrokenCheckpointExecutor(FakeExecutor):
+        async def create_checkpoint(
+            self, diagnosis: Diagnosis, candidate: RepairCandidate
+        ) -> str:
+            raise OSError("checkpoint disk full")
+
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=BrokenCheckpointExecutor(),
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.CHECKPOINT_FAILED
+    assert result.attempts[0].failure_reason == "OSError: checkpoint disk full"
+    assert any(item.event == "checkpoint_failed" for item in result.trace)
+
+
+@pytest.mark.asyncio
+async def test_rollback_secondary_failure_requires_manual_recovery(tmp_path: Path) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.INVALID_PROPERTY, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(Rule(diagnosis))
+
+    class BrokenRollbackExecutor(FakeExecutor):
+        async def apply(self, candidate: RepairCandidate, limits: Any) -> None:
+            raise RuntimeError("apply failed")
+
+        async def rollback(self, checkpoint: str) -> None:
+            raise OSError("restore failed")
+
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(),
+            snapshot=snapshot,
+            executor=BrokenRollbackExecutor(),
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.ROLLBACK_FAILED
+    assert result.manual_recovery_required
+    assert result.attempts[0].failure_reason == "RuntimeError: apply failed"
+    assert result.attempts[0].rollback_failure == "OSError: restore failed"
+    assert any(item.event == "rollback_failed" for item in result.trace)
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_rolls_back_and_is_structured(tmp_path: Path) -> None:
+    trigger = observation(error_class="runtime_failure")
+    diagnosis = runtime_diagnosis(
+        ErrorCode.INVALID_PROPERTY, RuntimeErrorClass.API_CODE, trigger
+    )
+    extensions = registry(tmp_path)
+    await extensions.register(Rule(diagnosis))
+
+    class BrokenCommitExecutor(FakeExecutor):
+        async def commit(self, checkpoint: str) -> None:
+            raise OSError("commit failed")
+
+    executor = BrokenCommitExecutor(
+        [observation(success=True, data={"gates": {"api": True}})]
+    )
+    async with extensions.snapshot() as snapshot:
+        result = await RepairOrchestrator(
+            diagnostics=DiagnosticService(), snapshot=snapshot, executor=executor
+        ).repair(trigger, diagnosis)
+    assert result.status == RepairStatus.COMMIT_FAILED
+    assert result.attempts[0].rolled_back
+    assert not result.manual_recovery_required

@@ -155,7 +155,7 @@ class PropertyRepairRule(SmokeExtension):
             error_classes=frozenset({"api_code_error"}),
             error_codes=frozenset({ErrorCode.INVALID_PROPERTY}),
             stages=frozenset({RuntimeStage.BUILD}),
-            preconditions=("B checkpoint is compatible",),
+            preconditions=("compatible_checkpoint",),
             modification_scope=AffectedScope(
                 kind="property", targets=("component.comp1.geom1.blk1.size",)
             ),
@@ -210,7 +210,7 @@ class RuntimeRepairExecutor:
     ) -> str:
         return self.checkpoint_manifest
 
-    async def apply(self, candidate: RepairCandidate) -> None:
+    async def apply(self, candidate: RepairCandidate, limits: Any) -> None:
         restored = await self.runtime.restore_model(
             CheckpointRestoreRequest(
                 run_id=f"restore-{uuid4().hex}",
