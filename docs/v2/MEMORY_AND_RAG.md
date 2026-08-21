@@ -203,3 +203,52 @@ LLM 不得自行宣布案例 verified；晋升由 Auditor 和 Promotion Policy �
 - 检索延迟与上下文 token 成本。
 
 必须以执行和审计结果评估检索质量，不能只使用文本相似度指标。
+
+## 14. M4 实现映射
+
+M4 的领域无关实现位于 `comsol_agent/v2/memory/`：
+
+- `contracts.py` 定义严格且可生成 JSON Schema 的 MemoryRecord、VerifiedCase、RepairCase、
+  provenance、兼容、质量、检索、Context Pack 和执行结果合同；Working/Session 使用独立的
+  RuntimeMemoryEntry，不能伪装为长期 MemoryRecord；
+- `store.py` 提供运行态 Working/Session 存储、带结构化/哈希/关系索引的参考 Repository，以及
+  原子写入的 `1.0` JSON 快照后端。新长期记录只能以 quarantined 状态写入，删除移除内容并保留
+  无内容 tombstone；
+- `governance.py` 实现 quarantine、candidate、active/verified、needs_revalidation、invalidated 和
+  删除。VerifiedCase 与 RepairCase 使用不同晋升证据，Repository 拒绝绕过治理的状态变更；
+- `retrieval.py` 在融合结构化、BM25、向量和关系分数前执行 domain、topology、状态、版本、作用域、
+  错误签名和 artifact 引用硬检查。向量器和权重均可注入；默认 hashing vectorizer 只作为离线、
+  确定性的参考实现；
+- `context.py` 只组合一个主成功案例、最多两个辅助案例、当前 API rule、一个相符 RepairCase 和
+  Observation，保留角色、来源、可信度和 artifact 引用，不复制历史完整代码；
+- `evaluation.py` 以采用后的首次执行、物理审计和修复结果统计质量，并把采用成功/失败回写案例，
+  供后续重排使用；
+- `migration.py` 和 `scripts/migrate_v2_memory.py` 从既有 V2 RunManifest 回填 quarantined
+  candidate_case。迁移不推断严格审计，也不自动晋升。
+
+持久化、删除、硬过滤和执行门禁决策见
+[ADR 0004](adr/0004-memory-governance-persistence-and-retrieval.md)。
+
+## 15. 迁移说明
+
+从已有 RunManifest 回填到新的本地 JSON Memory Adapter：
+
+```bash
+.venv/bin/python scripts/migrate_v2_memory.py \
+  --store .v2-memory/memory.json \
+  --agent-version 2.0.0 \
+  path/to/run-manifest.json [path/to/another-manifest.json ...]
+```
+
+迁移行为是保守且幂等的：
+
+- 输入必须包含 `run_id`、Goal、运行状态、版本和 artifact 列表；不完整输入进入 skipped 报告；
+- 相同 `content_ref` 不重复导入；
+- 所有导入项均为 quarantined `candidate_case`，旧状态 `completed` 或旧 `audits.passed` 不能替代
+  当前严格审计；
+- 操作者需先补齐结构化 VerifiedCase/RepairCase、当前兼容范围、引用哈希和 provenance，再通过
+  `MemoryGovernance.nominate()` 与对应 promotion 方法晋升；
+- 旧的 `comsol_agent/memory/` 会话归档不自动迁移为长期可信案例。它缺少 M4 所需的运行、物理审计
+  和兼容证据，只能作为人工迁移输入；
+- 删除后的 ID 有 tombstone，不能通过重复迁移恢复。若确需恢复，必须建立新记录 ID 和新的
+  provenance 链，并重新经过 quarantine 与审计。

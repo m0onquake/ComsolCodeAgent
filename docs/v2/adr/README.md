@@ -17,6 +17,7 @@
 | [0001](0001-extension-first-agent-kernel.md) | 采用扩展优先的领域无关 Agent Kernel | Accepted |
 | [0002](0002-extension-trust-lifecycle-and-resolution.md) | 扩展信任、生命周期与确定性解析策略 | Accepted |
 | [0003](0003-workspace-sandbox-and-code-iteration-boundary.md) | 工作区、Shell 策略沙箱与代码迭代回滚边界 | Accepted |
+| [0004](0004-memory-governance-persistence-and-retrieval.md) | 记忆治理、持久化与检索执行门禁 | Accepted |
 
 ## 新建模板
 

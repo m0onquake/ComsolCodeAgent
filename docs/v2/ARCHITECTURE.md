@@ -270,3 +270,17 @@ M3 的领域无关 Code Agent 执行层位于 `comsol_agent/v2/tools/` 和
 - `CodeToolExecutor` 以能力名到 handler 的映射实现 Kernel `ToolExecutor` 合同，文件、沙箱与测试
   失败无需在 Kernel 增加条件分支。更严格的外部隔离边界和 rollback 决策见
   [ADR 0003](adr/0003-workspace-sandbox-and-code-iteration-boundary.md)。
+
+## 13. M4 实现映射
+
+M4 在 `comsol_agent/v2/memory/` 实现领域无关的多级记忆、治理和混合检索。运行态 Working/Session
+与长期 Episodic/Semantic/Procedural 严格分离；Artifact 只保留内容寻址引用。所有长期输入先进入
+quarantine，VerifiedCase 与 RepairCase 分别通过严格审计证据和 runtime 复验晋升，Repository
+本身拒绝直接写入 verified 或绕过治理改变状态。
+
+混合 RAG 在 BM25、向量、关系和结构化分数融合前执行 domain、topology、版本、作用域、状态池、
+错误签名和引用完整性硬过滤。兼容信息或引用复验缺失时，案例不能成为可执行基线；引用损坏会
+进入 `needs_revalidation`。Context Pack 只传递有界接口/差异、角色、来源、可信度和 artifact 引用。
+检索采用后的执行、物理审计和修复结果进入评估及后续重排，相似度本身不构成成功证据。持久化、
+删除 tombstone、迁移 quarantine 和执行门禁见
+[ADR 0004](adr/0004-memory-governance-persistence-and-retrieval.md)。
