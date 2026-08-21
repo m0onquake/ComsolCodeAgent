@@ -20,28 +20,23 @@ Runtime 不负责理解自然语言、选择最终修复策略或宣布物理成
 
 ## 3. MCP/Tool 接口
 
-建议能力：
+M5 已实现的最小能力：
 
 ```text
-comsol.health
-comsol.create_scratch_model
-comsol.execute_segment
-comsol.run_geometry
-comsol.list_features
-comsol.inspect_feature
-comsol.inspect_selection
-comsol.inspect_pairs
-comsol.run_mesh
-comsol.configure_study
-comsol.solve_stage
+comsol.runtime_status
+comsol.create_model / load_model / save_model / close_model
+comsol.apply_parameters
+comsol.execute_registered
+comsol.build / mesh / solve
 comsol.evaluate
-comsol.export_plot
-comsol.save_checkpoint
-comsol.restore_checkpoint
-comsol.close_model
+comsol.export_results
+comsol.create_checkpoint / inspect_checkpoint / restore_checkpoint
+comsol.cancel_run / inspect_failure
 ```
 
-每个工具使用类型化参数，声明只读/写入、幂等性、超时和所需模型状态。
+每个 capability 是独立的类型化 MCP Tool，声明只读/写入、幂等性、超时和 COMSOL 权限。
+`execute_registered` 只接受可信扩展快照中的 Builder/Path ID；不存在任意 Java/Python/Shell 工具。
+完整边界见 [TOOLS_MCP_SKILLS.md](TOOLS_MCP_SKILLS.md)。
 
 ## 4. Structured Runtime Result
 
@@ -73,16 +68,15 @@ comsol.close_model
 
 ## 5. 阶段与检查点
 
-| 阶段 | 完成条件 | 检查点 |
+| 阶段 | 完成条件 | M5 状态/检查点 |
 |---|---|---|
-| A Parameters/Geometry | 参数、基本几何可运行 | `checkpoint_A_geometry.mph` |
-| B Topology/Assembly | 滚子、保持架、分割和装配完成 | `checkpoint_B_assembly.mph` |
-| C Selections/Physics | 选择集、材料、约束、载荷和接触有效 | `checkpoint_C_physics.mph` |
-| D Mesh/Study/Results | 网格、研究和结果节点有效 | `checkpoint_D_mesh_study.mph` |
-| Initialization | 接触初始化收敛且状态可审计 | `checkpoint_initialized.mph` |
-| Solve | 目标载荷步收敛 | `checkpoint_solved.mph` |
+| A Input/Static Validation | 严格合同、输入摘要和隔离目录有效 | 记录输入哈希，不保存 `.mph` |
+| B Build | 参数、注册 Builder、几何/材料/物理和网格完成 | 保存兼容性绑定的 B `.mph` 与 manifest |
+| C Solve | 研究/求解完成，收敛状态独立记录 | 失败时保留 B 检查点 |
+| D Results/Audit | 结果评估/导出且注册 Auditor 通过 | 保存结果和 solved `.mph` artifact |
 
-检查点绑定 EngineeringSpec、代码、扩展集合和 COMSOL 版本哈希。任一不匹配则拒绝恢复。
+检查点记录 schema/runtime、COMSOL、MPh/backend、Builder、完整扩展快照、输入摘要、模型摘要、
+模型内容 SHA-256 和 provenance。manifest 损坏、模型哈希错误或任一兼容字段不匹配均拒绝恢复。
 
 ## 6. 执行流程
 
@@ -112,6 +106,13 @@ comsol.close_model
 | `NON_CONVERGENCE` | 牛顿、接触或参数步失败 | 初始化/延续/求解器 |
 | `PHYSICS_AUDIT_FAILURE` | 反力、载荷或接触力不闭合 | 物理合同与边界条件 |
 | `RUNTIME_UNAVAILABLE` | 许可、服务、连接或版本问题 | 环境，不修改模型代码 |
+| `CANCELLED` | 用户/策略发出取消请求 | Worker cleanup；不等同于硬终止 |
+| `TIMEOUT` | 阶段或 Worker 超过预算 | 释放 host lease；未确认 Worker 隔离 |
+| `RESOURCE_UNAVAILABLE` | 许可证、核心、会话或 worker 不可租用 | 环境/调度，不修改模型 |
+
+这些具体 code 归入稳定顶层类别：`api_code_error`、`geometry_error`、`mesh_error`、
+`solve_or_convergence_error`、`cancelled`、`timeout`、`resource_error` 和
+`physics_audit_failure`。顶层用于编排，具体 code 用于 M6 Repair Rule 匹配。
 
 ## 8. 修复决策
 
@@ -196,7 +197,10 @@ Solver Strategy 也是动态扩展，必须声明适用错误、前置条件、�
 - 长运行支持取消和超时；
 - 失败模型保留最小诊断 artifact；
 - 日志过滤密钥、授权信息和不必要的大数组；
-- 并发运行使用独立 COMSOL 会话或显式队列。
+- MPh 每个 Python 进程只能维护一个 Client；M5 使用单个长生命周期会话、资源租约和显式队列；
+- 普通 asyncio cancellation 只表示请求，不证明 COMSOL 已终止；只有 Worker 确认硬终止才能如此
+  记录，未确认的进程内 MPh worker 必须 quarantine；
+- 需要可靠强制终止和多会话并行时，使用可回收进程 Worker，并受 COMSOL 许可证/核心预算约束。
 
 ## 13. Runtime 验收
 
@@ -208,3 +212,20 @@ Solver Strategy 也是动态扩展，必须声明适用错误、前置条件、�
 - 同错重复受到限制；
 - API 成功、Solve 成功和 Audit 成功状态分离；
 - Trace 能重建一次运行的关键动作。
+
+## 14. M5 实现映射
+
+M5 位于 `comsol_agent/v2/runtime/comsol/`：
+
+- `contracts.py`：运行请求、阶段、结果、Artifact、Checkpoint、Session 和错误合同；
+- `backend.py`：`ComsolBackend`/`BackendWorker` 边界、明确取消语义的 in-process executor，以及
+  复用 V1 `COMSOLClient` 的 `MphBackendAdapter`；
+- `artifacts.py`：每 Run/Model 隔离目录、原子 JSON manifest、SHA-256 与 provenance；
+- `service.py`：长生命周期会话、唯一物理名、模型锁、资源租约、A-D 编排、B→C 恢复、cleanup、
+  取消和失败索引；
+- `mcp.py`：17 个独立 schema 的最小 MCP Tool extensions，通过 M2 Registry 接入 Kernel；
+- `scripts/run_v2_comsol_smoke.py`：独立的真实 COMSOL lifecycle gate。
+
+本地复用和外部调研见 [THIRD_PARTY_COMSOL_RUNTIME.md](THIRD_PARTY_COMSOL_RUNTIME.md)，架构决策见
+[ADR 0005](adr/0005-comsol-runtime-worker-checkpoint-and-tool-boundary.md)。M5 不包含领域 Builder、
+Solver Strategy 或轴承物理 Auditor；这些由 M6/M7 扩展注入，严格物理回归属于 M7/M9。

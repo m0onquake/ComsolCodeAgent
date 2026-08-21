@@ -284,3 +284,18 @@ quarantine，VerifiedCase 与 RepairCase 分别通过严格审计证据和 runti
 检索采用后的执行、物理审计和修复结果进入评估及后续重排，相似度本身不构成成功证据。持久化、
 删除 tombstone、迁移 quarantine 和执行门禁见
 [ADR 0004](adr/0004-memory-governance-persistence-and-retrieval.md)。
+
+## 14. M5 实现映射
+
+M5 在 `comsol_agent/v2/runtime/comsol/` 实现领域无关的类型化 COMSOL Runtime。Kernel 仍只看到
+`Observation` 和动态 MCP Tool；它不导入 MPh、旧 dict 工具、COMSOL 标签或领域 Builder。
+
+Runtime 通过 `MphBackendAdapter` 复用现有 `COMSOLClient`/`ModelHandle` 和底层 MPh 操作，通过
+`BackendWorker` 隔离阻塞执行语义。一个进程只维护一个长生命周期 MPh Client；资源租约和逻辑
+模型锁串行化写操作，每个 Run 使用唯一物理名和隔离 artifact 目录。A-D 状态分离输入验证、构建/
+网格、求解和结果/物理审计；C 失败保留 B 检查点，恢复必须匹配所有版本、输入和内容哈希。
+
+最小 MCP 面只暴露生命周期、参数补丁、注册 Builder/Path、build/mesh/solve、evaluate/export、
+checkpoint、取消和失败检查，不暴露任意 Java/Python/Shell。取消是否终止 COMSOL 由 Worker 明确
+报告；普通 asyncio 取消不能伪造硬终止。该隔离和权限决策见
+[ADR 0005](adr/0005-comsol-runtime-worker-checkpoint-and-tool-boundary.md)。

@@ -177,6 +177,8 @@ flowchart LR
 
 目标：将 COMSOL 封装为受控、结构化、可恢复的执行环境。
 
+状态：`complete`（2026-08-21）。
+
 交付物：
 
 - COMSOL MCP Server 或等价受控工具服务；
@@ -187,6 +189,25 @@ flowchart LR
 - artifact 管理。
 
 验收：已知 API 错误完整上浮；C 阶段失败可从 B 检查点恢复；取消后释放资源。
+
+完成记录：
+
+- 实现：`comsol_agent/v2/runtime/comsol/` 提供严格合同、单客户端会话、唯一物理名、模型锁、资源
+  租约、A-D 编排、B 检查点恢复、ArtifactStore、原因链分类、`MphBackendAdapter`、可替换
+  `BackendWorker` 和 17 个最小 MCP Tool extensions；
+- 本地复用：直接复用 V1 `COMSOLClient`/`ModelHandle` 与底层 MPh 操作，不调用会吞掉原因链的
+  dict wrappers，不注册任意 Java/Python/Shell；外部项目只作固定 commit/许可证设计参考；
+- 测试：M5 定向 13 passed；M1–M5 联合 85 passed；完整套件 315 passed，1 个既有
+  Starlette/httpx 弃用 warning；core 203、bearing domain 14、web 13 passed；
+- Ruff：M5、`comsol_agent/v2` 和相关测试/脚本范围通过；全仓命令仍报告与 M4 基线相同的 3136
+  个既有旧代码/当前无关用户工作树问题，M5 没有新增；
+- COMSOL gate：本机 MPh 1.3.1 + COMSOL 6.2 lifecycle smoke 通过 start/create/save/close/stop，
+  隔离 `.mph` 为 19,952 bytes 且记录 SHA-256；M5 不以此冒充领域求解或严格物理审计；
+- ADR：新增 Accepted 的 ADR 0005；补齐 `TOOLS_MCP_SKILLS.md` 和第三方来源/许可证记录；
+- 未解决风险：进程内 MPh 阻塞调用不能可靠硬取消，未确认终止会 quarantine；需要强终止或并行
+  会话的部署必须实现可回收进程 worker 并受许可证/核心预算控制；
+- M6 输入：稳定错误类/具体 code 与完整 cause chain、兼容 B checkpoint、受控 Builder/Path 执行、
+  明确 termination confirmation、失败索引和 artifact provenance。
 
 ## M6：诊断、规则与修复编排
 
