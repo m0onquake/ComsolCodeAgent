@@ -33,8 +33,10 @@ from comsol_agent.v2.memory import (
     RepairCase,
     RepairVerification,
     RetrievalEvaluator,
+    RetrievalHit,
     RetrievalOutcome,
     RetrievalQuery,
+    RetrievalResult,
     RuntimeMemory,
     RuntimeMemoryEntry,
     UngovernedMemoryWriteError,
@@ -168,6 +170,31 @@ def repair_record(record_id: str, *, runtime_verified: bool) -> MemoryRecord:
         ),
         provenance=provenance(),
         compatibility=compatibility(),
+    )
+
+
+def api_rule_record(record_id: str) -> MemoryRecord:
+    return MemoryRecord(
+        id=record_id,
+        layer=MemoryLayer.SEMANTIC,
+        type=MemoryType.API_RULE,
+        summary="Versioned COMSOL selection API rule",
+        content_ref=f"artifact://{record_id}/rule.json",
+        structured={
+            "rule": "create selections before use",
+            "stage": "selections",
+            "version": "1.0",
+        },
+        provenance=provenance(),
+        compatibility=compatibility(),
+        citations=[
+            SourceRef(
+                kind="code",
+                identifier="selection-builder",
+                version="1.0",
+                uri=f"artifact://{record_id}/source.py",
+            )
+        ],
     )
 
 
@@ -313,6 +340,52 @@ class TestGovernance:
 
 
 class TestHybridRetrieval:
+    def test_versioned_api_rule_without_query_versions_is_rejected_from_context(self):
+        repository = MemoryRepository()
+        governance = MemoryGovernance(repository)
+        rule = api_rule_record("mem_versioned_rule")
+        governance.ingest(rule)
+        governance.nominate(rule.id)
+        active = governance.activate_fact(rule.id)
+        result = HybridRetriever(
+            repository,
+            reference_validator=ReferenceCatalog(
+                {
+                    active.content_ref: None,
+                    active.citations[0].uri: None,
+                }
+            ),
+        ).retrieve(
+            RetrievalQuery(
+                text="selection API",
+                domain="bearing",
+                topology_signature="bearing/cylindrical/12",
+            )
+        )
+        pack = ContextPackBuilder().build(result)
+
+        assert result.hits == []
+        assert result.rejected[0].record_id == rule.id
+        assert {
+            "COMSOL version required for compatibility check",
+            "Agent version required for compatibility check",
+            "builder version missing: bearing.builder",
+            "contract version missing: bearing.spec",
+        }.issubset(result.rejected[0].reasons)
+        assert pack.api_rules == []
+
+        incomplete_hit = RetrievalHit(
+            record=active,
+            score=1.0,
+            executable=False,
+            compatibility_checked=False,
+            references_checked=True,
+        )
+        defensive_pack = ContextPackBuilder().build(
+            RetrievalResult(query=result.query, hits=[incomplete_hit])
+        )
+        assert defensive_pack.api_rules == []
+
     def test_compatible_case_hits_and_wrong_topology_or_version_are_rejected(self):
         repository = MemoryRepository()
         governance = MemoryGovernance(repository)

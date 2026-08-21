@@ -108,7 +108,10 @@ class HybridRetriever:
                 domain=query.domain,
                 topology_signature=query.topology_signature,
             )
-            if not decision.compatible:
+            if not decision.compatible or (
+                record.status in {MemoryStatus.VERIFIED, MemoryStatus.ACTIVE}
+                and not decision.complete
+            ):
                 reasons.extend(decision.reasons)
             references_checked = self.reference_validator is not None
             references_valid = False
@@ -176,7 +179,7 @@ class HybridRetriever:
                     score=max(0.0, score),
                     channel_scores=channels,
                     executable=executable,
-                    compatibility_checked=True,
+                    compatibility_checked=decision.complete,
                     references_checked=references_checked,
                     reasons=reasons,
                 )

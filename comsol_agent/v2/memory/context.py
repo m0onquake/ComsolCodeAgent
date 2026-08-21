@@ -43,6 +43,8 @@ class ContextPackBuilder:
             self._item(hit, ContextRole.FACT)
             for hit in result.hits
             if hit.record.type == MemoryType.API_RULE
+            and hit.compatibility_checked
+            and hit.references_checked
         ]
         repairs = [
             hit

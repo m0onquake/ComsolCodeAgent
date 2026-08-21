@@ -160,7 +160,7 @@ flowchart LR
 - 安全门禁：Repository 拒绝直接新增非 quarantine 记录和绕过治理的状态转换；VerifiedCase 只有
   最终规格、全阶段、目标步、严格物理门禁、完整 artifact/provenance 与匹配 Auditor 同时通过才
   可执行；RepairCase 只有相符错误签名且 static/runtime 复验有来源时可自动使用；
-- 测试：M4 定向 16 passed；M1–M4 联合 71 passed；完整非 COMSOL 套件 301 passed，1 个既有
+- 测试：M4 定向 17 passed；M1–M4 联合 72 passed；完整非 COMSOL 套件 302 passed，1 个既有
   Starlette/httpx 弃用 warning；
 - Ruff：M4 修改范围通过；全仓 `--statistics` 仍为 3136 个 M3 已记录的旧问题，M4 未新增问题；
 - COMSOL gate：不适用。M4 验收使用受控案例、引用 catalog 和执行结果合同验证记忆/RAG 策略，
