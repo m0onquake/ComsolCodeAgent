@@ -39,13 +39,12 @@ from .contracts import (
     RegisteredExecutionRequest,
     RuntimeOperation,
     RuntimeResult,
-    RuntimeRunRequest,
     SessionStatus,
     SessionStatusRequest,
 )
 from .service import ComsolRuntime
 
-Handler = Callable[[BaseModel], Awaitable[Any] | Any]
+Handler = Callable[[BaseModel, CancellationToken], Awaitable[Any] | Any]
 
 
 class RuntimeMcpTool:
@@ -117,7 +116,7 @@ class RuntimeMcpTool:
     async def execute(self, action: Action, cancellation: CancellationToken) -> Observation:
         cancellation.raise_if_cancelled()
         request = self.request_model.model_validate(action.arguments)
-        value = self.handler(request)
+        value = self.handler(request, cancellation)
         if inspect.isawaitable(value):
             value = await value
         if not isinstance(value, self.output_model):
@@ -145,32 +144,37 @@ class RuntimeMcpTool:
 
 
 def build_mcp_tools(runtime: ComsolRuntime) -> list[RuntimeMcpTool]:
-    async def runtime_status(_: SessionStatusRequest) -> SessionStatus:
+    async def runtime_status(
+        _: SessionStatusRequest, cancellation: CancellationToken
+    ) -> SessionStatus:
+        cancellation.raise_if_cancelled()
         return await runtime.status()
 
-    async def run_build(request: ModelActionRequest) -> RuntimeResult:
-        return await runtime.model_action(request, RuntimeOperation.BUILD)
+    async def run_build(
+        request: ModelActionRequest, cancellation: CancellationToken
+    ) -> RuntimeResult:
+        return await runtime.model_action(request, RuntimeOperation.BUILD, cancellation)
 
-    async def run_mesh(request: ModelActionRequest) -> RuntimeResult:
-        return await runtime.model_action(request, RuntimeOperation.MESH)
+    async def run_mesh(
+        request: ModelActionRequest, cancellation: CancellationToken
+    ) -> RuntimeResult:
+        return await runtime.model_action(request, RuntimeOperation.MESH, cancellation)
 
-    async def run_solve(request: ModelActionRequest) -> RuntimeResult:
-        return await runtime.model_action(request, RuntimeOperation.SOLVE)
+    async def run_solve(
+        request: ModelActionRequest, cancellation: CancellationToken
+    ) -> RuntimeResult:
+        return await runtime.model_action(request, RuntimeOperation.SOLVE, cancellation)
 
-    def inspect_checkpoint(request: CheckpointInspectRequest) -> Checkpoint:
+    def inspect_checkpoint(
+        request: CheckpointInspectRequest, cancellation: CancellationToken
+    ) -> Checkpoint:
+        cancellation.raise_if_cancelled()
         return runtime.inspect_checkpoint(request.manifest_path)
 
-    async def restore_checkpoint(request: CheckpointRestoreRequest) -> Checkpoint:
-        run_request = RuntimeRunRequest(
-            run_id=request.run_id,
-            model_id=request.model_id,
-            builder_id=request.builder_id,
-            builder_version=request.builder_version,
-            extension_versions=request.extension_versions,
-            specification=request.input_summary,
-            resume_checkpoint=request.manifest_path,
-        )
-        return await runtime.restore_checkpoint(run_request)
+    async def restore_checkpoint(
+        request: CheckpointRestoreRequest, cancellation: CancellationToken
+    ) -> RuntimeResult:
+        return await runtime.restore_model(request, cancellation)
 
     definitions: list[tuple[str, type[BaseModel], type[BaseModel], Handler, str, bool, bool]] = [
         (
@@ -278,7 +282,7 @@ def build_mcp_tools(runtime: ComsolRuntime) -> list[RuntimeMcpTool]:
         (
             "comsol.restore_checkpoint",
             CheckpointRestoreRequest,
-            Checkpoint,
+            RuntimeResult,
             restore_checkpoint,
             "model_write",
             False,
@@ -335,7 +339,8 @@ def build_mcp_tools(runtime: ComsolRuntime) -> list[RuntimeMcpTool]:
 
 
 def _cancel_handler(runtime: ComsolRuntime) -> Handler:
-    def cancel(request: CancelRunRequest) -> RuntimeResult:
+    def cancel(request: CancelRunRequest, cancellation: CancellationToken) -> RuntimeResult:
+        cancellation.raise_if_cancelled()
         cancelled = runtime.cancel_run(request)
         return RuntimeResult(
             run_id=request.run_id,
@@ -349,7 +354,10 @@ def _cancel_handler(runtime: ComsolRuntime) -> Handler:
 
 
 def _failure_handler(runtime: ComsolRuntime) -> Handler:
-    def inspect_failure(request: FailureInspectRequest) -> RuntimeResult:
+    def inspect_failure(
+        request: FailureInspectRequest, cancellation: CancellationToken
+    ) -> RuntimeResult:
+        cancellation.raise_if_cancelled()
         failure = runtime.inspect_failure(request)
         return RuntimeResult(
             run_id=request.run_id,

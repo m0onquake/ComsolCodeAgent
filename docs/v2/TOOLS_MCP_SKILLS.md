@@ -24,7 +24,8 @@ M5 提供以下类型化能力：
 - `comsol.runtime_status`；
 - `comsol.create_model`、`comsol.load_model`、`comsol.save_model`、`comsol.close_model`；
 - `comsol.apply_parameters`；
-- `comsol.execute_registered`，只接受已注册 Builder/Deterministic Path 的稳定 ID；
+- `comsol.execute_registered`，只接受已注册 Builder/Deterministic Path 的稳定 ID、
+  版本、kind 和 capability；
 - `comsol.build`、`comsol.mesh`、`comsol.solve`；
 - `comsol.evaluate`、`comsol.export_results`；
 - `comsol.create_checkpoint`、`comsol.inspect_checkpoint`、`comsol.restore_checkpoint`；
@@ -75,10 +76,19 @@ COMSOL MCP 的 `Observation.data` 是严格的 `RuntimeResult`、`Checkpoint` �
 可靠终止；未确认的超时/取消会将 worker 隔离，禁止复用。生产级强制终止必须使用可回收的独立
 Worker 进程，M5 已把该行为放在 `BackendWorker` 边界后，不要求 Kernel 改动。
 
+MCP Tool 不在进入 Runtime 时替换 token；Kernel 交付的 token 会在公开操作整个锁等待和
+Worker 执行期间注册在 run ID 下。`comsol.cancel_run` 只对该 token 发出取消，不虚假声明
+COMSOL 进程已终止。
+
 ## 8. 扩展与测试要求
 
 - MCP Tool 仍通过 M2 Registry 注册、启停、冲突解析和固定快照；
-- Builder/Path/Auditor 只能通过稳定扩展 ID 注入 `MphBackendAdapter`；
+- Builder/Path handler 通过 `PinnedExecutionCatalog` 注入 `MphBackendAdapter`；catalog 在创建和
+  执行时均校验 handler 所有者就是当前 Registry 固定快照的扩展实例，且 ID、
+  version、kind 和 capability 全部匹配；
+- `create_checkpoint`/`restore_checkpoint` 都以独立的 parameters/specification 构建输入哈希；
+  restore 通过校验后真实加载 checkpoint `.mph`，只检查 manifest 的读操作是
+  `inspect_checkpoint`；
 - schema、权限、取消、锁、checkpoint 和错误链必须有 fake backend 测试；
 - 真实 COMSOL gate 与 fake 测试分开记录；
 - Skill 测试只能证明工作流选择，不能代替工具或物理验收。

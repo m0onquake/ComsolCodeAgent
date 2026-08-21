@@ -10,6 +10,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
 
+from comsol_agent.v2.extensions import ExtensionKind, ExtensionSnapshot, ResolutionContext
 from comsol_agent.v2.kernel import CancellationToken
 
 from .contracts import RuntimeOperation
@@ -24,6 +25,127 @@ class BackendCapabilities:
     hard_cancel: bool
 
 
+class SnapshotBindingError(RuntimeError):
+    """Requested executable extension does not match the pinned Registry snapshot."""
+
+
+@dataclass(frozen=True)
+class RegisteredHandlerBinding:
+    extension: Any
+    extension_id: str
+    extension_version: str
+    extension_kind: ExtensionKind
+    capability: str
+    handler: Callable[[Any, dict[str, Any]], Any]
+
+
+class PinnedExecutionCatalog:
+    """Bind trusted model handlers to an immutable ExtensionSnapshot."""
+
+    _ALLOWED_KINDS = frozenset({ExtensionKind.BUILDER, ExtensionKind.DETERMINISTIC_PATH})
+
+    def __init__(
+        self,
+        snapshot: ExtensionSnapshot,
+        bindings: list[RegisteredHandlerBinding],
+    ) -> None:
+        self.snapshot = snapshot
+        self._bindings: dict[tuple[str, str], RegisteredHandlerBinding] = {}
+        for binding in bindings:
+            if binding.extension_kind not in self._ALLOWED_KINDS:
+                raise SnapshotBindingError(
+                    f"unsupported executable extension kind: {binding.extension_kind}"
+                )
+            key = (binding.extension_id, binding.capability)
+            if key in self._bindings:
+                raise SnapshotBindingError(f"duplicate registered handler binding: {key}")
+            self._validate_binding(binding)
+            self._bindings[key] = binding
+
+    @property
+    def versions(self) -> dict[str, str]:
+        return dict(self.snapshot.versions)
+
+    async def execute(
+        self,
+        model_handle: Any,
+        *,
+        extension_id: str,
+        extension_version: str,
+        extension_kind: str,
+        capability: str,
+        specification: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            kind = ExtensionKind(extension_kind)
+        except ValueError as exc:
+            raise SnapshotBindingError(
+                f"unsupported executable extension kind: {extension_kind}"
+            ) from exc
+        if kind not in self._ALLOWED_KINDS:
+            raise SnapshotBindingError(f"extension kind is not executable here: {kind}")
+        try:
+            binding = self._bindings[(extension_id, capability)]
+        except KeyError as exc:
+            raise SnapshotBindingError(
+                f"no pinned handler for {extension_id}:{capability}"
+            ) from exc
+        resolved = self.snapshot.resolve(
+            kind,
+            capability,
+            ResolutionContext(selected_extension_id=extension_id),
+        )
+        if len(resolved) != 1:
+            raise SnapshotBindingError(
+                f"pinned snapshot cannot resolve {extension_id}:{capability}"
+            )
+        manifest = resolved[0].manifest
+        if manifest.version != extension_version:
+            raise SnapshotBindingError(
+                f"requested extension version {extension_version} does not match "
+                f"snapshot version {manifest.version}"
+            )
+        if (
+            binding.extension is not resolved[0]
+            or binding.extension_id != manifest.id
+            or binding.extension_version != manifest.version
+            or binding.extension_kind != manifest.kind
+            or binding.capability not in manifest.capabilities
+        ):
+            raise SnapshotBindingError(
+                f"handler binding does not match snapshot manifest for {extension_id}"
+            )
+        result = binding.handler(model_handle, specification)
+        if inspect.isawaitable(result):
+            result = await result
+        return dict(result or {})
+
+    def _validate_binding(self, binding: RegisteredHandlerBinding) -> None:
+        resolved = self.snapshot.resolve(
+            binding.extension_kind,
+            binding.capability,
+            ResolutionContext(selected_extension_id=binding.extension_id),
+        )
+        if len(resolved) != 1 or resolved[0] is not binding.extension:
+            raise SnapshotBindingError(
+                f"handler owner is not the pinned extension {binding.extension_id}"
+            )
+        if getattr(binding.handler, "__self__", None) is not binding.extension:
+            raise SnapshotBindingError(
+                f"handler is not bound to pinned extension {binding.extension_id}"
+            )
+        manifest = resolved[0].manifest
+        if (
+            manifest.id != binding.extension_id
+            or manifest.version != binding.extension_version
+            or manifest.kind != binding.extension_kind
+            or binding.capability not in manifest.capabilities
+        ):
+            raise SnapshotBindingError(
+                f"handler binding does not match snapshot manifest for {binding.extension_id}"
+            )
+
+
 class ComsolBackend(Protocol):
     capabilities: BackendCapabilities
 
@@ -36,7 +158,13 @@ class ComsolBackend(Protocol):
     async def close_model(self, model_name: str) -> None: ...
     async def apply_parameters(self, model_name: str, parameters: dict[str, str]) -> None: ...
     async def execute_registered(
-        self, model_name: str, extension_id: str, specification: dict[str, Any]
+        self,
+        model_name: str,
+        extension_id: str,
+        extension_version: str,
+        extension_kind: str,
+        capability: str,
+        specification: dict[str, Any],
     ) -> dict[str, Any]: ...
     async def build(self, model_name: str) -> dict[str, Any]: ...
     async def mesh(self, model_name: str) -> dict[str, Any]: ...
@@ -140,7 +268,7 @@ class MphBackendAdapter:
         self,
         *,
         client: Any | None = None,
-        registered_handlers: dict[str, Callable[[Any, dict[str, Any]], Any]] | None = None,
+        execution_catalog: PinnedExecutionCatalog | None = None,
         auditor: Callable[[Any], Any] | None = None,
         version: str | None = None,
         cores: int | None = None,
@@ -151,7 +279,7 @@ class MphBackendAdapter:
 
             client = COMSOLClient.get_instance()
         self.client = client
-        self.registered_handlers = registered_handlers or {}
+        self.execution_catalog = execution_catalog
         self.auditor = auditor
         self.requested_version = version
         self.cores = cores
@@ -235,18 +363,25 @@ class MphBackendAdapter:
         await self._sync(apply)
 
     async def execute_registered(
-        self, model_name: str, extension_id: str, specification: dict[str, Any]
+        self,
+        model_name: str,
+        extension_id: str,
+        extension_version: str,
+        extension_kind: str,
+        capability: str,
+        specification: dict[str, Any],
     ) -> dict[str, Any]:
-        try:
-            handler = self.registered_handlers[extension_id]
-        except KeyError as exc:
-            raise LookupError(f"registered builder/path not available: {extension_id}") from exc
-
+        if self.execution_catalog is None:
+            raise SnapshotBindingError("no pinned execution catalog is configured")
         async with self._call_lock:
-            result = handler(self._handle(model_name), specification)
-            if inspect.isawaitable(result):
-                result = await result
-        return dict(result or {})
+            return await self.execution_catalog.execute(
+                self._handle(model_name),
+                extension_id=extension_id,
+                extension_version=extension_version,
+                extension_kind=extension_kind,
+                capability=capability,
+                specification=specification,
+            )
 
     async def build(self, model_name: str) -> dict[str, Any]:
         def build() -> dict[str, Any]:

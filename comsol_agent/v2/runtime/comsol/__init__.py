@@ -7,6 +7,9 @@ from .backend import (
     FakeWorkerExecutor,
     InProcessWorkerExecutor,
     MphBackendAdapter,
+    PinnedExecutionCatalog,
+    RegisteredHandlerBinding,
+    SnapshotBindingError,
 )
 from .contracts import (
     RUNTIME_SCHEMA_VERSION,
@@ -26,6 +29,7 @@ from .contracts import (
     ModelSaveRequest,
     ParameterPatchRequest,
     RegisteredExecutionRequest,
+    RegisteredExtensionKind,
     RuntimeArtifact,
     RuntimeFailure,
     RuntimeOperation,
@@ -75,8 +79,11 @@ __all__ = [
     "ModelSaveRequest",
     "MphBackendAdapter",
     "ParameterPatchRequest",
+    "PinnedExecutionCatalog",
     "PhysicalAuditError",
     "RegisteredExecutionRequest",
+    "RegisteredExtensionKind",
+    "RegisteredHandlerBinding",
     "ResourceLeaseError",
     "RuntimeArtifact",
     "RuntimeFailure",
@@ -90,6 +97,7 @@ __all__ = [
     "SessionStatusRequest",
     "StageRecord",
     "StageState",
+    "SnapshotBindingError",
     "build_mcp_tools",
     "classify_backend_error",
 ]

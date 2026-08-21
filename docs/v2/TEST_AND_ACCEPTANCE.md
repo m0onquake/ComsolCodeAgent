@@ -244,23 +244,28 @@ V2 达到可用状态至少要求：
 - `tests/test_v2_comsol_runtime.py` 使用严格合同和 async fake MPh backend 覆盖 JSON Schema/额外
   字段拒绝、API 错误原因链、同模型并发锁、确认/未确认的超时和取消、host 资源释放、worker
   quarantine、B→C 恢复且不重复 build、不兼容/损坏 checkpoint、artifact 隔离/哈希/provenance、
-  参数补丁、MPh 类型化 adapter 和不含任意代码的最小 MCP surface；
-- `.venv/bin/python -m pytest tests/test_v2_comsol_runtime.py -q`：13 passed；
+  参数补丁、MPh 类型化 adapter 和不含任意代码的最小 MCP surface；追加覆盖公开 MCP
+  solve→cancel 的端到端 token、MCP restore 真实加载后继续 solve，以及 Builder handler
+  所有者/ID/version/kind/capability 与 Registry 固定快照的绑定和拒绝路径；
+- `.venv/bin/python -m pytest tests/test_v2_comsol_runtime.py -q`：15 passed；
 - `.venv/bin/python -m pytest tests/test_v2_kernel.py tests/test_v2_extensions.py
-  tests/test_v2_code_tools.py tests/test_v2_memory.py tests/test_v2_comsol_runtime.py -q`：85 passed；
+  tests/test_v2_code_tools.py tests/test_v2_memory.py tests/test_v2_comsol_runtime.py -q`：87 passed；
 - `.venv/bin/python -m pytest tests/test_core.py -q`：203 passed；
 - `.venv/bin/python -m pytest tests/test_bearing_domain.py -q`：14 passed；
 - `.venv/bin/python -m pytest tests/test_web.py -q`：13 passed，1 个既有依赖弃用 warning；
-- `.venv/bin/python -m pytest -q`：315 passed，1 个同样的既有 warning；
+- `.venv/bin/python -m pytest -q`：317 passed，1 个同样的既有 warning；
 - `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_kernel.py tests/test_v2_extensions.py
   tests/test_v2_code_tools.py tests/test_v2_memory.py tests/test_v2_comsol_runtime.py
   scripts/run_v2_comsol_smoke.py`：通过；
 - 全仓 `.venv/bin/ruff check comsol_agent tests scripts`：3136 个 M4 已记录的既有旧代码/当前无关
   用户工作树问题；M5 修改范围没有新增问题；
-- `.venv/bin/python scripts/run_v2_comsol_smoke.py --version 6.2 --cores 1`：真实 MPh 1.3.1 +
+- `.venv/bin/python scripts/run_v2_comsol_smoke.py --version 6.2 --cores 1`：在适配器合同加固后重跑，
+  真实 MPh 1.3.1 +
   COMSOL 6.2 start/create/save/close/stop 通过；唯一 scratch model、临时隔离目录、19,952-byte MPH
   和 SHA-256 均由本次运行产生，临时目录随后清理；
 - 该真实 gate 验证 M5 会话/模型/artifact 生命周期，不声明领域求解或物理成功；轴承 Builder、
   solver strategy 和严格物理审计仍分别属于 M6/M7/M9；
 - 新增并接受 ADR 0005，记录单客户端、Worker、取消真实性、checkpoint 兼容和最小工具权限边界；
   未发生 verified memory 晋升。
+- 原 M5 commit 为 `9fb4bcbd52f331b7fac434286c2b3884b2414c50`；本记录中的 P0 加固以
+  独立 follow-up commit 交付。

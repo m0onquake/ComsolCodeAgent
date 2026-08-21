@@ -51,6 +51,11 @@ class RuntimeOperation(StrEnum):
     INSPECT_FAILURE = "inspect_failure"
 
 
+class RegisteredExtensionKind(StrEnum):
+    BUILDER = "builder"
+    DETERMINISTIC_PATH = "deterministic_path"
+
+
 class ErrorClass(StrEnum):
     API_CODE = "api_code_error"
     GEOMETRY = "geometry_error"
@@ -103,6 +108,9 @@ class ParameterPatchRequest(ModelRequestBase):
 
 class RegisteredExecutionRequest(ModelRequestBase):
     extension_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    extension_version: str = Field(pattern=r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+    extension_kind: RegisteredExtensionKind
+    capability: str = Field(min_length=1)
     specification: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -120,6 +128,7 @@ class ExportRequest(ModelRequestBase):
 
 class RuntimeRunRequest(ModelRequestBase):
     builder_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    builder_capability: str = Field(min_length=1)
     builder_version: str = Field(pattern=r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
     extension_versions: dict[str, str] = Field(min_length=1)
     parameters: dict[str, str] = Field(default_factory=dict)
@@ -138,9 +147,11 @@ class RuntimeRunRequest(ModelRequestBase):
 class CheckpointCreateRequest(ModelRequestBase):
     stage: RuntimeStage
     builder_id: str
+    builder_capability: str
     builder_version: str
     extension_versions: dict[str, str] = Field(min_length=1)
-    input_summary: dict[str, Any]
+    parameters: dict[str, str] = Field(default_factory=dict)
+    specification: dict[str, Any] = Field(default_factory=dict)
     model_summary: dict[str, Any]
 
 
@@ -151,9 +162,12 @@ class CheckpointInspectRequest(RuntimeRequestBase):
 class CheckpointRestoreRequest(ModelRequestBase):
     manifest_path: str = Field(min_length=1)
     builder_id: str
+    builder_capability: str
     builder_version: str
     extension_versions: dict[str, str] = Field(min_length=1)
-    input_summary: dict[str, Any]
+    parameters: dict[str, str] = Field(default_factory=dict)
+    specification: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float = Field(default=300.0, gt=0, le=86400)
 
 
 class CancelRunRequest(RuntimeRequestBase):
@@ -228,6 +242,7 @@ class Checkpoint(ContractModel):
     comsol_version: str
     backend_version: str
     builder_id: str
+    builder_capability: str
     builder_version: str
     extension_versions: dict[str, str]
     input_summary: dict[str, Any]

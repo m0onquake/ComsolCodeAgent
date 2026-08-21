@@ -12,11 +12,12 @@ from uuid import uuid4
 from comsol_agent.v2.kernel import CancellationToken
 
 from .artifacts import ArtifactStore, canonical_sha256
-from .backend import BackendWorker, ComsolBackend
+from .backend import BackendWorker, ComsolBackend, SnapshotBindingError
 from .contracts import (
     CancelRunRequest,
     Checkpoint,
     CheckpointCreateRequest,
+    CheckpointRestoreRequest,
     ErrorClass,
     EvaluateRequest,
     ExportRequest,
@@ -25,6 +26,7 @@ from .contracts import (
     ModelCloseRequest,
     ModelCreateRequest,
     ModelLoadRequest,
+    ModelRequestBase,
     ModelSaveRequest,
     ParameterPatchRequest,
     RegisteredExecutionRequest,
@@ -190,6 +192,14 @@ class ComsolRuntime:
                         RuntimeStage.INPUT_VALIDATION
                     )
                     cancellation.raise_if_cancelled()
+                    execution_catalog = getattr(self.backend, "execution_catalog", None)
+                    if (
+                        execution_catalog is not None
+                        and request.extension_versions != execution_catalog.versions
+                    ):
+                        raise SnapshotBindingError(
+                            "request extension_versions do not match the pinned snapshot"
+                        )
                     self.artifacts.run_directory(request.run_id, request.model_id)
                     records[RuntimeStage.INPUT_VALIDATION] = self._passed(
                         RuntimeStage.INPUT_VALIDATION,
@@ -215,7 +225,12 @@ class ComsolRuntime:
                     builder_detail = await self._call(
                         RuntimeOperation.EXECUTE_REGISTERED,
                         lambda: self.backend.execute_registered(
-                            physical_name, request.builder_id, request.specification
+                            physical_name,
+                            request.builder_id,
+                            request.builder_version,
+                            "builder",
+                            request.builder_capability,
+                            request.specification,
                         ),
                         timeout_seconds=request.timeout_seconds,
                         cancellation=cancellation,
@@ -401,6 +416,7 @@ class ComsolRuntime:
             comsol_version=self.backend.capabilities.comsol_version,
             backend_version=self.backend.capabilities.backend_version,
             builder_id=request.builder_id,
+            builder_capability=request.builder_capability,
             builder_version=request.builder_version,
             extension_versions=request.extension_versions,
             input_summary={
@@ -427,6 +443,7 @@ class ComsolRuntime:
             "comsol_version": self.backend.capabilities.comsol_version,
             "backend_version": self.backend.capabilities.backend_version,
             "builder_id": request.builder_id,
+            "builder_capability": request.builder_capability,
             "builder_version": request.builder_version,
             "extension_versions": request.extension_versions,
             "input_sha256": self._input_hash(request),
@@ -438,6 +455,7 @@ class ComsolRuntime:
             "comsol_version": checkpoint.comsol_version,
             "backend_version": checkpoint.backend_version,
             "builder_id": checkpoint.builder_id,
+            "builder_capability": checkpoint.builder_capability,
             "builder_version": checkpoint.builder_version,
             "extension_versions": checkpoint.extension_versions,
             "input_sha256": checkpoint.input_sha256,
@@ -449,29 +467,44 @@ class ComsolRuntime:
             )
         return checkpoint
 
-    async def create_model(self, request: ModelCreateRequest) -> RuntimeResult:
+    async def create_model(
+        self,
+        request: ModelCreateRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         return await self._model_operation(
             request,
             RuntimeOperation.CREATE_MODEL,
             lambda: self.backend.create_model(request.model_id),
             keep_model=True,
+            cancellation=cancellation,
         )
 
-    async def load_model(self, request: ModelLoadRequest) -> RuntimeResult:
+    async def load_model(
+        self,
+        request: ModelLoadRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         source = Path(request.source_path).resolve(strict=True)
         return await self._model_operation(
             request,
             RuntimeOperation.LOAD_MODEL,
             lambda: self.backend.load_model(request.model_id, source),
             keep_model=True,
+            cancellation=cancellation,
         )
 
-    async def save_model(self, request: ModelSaveRequest) -> RuntimeResult:
+    async def save_model(
+        self,
+        request: ModelSaveRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         target = self.artifacts.target(request.run_id, request.model_id, request.target_name)
         result = await self._model_operation(
             request,
             RuntimeOperation.SAVE_MODEL,
             lambda: self.backend.save_model(request.model_id, target),
+            cancellation=cancellation,
         )
         if result.success:
             artifact = self.artifacts.record(
@@ -483,34 +516,57 @@ class ComsolRuntime:
             result = result.model_copy(update={"artifacts": [artifact]})
         return result
 
-    async def close_model(self, request: ModelCloseRequest) -> RuntimeResult:
+    async def close_model(
+        self,
+        request: ModelCloseRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         result = await self._model_operation(
             request,
             RuntimeOperation.CLOSE_MODEL,
             lambda: self.backend.close_model(request.model_id),
+            cancellation=cancellation,
         )
         if result.success:
             self._models.discard(request.model_id)
         return result
 
-    async def apply_parameters(self, request: ParameterPatchRequest) -> RuntimeResult:
+    async def apply_parameters(
+        self,
+        request: ParameterPatchRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         return await self._model_operation(
             request,
             RuntimeOperation.APPLY_PARAMETERS,
             lambda: self.backend.apply_parameters(request.model_id, request.parameters),
+            cancellation=cancellation,
         )
 
-    async def execute_registered(self, request: RegisteredExecutionRequest) -> RuntimeResult:
+    async def execute_registered(
+        self,
+        request: RegisteredExecutionRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         return await self._model_operation(
             request,
             RuntimeOperation.EXECUTE_REGISTERED,
             lambda: self.backend.execute_registered(
-                request.model_id, request.extension_id, request.specification
+                request.model_id,
+                request.extension_id,
+                request.extension_version,
+                request.extension_kind,
+                request.capability,
+                request.specification,
             ),
+            cancellation=cancellation,
         )
 
     async def model_action(
-        self, request: ModelActionRequest, operation: RuntimeOperation
+        self,
+        request: ModelActionRequest,
+        operation: RuntimeOperation,
+        cancellation: CancellationToken | None = None,
     ) -> RuntimeResult:
         handlers: dict[RuntimeOperation, Callable[[], Awaitable[Any]]] = {
             RuntimeOperation.BUILD: lambda: self.backend.build(request.model_id),
@@ -518,22 +574,36 @@ class ComsolRuntime:
             RuntimeOperation.SOLVE: lambda: self.backend.solve(request.model_id),
         }
         return await self._model_operation(
-            request, operation, handlers[operation], timeout_seconds=request.timeout_seconds
+            request,
+            operation,
+            handlers[operation],
+            timeout_seconds=request.timeout_seconds,
+            cancellation=cancellation,
         )
 
-    async def evaluate(self, request: EvaluateRequest) -> RuntimeResult:
+    async def evaluate(
+        self,
+        request: EvaluateRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         return await self._model_operation(
             request,
             RuntimeOperation.EVALUATE,
             lambda: self.backend.evaluate(request.model_id, request.expressions),
+            cancellation=cancellation,
         )
 
-    async def export_results(self, request: ExportRequest) -> RuntimeResult:
+    async def export_results(
+        self,
+        request: ExportRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
         target = self.artifacts.target(request.run_id, request.model_id, request.target_name)
         result = await self._model_operation(
             request,
             RuntimeOperation.EXPORT_RESULTS,
             lambda: self.backend.export(request.model_id, target),
+            cancellation=cancellation,
         )
         if result.success:
             artifact = self.artifacts.record(
@@ -545,28 +615,83 @@ class ComsolRuntime:
             result = result.model_copy(update={"artifacts": [artifact]})
         return result
 
-    async def create_checkpoint(self, request: CheckpointCreateRequest) -> Checkpoint:
-        runtime_request = RuntimeRunRequest(
-            run_id=request.run_id,
-            model_id=request.model_id,
-            builder_id=request.builder_id,
-            builder_version=request.builder_version,
-            extension_versions=request.extension_versions,
-            specification=request.input_summary,
-        )
-        return await self._create_checkpoint_for_model(
-            request=runtime_request,
-            physical_name=request.model_id,
-            stage=request.stage,
-            model_summary=request.model_summary,
-            cancellation=CancellationToken(),
-        )
+    async def create_checkpoint(
+        self,
+        request: CheckpointCreateRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> Checkpoint:
+        token = cancellation or CancellationToken()
+        if request.run_id in self._running:
+            raise ResourceLeaseError(f"run_id already active: {request.run_id}")
+        self._running[request.run_id] = token
+        try:
+            lock = await self._model_lock(request.model_id)
+            runtime_request = RuntimeRunRequest(
+                run_id=request.run_id,
+                model_id=request.model_id,
+                builder_id=request.builder_id,
+                builder_capability=request.builder_capability,
+                builder_version=request.builder_version,
+                extension_versions=request.extension_versions,
+                parameters=request.parameters,
+                specification=request.specification,
+            )
+            async with lock, self._lease():
+                await self.start()
+                return await self._create_checkpoint_for_model(
+                    request=runtime_request,
+                    physical_name=request.model_id,
+                    stage=request.stage,
+                    model_summary=request.model_summary,
+                    cancellation=token,
+                )
+        finally:
+            if self._running.get(request.run_id) is token:
+                self._running.pop(request.run_id, None)
 
     def inspect_checkpoint(self, manifest_path: str) -> Checkpoint:
         checkpoint = self.artifacts.read_checkpoint(manifest_path)
         self.artifacts.verify_schema(checkpoint)
         self.artifacts.verify_artifact(checkpoint.artifact)
         return checkpoint
+
+    async def restore_model(
+        self,
+        request: CheckpointRestoreRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> RuntimeResult:
+        runtime_request = RuntimeRunRequest(
+            run_id=request.run_id,
+            model_id=request.model_id,
+            builder_id=request.builder_id,
+            builder_capability=request.builder_capability,
+            builder_version=request.builder_version,
+            extension_versions=request.extension_versions,
+            parameters=request.parameters,
+            specification=request.specification,
+            timeout_seconds=request.timeout_seconds,
+            resume_checkpoint=request.manifest_path,
+        )
+        checkpoint = await self.restore_checkpoint(runtime_request)
+        result = await self._model_operation(
+            request,
+            RuntimeOperation.RESTORE_CHECKPOINT,
+            lambda: self.backend.load_model(request.model_id, Path(checkpoint.artifact.path)),
+            timeout_seconds=request.timeout_seconds,
+            keep_model=True,
+            cancellation=cancellation,
+        )
+        if result.success:
+            result = result.model_copy(
+                update={
+                    "checkpoint": checkpoint,
+                    "data": {
+                        "restored_stage": checkpoint.stage,
+                        "checkpoint_id": checkpoint.checkpoint_id,
+                    },
+                }
+            )
+        return result
 
     def cancel_run(self, request: CancelRunRequest) -> bool:
         token = self._running.get(request.target_run_id)
@@ -580,22 +705,39 @@ class ComsolRuntime:
 
     async def _model_operation(
         self,
-        request: ModelCreateRequest,
+        request: ModelRequestBase,
         operation: RuntimeOperation,
         call: Callable[[], Awaitable[Any]],
         *,
         timeout_seconds: float = 300.0,
         keep_model: bool = False,
+        cancellation: CancellationToken | None = None,
     ) -> RuntimeResult:
-        lock = await self._model_lock(request.model_id)
+        token = cancellation or CancellationToken()
+        existing = self._running.get(request.run_id)
+        if existing is not None and existing is not token:
+            failure = classify_backend_error(
+                ResourceLeaseError(f"run_id already active: {request.run_id}"),
+                RuntimeStage.BUILD,
+                operation,
+            )
+            return RuntimeResult(
+                run_id=request.run_id,
+                model_id=request.model_id,
+                success=False,
+                status="failed",
+                failure=failure,
+            )
+        self._running[request.run_id] = token
         try:
+            lock = await self._model_lock(request.model_id)
             async with lock, self._lease():
                 await self.start()
                 data = await self._call(
                     operation,
                     call,
                     timeout_seconds=timeout_seconds,
-                    cancellation=CancellationToken(),
+                    cancellation=token,
                 )
                 if keep_model:
                     self._models.add(request.model_id)
@@ -616,6 +758,9 @@ class ComsolRuntime:
                 status="failed",
                 failure=failure,
             )
+        finally:
+            if self._running.get(request.run_id) is token:
+                self._running.pop(request.run_id, None)
 
     @staticmethod
     def _running_record(stage: RuntimeStage) -> StageRecord:
@@ -655,6 +800,7 @@ class ComsolRuntime:
         return canonical_sha256(
             {
                 "builder_id": request.builder_id,
+                "builder_capability": request.builder_capability,
                 "builder_version": request.builder_version,
                 "extension_versions": request.extension_versions,
                 "parameters": request.parameters,

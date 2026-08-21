@@ -197,12 +197,15 @@ flowchart LR
   `BackendWorker` 和 17 个最小 MCP Tool extensions；
 - 本地复用：直接复用 V1 `COMSOLClient`/`ModelHandle` 与底层 MPh 操作，不调用会吞掉原因链的
   dict wrappers，不注册任意 Java/Python/Shell；外部项目只作固定 commit/许可证设计参考；
-- 测试：M5 定向 13 passed；M1–M5 联合 85 passed；完整套件 315 passed，1 个既有
+- 测试：M5 定向 15 passed；M1–M5 联合 87 passed；完整套件 317 passed，1 个既有
   Starlette/httpx 弃用 warning；core 203、bearing domain 14、web 13 passed；
 - Ruff：M5、`comsol_agent/v2` 和相关测试/脚本范围通过；全仓命令仍报告与 M4 基线相同的 3136
   个既有旧代码/当前无关用户工作树问题，M5 没有新增；
 - COMSOL gate：本机 MPh 1.3.1 + COMSOL 6.2 lifecycle smoke 通过 start/create/save/close/stop，
   隔离 `.mph` 为 19,952 bytes 且记录 SHA-256；M5 不以此冒充领域求解或严格物理审计；
+- P0 加固：公开 MCP 操作端到端复用 Kernel cancellation token；restore 使用分离的
+  parameters/specification 验证并真实加载 `.mph`；Builder/Path handler 绑定固定快照中
+  的扩展对象，并校验 ID/version/kind/capability；
 - ADR：新增 Accepted 的 ADR 0005；补齐 `TOOLS_MCP_SKILLS.md` 和第三方来源/许可证记录；
 - 未解决风险：进程内 MPh 阻塞调用不能可靠硬取消，未确认终止会 quarantine；需要强终止或并行
   会话的部署必须实现可回收进程 worker 并受许可证/核心预算控制；

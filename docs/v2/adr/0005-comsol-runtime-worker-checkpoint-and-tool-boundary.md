@@ -34,8 +34,12 @@ M5 需要把长时间、阻塞且具有许可证/核心资源副作用的 COMSOL
 - B 检查点包含 schema、runtime、COMSOL、backend、Builder 和完整扩展快照版本、输入/模型摘要、
   内容哈希和 provenance。恢复先验证 manifest、模型文件哈希和所有兼容字段，任何不一致硬拒绝。
 - V2 不调用旧 dict 工具；adapter 复用其 `COMSOLClient`/`ModelHandle` 与底层 MPh 能力并保留异常链。
-- MCP 每个操作使用独立 schema；不公开任意 Java/Python/Shell。`execute_registered` 只能调用可信
-  快照中已注册的 Builder/Path handler。Skill 不改变权限。
+- MCP 每个操作使用独立 schema；不公开任意 Java/Python/Shell。`execute_registered` 通过
+  `PinnedExecutionCatalog` 校验 handler 所有者与 Registry 固定快照的扩展对象同一，并严格
+  匹配 ID、version、kind 和 capability。Skill 不改变权限。
+- MCP adapter 将 Kernel `CancellationToken` 端到端传入 Runtime/Worker；公开操作在 run ID
+  下注册同一 token，使 `cancel_run` 能取消公开 solve。`restore_checkpoint` 完成兼容性校验
+  后必须真实加载 `.mph`，其请求分开传入 parameters 和 specification 以重建输入哈希。
 - cmslh5 只允许作为可选 artifact adapter，不能成为 Runtime 或 checkpoint 的强制依赖。
 
 ## 后果
@@ -58,6 +62,8 @@ M5 需要把长时间、阻塞且具有许可证/核心资源副作用的 COMSOL
 - 合同 schema 和最小 MCP 面拒绝额外字段及任意代码能力；
 - fake backend 覆盖同模型并发、超时/取消释放、B→C 恢复、损坏/不兼容 checkpoint、artifact
   哈希/provenance 和原因链；
-- MPh adapter 测试证明只复用类型化 client/handle 操作；
+- MCP fake backend 覆盖公开 solve 被 `cancel_run` 取消且释放锁/租约，以及恢复后继续 solve；
+- MPh adapter 测试证明只复用类型化 client/handle 操作，并拒绝非快照所有者或版本
+  不匹配的 Builder binding；
 - 真实 COMSOL smoke 使用唯一 scratch 名和临时目录验证 start/create/save/close/stop；
 - 物理求解和严格审计仍是 M7/M9 的独立门，不由 M5 lifecycle smoke 替代。

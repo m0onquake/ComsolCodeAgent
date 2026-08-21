@@ -11,9 +11,14 @@ from pydantic import ValidationError
 
 from comsol_agent.v2.contracts import Action
 from comsol_agent.v2.extensions import (
+    API_VERSION,
     CompatibilityPolicy,
+    ExtensionKind,
     ExtensionLoader,
+    ExtensionManifest,
     ExtensionRegistry,
+    HealthReport,
+    HealthStatus,
     PermissionPolicy,
     PermissionSet,
     RegistryToolExecutor,
@@ -30,9 +35,12 @@ from comsol_agent.v2.runtime.comsol import (
     ModelCreateRequest,
     MphBackendAdapter,
     ParameterPatchRequest,
+    PinnedExecutionCatalog,
+    RegisteredHandlerBinding,
     RuntimeOperation,
     RuntimeRunRequest,
     RuntimeStage,
+    SnapshotBindingError,
     StageState,
     build_mcp_tools,
     classify_backend_error,
@@ -62,6 +70,7 @@ class FakeBackend:
         self.max_active_calls = 0
         self.release_event = asyncio.Event()
         self.block_build = False
+        self.block_solve = False
         self.fail_solve: BaseException | None = None
 
     async def start(self) -> None:
@@ -93,10 +102,22 @@ class FakeBackend:
         assert parameters
 
     async def execute_registered(
-        self, model_name: str, extension_id: str, specification: dict[str, Any]
+        self,
+        model_name: str,
+        extension_id: str,
+        extension_version: str,
+        extension_kind: str,
+        capability: str,
+        specification: dict[str, Any],
     ) -> dict[str, Any]:
         assert model_name in self.models
-        return {"extension_id": extension_id, "specification": specification}
+        return {
+            "extension_id": extension_id,
+            "extension_version": extension_version,
+            "extension_kind": extension_kind,
+            "capability": capability,
+            "specification": specification,
+        }
 
     async def build(self, model_name: str) -> dict[str, Any]:
         self.build_calls += 1
@@ -114,9 +135,16 @@ class FakeBackend:
 
     async def solve(self, model_name: str) -> dict[str, Any]:
         self.solve_calls += 1
-        if self.fail_solve:
-            raise self.fail_solve
-        return {"converged": True}
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if self.block_solve:
+                await self.release_event.wait()
+            if self.fail_solve:
+                raise self.fail_solve
+            return {"converged": True}
+        finally:
+            self.active_calls -= 1
 
     async def evaluate(self, model_name: str, expressions: tuple[str, ...]) -> dict[str, Any]:
         return {expression: 1.0 for expression in expressions}
@@ -133,6 +161,7 @@ def run_request(**overrides: Any) -> RuntimeRunRequest:
         "run_id": "run-001",
         "model_id": "model-001",
         "builder_id": "fixture.builder",
+        "builder_capability": "fixture.build",
         "builder_version": "2.1.0",
         "extension_versions": {"fixture.builder": "2.1.0"},
         "parameters": {"load": "10[N]"},
@@ -319,9 +348,11 @@ async def test_parameter_patch_and_checkpoint_tools_are_typed(tmp_path: Path) ->
             model_id="parameter-model",
             stage=RuntimeStage.BUILD,
             builder_id="fixture.builder",
+            builder_capability="fixture.build",
             builder_version="1.0.0",
             extension_versions={"fixture.builder": "1.0.0"},
-            input_summary={"load": "20[N]"},
+            parameters={"load": "20[N]"},
+            specification={"topology": "fixture"},
             model_summary={"kind": "empty"},
         )
     )
@@ -404,6 +435,87 @@ async def test_mcp_tool_runs_through_pinned_extension_snapshot(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_public_mcp_solve_is_cancelled_by_cancel_run_tool(tmp_path: Path) -> None:
+    service, backend = runtime(tmp_path)
+    backend.models.add("cancel-model")
+    backend.block_solve = True
+    tools = {tool.capability: tool for tool in build_mcp_tools(service)}
+    solve_action = Action(
+        tool="comsol.solve",
+        arguments={
+            "run_id": "public-solve",
+            "model_id": "cancel-model",
+            "timeout_seconds": 1.0,
+        },
+    )
+    solve_task = asyncio.create_task(
+        tools["comsol.solve"].execute(solve_action, CancellationToken())
+    )
+    while backend.active_calls == 0:
+        await asyncio.sleep(0)
+    cancel_observation = await tools["comsol.cancel_run"].execute(
+        Action(
+            tool="comsol.cancel_run",
+            arguments={
+                "run_id": "cancel-command",
+                "target_run_id": "public-solve",
+                "reason": "MCP operator cancellation",
+            },
+        ),
+        CancellationToken(),
+    )
+    solve_observation = await solve_task
+    assert cancel_observation.data["data"]["cancel_requested"] is True
+    assert solve_observation.success is False
+    assert solve_observation.error_class == ErrorClass.CANCELLED
+    assert service.active_resource_leases == 0
+    assert not service.is_model_locked("cancel-model")
+
+
+@pytest.mark.asyncio
+async def test_mcp_restore_loads_model_and_can_continue_solving(tmp_path: Path) -> None:
+    service, backend = runtime(tmp_path)
+    backend.fail_solve = RuntimeError("non convergence")
+    failed = await service.run(run_request(run_id="checkpoint-source"), CancellationToken())
+    assert failed.checkpoint is not None
+    backend.fail_solve = None
+    tools = {tool.capability: tool for tool in build_mcp_tools(service)}
+    restored = await tools["comsol.restore_checkpoint"].execute(
+        Action(
+            tool="comsol.restore_checkpoint",
+            arguments={
+                "run_id": "restore-command",
+                "model_id": "model-001",
+                "manifest_path": failed.checkpoint.manifest_path,
+                "builder_id": "fixture.builder",
+                "builder_capability": "fixture.build",
+                "builder_version": "2.1.0",
+                "extension_versions": {"fixture.builder": "2.1.0"},
+                "parameters": {"load": "10[N]"},
+                "specification": {"domain": "fixture", "topology": "simple"},
+                "timeout_seconds": 1.0,
+            },
+        ),
+        CancellationToken(),
+    )
+    solved = await tools["comsol.solve"].execute(
+        Action(
+            tool="comsol.solve",
+            arguments={
+                "run_id": "solve-restored",
+                "model_id": "model-001",
+                "timeout_seconds": 1.0,
+            },
+        ),
+        CancellationToken(),
+    )
+    assert restored.success
+    assert restored.data["checkpoint"]["checkpoint_id"] == failed.checkpoint.checkpoint_id
+    assert "model-001" in backend.models
+    assert solved.success
+
+
+@pytest.mark.asyncio
 async def test_unconfirmed_in_process_cancellation_is_not_reported_as_termination(
     tmp_path: Path,
 ) -> None:
@@ -472,20 +584,138 @@ async def test_mph_adapter_reuses_typed_client_without_legacy_dict_tools(
         def close(self, name: str) -> None:
             pass
 
-    client = Client()
-    adapter = MphBackendAdapter(
-        client=client,
-        version="6.2",
-        cores=1,
-        port=0,
-        registered_handlers={"fixture.builder": lambda handle, spec: {"built": spec["kind"]}},
+    class Builder:
+        def __init__(self) -> None:
+            self.active = False
+            self.manifest = ExtensionManifest(
+                api_version=API_VERSION,
+                kind=ExtensionKind.BUILDER,
+                id="fixture.builder",
+                version="2.1.0",
+                enabled=True,
+                entrypoint="fixture:Builder",
+                description="snapshot-bound builder",
+                capabilities=["fixture.build"],
+                compatibility={"agent_api": ">=2.0,<3", "comsol": ["6.x"]},
+                permissions={
+                    "filesystem": "none",
+                    "shell": "none",
+                    "comsol": "model_write",
+                    "network": "none",
+                },
+            )
+
+        async def activate(self) -> None:
+            self.active = True
+
+        async def deactivate(self) -> None:
+            self.active = False
+
+        async def health(self) -> HealthReport:
+            return HealthReport(
+                extension_id=self.manifest.id,
+                status=HealthStatus.HEALTHY if self.active else HealthStatus.DISABLED,
+            )
+
+        def supports(self, context: Any) -> bool:
+            return True
+
+        async def build(self, specification: dict[str, Any]) -> dict[str, Any]:
+            return specification
+
+        def execute_model(self, handle: Any, specification: dict[str, Any]) -> dict[str, Any]:
+            return {"built": specification["kind"]}
+
+    loader = ExtensionLoader(
+        compatibility=CompatibilityPolicy(agent_version="2.0.0", comsol_version="6.2"),
+        permissions=PermissionPolicy(
+            PermissionSet(
+                filesystem="none",
+                shell="none",
+                comsol="model_write",
+                network="none",
+            )
+        ),
+        trusted_manifest_roots=(tmp_path,),
+        trusted_code_roots=(Path(__file__).parents[1],),
     )
-    await adapter.start()
-    await adapter.create_model("typed")
-    await adapter.apply_parameters("typed", {"load": "10[N]"})
-    detail = await adapter.execute_registered("typed", "fixture.builder", {"kind": "deterministic"})
-    await adapter.save_model("typed", tmp_path / "typed.mph")
+    registry = ExtensionRegistry(loader)
+    builder = Builder()
+    await registry.register(builder)
+    await registry.enable("fixture.builder")
+    client = Client()
+    async with registry.snapshot() as snapshot:
+        catalog = PinnedExecutionCatalog(
+            snapshot,
+            [
+                RegisteredHandlerBinding(
+                    extension=builder,
+                    extension_id="fixture.builder",
+                    extension_version="2.1.0",
+                    extension_kind=ExtensionKind.BUILDER,
+                    capability="fixture.build",
+                    handler=builder.execute_model,
+                )
+            ],
+        )
+        with pytest.raises(SnapshotBindingError, match="handler owner"):
+            PinnedExecutionCatalog(
+                snapshot,
+                [
+                    RegisteredHandlerBinding(
+                        extension=Builder(),
+                        extension_id="fixture.builder",
+                        extension_version="2.1.0",
+                        extension_kind=ExtensionKind.BUILDER,
+                        capability="fixture.build",
+                        handler=lambda handle, spec: spec,
+                    )
+                ],
+            )
+        adapter = MphBackendAdapter(
+            client=client,
+            version="6.2",
+            cores=1,
+            port=0,
+            execution_catalog=catalog,
+        )
+        await adapter.start()
+        await adapter.create_model("typed")
+        await adapter.apply_parameters("typed", {"load": "10[N]"})
+        runtime_service = ComsolRuntime(
+            backend=adapter,
+            artifacts=ArtifactStore(tmp_path / "mcp-artifacts"),
+            worker=FakeWorkerExecutor(adapter),
+        )
+        execute_tool = next(
+            tool
+            for tool in build_mcp_tools(runtime_service)
+            if tool.capability == "comsol.execute_registered"
+        )
+        action_arguments = {
+            "run_id": "pinned-builder",
+            "model_id": "typed",
+            "extension_id": "fixture.builder",
+            "extension_version": "2.1.0",
+            "extension_kind": "builder",
+            "capability": "fixture.build",
+            "specification": {"kind": "deterministic"},
+        }
+        executed = await execute_tool.execute(
+            Action(tool="comsol.execute_registered", arguments=action_arguments),
+            CancellationToken(),
+        )
+        rejected = await execute_tool.execute(
+            Action(
+                tool="comsol.execute_registered",
+                arguments={**action_arguments, "extension_version": "9.0.0"},
+            ),
+            CancellationToken(),
+        )
+        await adapter.save_model("typed", tmp_path / "typed.mph")
     assert client.started_with == {"cores": 1, "version": "6.2", "port": 0}
     assert client.handle.mph_model.values == {"load": "10[N]"}
-    assert detail == {"built": "deterministic"}
+    assert executed.data["data"] == {"built": "deterministic"}
+    assert rejected.success is False
+    assert rejected.exception_type == SnapshotBindingError.__name__
     assert (tmp_path / "typed.mph").read_bytes() == b"typed-adapter"

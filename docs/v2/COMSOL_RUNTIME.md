@@ -35,7 +35,15 @@ comsol.cancel_run / inspect_failure
 ```
 
 每个 capability 是独立的类型化 MCP Tool，声明只读/写入、幂等性、超时和 COMSOL 权限。
-`execute_registered` 只接受可信扩展快照中的 Builder/Path ID；不存在任意 Java/Python/Shell 工具。
+`execute_registered` 必须同时提交扩展 ID、版本、kind 和 capability；
+`PinnedExecutionCatalog` 要求 handler 所有者是当前 Registry 固定快照中的同一扩展实例，
+并在执行时再次解析和校验。不存在任意 Java/Python/Shell 工具。
+
+MCP adapter 将 Kernel 传入的同一 `CancellationToken` 传递到 Runtime/Worker，所有公开模型操作
+在 `_running` 中注册该 token，因此 `comsol.cancel_run` 可取消正在执行或等待模型锁的
+`comsol.solve` 等公开请求。`comsol.restore_checkpoint` 不只校验 manifest：它使用独立
+`parameters`/`specification` 重建输入摘要，通过兼容性校验后把 `.mph` 加载为请求的逻辑模型，
+可继续 build/mesh/solve。
 完整边界见 [TOOLS_MCP_SKILLS.md](TOOLS_MCP_SKILLS.md)。
 
 ## 4. Structured Runtime Result
@@ -219,11 +227,13 @@ M5 位于 `comsol_agent/v2/runtime/comsol/`：
 
 - `contracts.py`：运行请求、阶段、结果、Artifact、Checkpoint、Session 和错误合同；
 - `backend.py`：`ComsolBackend`/`BackendWorker` 边界、明确取消语义的 in-process executor，以及
-  复用 V1 `COMSOLClient` 的 `MphBackendAdapter`；
+  复用 V1 `COMSOLClient` 的 `MphBackendAdapter` 和绑定 Registry 固定快照的
+  `PinnedExecutionCatalog`；
 - `artifacts.py`：每 Run/Model 隔离目录、原子 JSON manifest、SHA-256 与 provenance；
 - `service.py`：长生命周期会话、唯一物理名、模型锁、资源租约、A-D 编排、B→C 恢复、cleanup、
   取消和失败索引；
-- `mcp.py`：17 个独立 schema 的最小 MCP Tool extensions，通过 M2 Registry 接入 Kernel；
+- `mcp.py`：17 个独立 schema 的最小 MCP Tool extensions，通过 M2 Registry 接入 Kernel，
+  并将 Kernel cancellation token 端到端传给 Runtime；
 - `scripts/run_v2_comsol_smoke.py`：独立的真实 COMSOL lifecycle gate。
 
 本地复用和外部调研见 [THIRD_PARTY_COMSOL_RUNTIME.md](THIRD_PARTY_COMSOL_RUNTIME.md)，架构决策见
