@@ -55,7 +55,13 @@ _REQUIRED_MEMBERS: dict[ExtensionKind, tuple[str, ...]] = {
     ExtensionKind.MCP_TOOL: ("input_schema", "output_schema", "execute"),
     ExtensionKind.SKILL: ("instructions",),
     ExtensionKind.HOOK: ("handle",),
-    ExtensionKind.REPAIR_RULE: ("matches", "propose", "verify"),
+    ExtensionKind.REPAIR_RULE: ("repair_contract", "matches", "propose", "verify"),
+    ExtensionKind.SOLVER_STRATEGY: (
+        "solver_contract",
+        "matches",
+        "propose",
+        "verify",
+    ),
     ExtensionKind.DETERMINISTIC_PATH: (
         "preconditions",
         "steps",
@@ -118,6 +124,48 @@ class ExtensionSnapshot:
             kind,
             capability,
             context or ResolutionContext(),
+        )
+
+    def candidates(
+        self,
+        kind: ExtensionKind,
+        capability: str,
+        context: ResolutionContext | None = None,
+    ) -> list[Extension]:
+        """Return every healthy matching candidate in deterministic order.
+
+        Selection services such as repair orchestration need an ordered fallback
+        set so one faulty handler can be isolated without mutating the Registry.
+        ``resolve`` remains the single-winner/conflict API used by normal tools.
+        """
+        if self._closed:
+            raise ExtensionStateError("extension snapshot is closed")
+        selected = context or ResolutionContext()
+        candidates = []
+        for record in self._records:
+            extension = record.extension
+            if extension.manifest.kind != kind:
+                continue
+            if capability not in extension.manifest.capabilities:
+                continue
+            if record.health.status != HealthStatus.HEALTHY:
+                continue
+            if selected.selected_extension_id not in {None, extension.manifest.id}:
+                continue
+            if not permissions_allow(
+                extension.manifest.permissions, selected.required_permissions
+            ):
+                continue
+            if not extension.supports(selected):
+                continue
+            candidates.append(extension)
+        return sorted(
+            candidates,
+            key=lambda item: (
+                -item.manifest.priority,
+                -item.manifest.quality,
+                item.manifest.id,
+            ),
         )
 
     async def close(self) -> None:

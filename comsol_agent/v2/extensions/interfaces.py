@@ -65,6 +65,17 @@ class HookExtension(Extension, Protocol):
 
 @runtime_checkable
 class RepairRuleExtension(Extension, Protocol):
+    repair_contract: Any
+
+    def matches(self, observation: Observation, context: ResolutionContext) -> bool: ...
+    async def propose(self, observation: Observation) -> dict[str, Any]: ...
+    async def verify(self, observation: Observation) -> bool: ...
+
+
+@runtime_checkable
+class SolverStrategyExtension(Extension, Protocol):
+    solver_contract: Any
+
     def matches(self, observation: Observation, context: ResolutionContext) -> bool: ...
     async def propose(self, observation: Observation) -> dict[str, Any]: ...
     async def verify(self, observation: Observation) -> bool: ...
@@ -112,6 +123,7 @@ INTERFACE_BY_KIND: dict[str, type[Extension]] = {
     "skill": SkillExtension,
     "hook": HookExtension,
     "repair_rule": RepairRuleExtension,
+    "solver_strategy": SolverStrategyExtension,
     "deterministic_path": DeterministicPathExtension,
     "builder": BuilderExtension,
     "validator": ValidatorExtension,

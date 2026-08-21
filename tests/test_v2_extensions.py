@@ -61,6 +61,30 @@ def manifest(
     requires_capabilities: list[dict[str, str]] | None = None,
     entrypoint: str = "fixture_ext:FixtureFunction",
 ) -> ExtensionManifest:
+    specialized: dict[str, Any] = {}
+    if kind == ExtensionKind.REPAIR_RULE:
+        specialized["repair_contract"] = {
+            "error_classes": ["api_code_error"],
+            "error_codes": ["UNKNOWN_FEATURE"],
+            "stages": ["B_build"],
+            "modification_scope": {"kind": "node", "targets": []},
+            "required_permissions": [],
+            "max_attempts": 1,
+            "verifier": "fixture.verify",
+            "rollback_required": True,
+            "compatibility": {"agent_api": ">=2,<3"},
+            "provenance": "tests/test_v2_extensions.py",
+        }
+    elif kind == ExtensionKind.SOLVER_STRATEGY:
+        specialized["solver_strategy_contract"] = {
+            "solver_scope": {"kind": "solver", "targets": []},
+            "max_solves": 1,
+            "core_hour_budget": 1.0,
+            "success_criteria": ["converged"],
+            "rollback_checkpoint": "B",
+            "compatibility": {"agent_api": ">=2,<3"},
+            "provenance": "tests/test_v2_extensions.py",
+        }
     return ExtensionManifest(
         api_version=API_VERSION,
         kind=kind,
@@ -76,6 +100,7 @@ def manifest(
         quality=quality,
         dependencies=dependencies or [],
         requires_capabilities=requires_capabilities or [],
+        **specialized,
     )
 
 
@@ -138,6 +163,9 @@ class FakeFunction:
 
 class UniversalExtension(FakeFunction):
     """Contract fixture implementing every kind-specific interface."""
+
+    repair_contract: dict[str, Any] = {}
+    solver_contract: dict[str, Any] = {}
 
     async def list_tools(self) -> list[dict[str, Any]]:
         return []

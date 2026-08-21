@@ -112,3 +112,13 @@ Goal 完成前核对：
 - 没有无关文件或 artifact 混入；
 - 未解决风险已记录；
 - 下一里程碑可以从稳定状态开始。
+
+### M6 追加完成检查
+
+- Diagnosis 可从测试和 RuntimeFailure 重建且不依赖 Kernel 字符串分支；
+- Repair Rule/Solver Strategy 可动态注册、禁用、卸载、冲突报告和故障隔离；
+- 每个采用候选都有 Observation、scope、权限、checkpoint、verifier、rollback 和 Trace；
+- M3 文件补丁、M4 RepairCase、M5 checkpoint/termination truth 均通过现有合同接入；
+- 同错、预算、取消、不安全、不可修复和用户决策均有结构化终态；
+- M5 同步 handler、锁等待取消和重复 run_id 回归通过；
+- 真实 COMSOL gate 不可用时明确保留运行时门槛，不用 mock 或历史 artifact 替代。

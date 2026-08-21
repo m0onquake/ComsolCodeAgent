@@ -252,3 +252,14 @@ M4 的领域无关实现位于 `comsol_agent/v2/memory/`：
   和兼容证据，只能作为人工迁移输入；
 - 删除后的 ID 有 tombstone，不能通过重复迁移恢复。若确需恢复，必须建立新记录 ID 和新的
   provenance 链，并重新经过 quarantine 与审计。
+
+## 16. M6 RepairCase 执行接入
+
+`GovernedRepairCaseSource` 通过 M4 `HybridRetriever` 构造 `require_executable=true` 的精确查询：
+错误 code/exception/feature/stage、domain、topology、COMSOL/Agent/Builder/合同版本、数据 scope、
+verified 状态和 artifact 引用必须同时通过。quarantined、candidate、invalidated 或
+needs_revalidation 案例不会成为自动修复候选；RAG hit 只提供 patch artifact 上下文。
+
+RepairOrchestrator 采用案例后仍创建 checkpoint、执行受控 patch、运行 verifier 并读取新的
+Observation。采用 ID、执行和修复结果通过 `RetrievalEvaluator` 回写采用成功率。未经过 runtime
+复验或后续 API/solve/audit gate 的案例不能因 M6 运行而晋升 verified memory。

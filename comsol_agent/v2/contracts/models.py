@@ -162,6 +162,16 @@ class RepairRecord(ContractModel):
     error_class: str
     attempt: int = Field(ge=1)
     verifier: str
+    diagnosis_id: str | None = None
+    error_code: str | None = None
+    observation_id: str | None = None
+    candidate_id: str | None = None
+    source: str | None = None
+    scope: dict[str, Any] = Field(default_factory=dict)
+    checkpoint: str | None = None
+    repair_case_id: str | None = None
+    outcome: str | None = None
+    rolled_back: bool = False
 
 
 class RunManifest(ContractModel):

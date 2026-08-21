@@ -216,6 +216,8 @@ flowchart LR
 
 目标：把测试和 COMSOL 错误转为局部、有限、可验证修复。
 
+状态：`complete`（2026-08-21）。
+
 交付物：
 
 - 错误分类器；
@@ -226,6 +228,25 @@ flowchart LR
 - 同错停止、重试预算和 rollback。
 
 验收：创建顺序、无效属性、实体维度和测试失败可自动修复；不收敛不会触发全模型重写。
+
+实现记录：
+
+- `comsol_agent/v2/repair/` 已实现严格 Diagnosis、动态 Repair Rule/Solver Strategy、固定优先级、
+  M3 exact patch/checkpoint、M4 governed RepairCase、有限预算、同错停止、verifier、rollback、Trace
+  与 RunManifest 记录；
+- M5 残余加固已实现同步 handler 线程边界、锁/租约等待取消与 deadline，以及重复 `run_id` 的
+  单 owner 结构化拒绝；
+- ADR：新增 Accepted 的 ADR 0006；
+- 测试：M6 定向 17 passed；M1–M6 联合 108 passed；完整套件 338 passed，1 个既有 warning；
+  core 203、bearing domain 14、web 13 passed；
+- Ruff：M6 修改范围通过；包含整个历史 `scripts` 的附件命令仍有 1607 个既有问题，未改写无关
+  旧脚本；
+- COMSOL gate：真实 MPh 1.3.1 + COMSOL 6.2 的 `INVALID_PROPERTY`—B checkpoint 恢复—确定性
+  属性修复—API 复验通过；不声明 solve/物理审计成功；
+- 未解决风险：进程内线程无法硬杀阻塞 Java，生产强制终止仍需可回收进程 Worker；
+- M7 输入：稳定 Diagnosis/RepairCandidate/RepairResult、Repair Rule/Solver Strategy 合同、固定
+  候选排序、受控 executor、严格 RepairCase adapter、RunManifest/Trace 和已加固 Runtime；
+- commit：M6 独立提交（以本里程碑最终 `git log` 为准）。
 
 ## M7：轴承领域插件与确定性 Builder
 

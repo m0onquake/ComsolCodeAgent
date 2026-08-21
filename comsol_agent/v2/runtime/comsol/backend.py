@@ -115,9 +115,15 @@ class PinnedExecutionCatalog:
             raise SnapshotBindingError(
                 f"handler binding does not match snapshot manifest for {extension_id}"
             )
-        result = binding.handler(model_handle, specification)
-        if inspect.isawaitable(result):
-            result = await result
+        if inspect.iscoroutinefunction(binding.handler):
+            result = await binding.handler(model_handle, specification)
+        else:
+            # Trusted handlers may still enter blocking COMSOL Java calls. Keep
+            # those calls outside the event-loop thread so runtime cancellation
+            # and deadlines remain observable at the worker boundary.
+            result = await asyncio.to_thread(binding.handler, model_handle, specification)
+            if inspect.isawaitable(result):
+                result = await result
         return dict(result or {})
 
     def _validate_binding(self, binding: RegisteredHandlerBinding) -> None:

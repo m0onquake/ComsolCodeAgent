@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from comsol_agent.v2.kernel import CancellationToken
 from comsol_agent.v2.runtime.comsol import (
     ArtifactStore,
     BackendCapabilities,
+    CancelRunRequest,
     CheckpointCompatibilityError,
     CheckpointCreateRequest,
     ComsolRuntime,
@@ -42,6 +44,8 @@ from comsol_agent.v2.runtime.comsol import (
     RuntimeStage,
     SnapshotBindingError,
     StageState,
+    WorkerCancellationError,
+    WorkerTimeoutError,
     build_mcp_tools,
     classify_backend_error,
 )
@@ -719,3 +723,162 @@ async def test_mph_adapter_reuses_typed_client_without_legacy_dict_tools(
     assert rejected.success is False
     assert rejected.exception_type == SnapshotBindingError.__name__
     assert (tmp_path / "typed.mph").read_bytes() == b"typed-adapter"
+
+
+@pytest.mark.asyncio
+async def test_blocking_sync_builder_does_not_block_timeout_or_cancellation(
+    tmp_path: Path,
+) -> None:
+    class BlockingBuilder:
+        def __init__(self) -> None:
+            self.active = False
+            self.manifest = ExtensionManifest(
+                api_version=API_VERSION,
+                kind=ExtensionKind.BUILDER,
+                id="fixture.blocking-builder",
+                version="1.0.0",
+                enabled=True,
+                entrypoint="fixture:BlockingBuilder",
+                description="blocking builder fixture",
+                capabilities=["fixture.blocking-build"],
+                compatibility={"agent_api": ">=2.0,<3", "comsol": ["6.x"]},
+                permissions={
+                    "filesystem": "none",
+                    "shell": "none",
+                    "comsol": "model_write",
+                    "network": "none",
+                },
+            )
+
+        async def activate(self) -> None:
+            self.active = True
+
+        async def deactivate(self) -> None:
+            self.active = False
+
+        async def health(self) -> HealthReport:
+            return HealthReport(extension_id=self.manifest.id, status=HealthStatus.HEALTHY)
+
+        def supports(self, context: Any) -> bool:
+            return True
+
+        async def build(self, specification: dict[str, Any]) -> dict[str, Any]:
+            return specification
+
+        def execute_model(self, handle: Any, specification: dict[str, Any]) -> dict[str, Any]:
+            time.sleep(0.2)
+            return {"built": True}
+
+    loader = ExtensionLoader(
+        compatibility=CompatibilityPolicy(agent_version="2.0.0", comsol_version="6.2"),
+        permissions=PermissionPolicy(
+            PermissionSet(
+                filesystem="none", shell="none", comsol="model_write", network="none"
+            )
+        ),
+        trusted_manifest_roots=(tmp_path,),
+        trusted_code_roots=(Path(__file__).parents[1],),
+    )
+    registry = ExtensionRegistry(loader)
+    builder = BlockingBuilder()
+    await registry.register(builder)
+    async with registry.snapshot() as snapshot:
+        catalog = PinnedExecutionCatalog(
+            snapshot,
+            [
+                RegisteredHandlerBinding(
+                    extension=builder,
+                    extension_id=builder.manifest.id,
+                    extension_version=builder.manifest.version,
+                    extension_kind=ExtensionKind.BUILDER,
+                    capability="fixture.blocking-build",
+                    handler=builder.execute_model,
+                )
+            ],
+        )
+        async def call() -> dict[str, Any]:
+            return await catalog.execute(
+                object(),
+                extension_id=builder.manifest.id,
+                extension_version=builder.manifest.version,
+                extension_kind="builder",
+                capability="fixture.blocking-build",
+                specification={},
+            )
+        timeout_worker = FakeWorkerExecutor(FakeBackend(), hard_cancel=False)
+        started = time.monotonic()
+        with pytest.raises(WorkerTimeoutError) as timed_out:
+            await timeout_worker.execute(
+                RuntimeOperation.EXECUTE_REGISTERED,
+                call,
+                timeout_seconds=0.01,
+                cancellation=CancellationToken(),
+            )
+        assert timed_out.value.termination_confirmed is False
+        assert time.monotonic() - started < 0.1
+        assert timeout_worker.quarantined
+
+        cancel_worker = FakeWorkerExecutor(FakeBackend(), hard_cancel=False)
+        token = CancellationToken()
+        task = asyncio.create_task(
+            cancel_worker.execute(
+                RuntimeOperation.EXECUTE_REGISTERED,
+                call,
+                timeout_seconds=1.0,
+                cancellation=token,
+            )
+        )
+        await asyncio.sleep(0.01)
+        token.cancel("responsive event loop")
+        with pytest.raises(WorkerCancellationError) as cancelled:
+            await task
+        assert cancelled.value.termination_confirmed is False
+        assert cancel_worker.quarantined
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_model_lock_observes_cancellation(tmp_path: Path) -> None:
+    service, backend = runtime(tmp_path)
+    backend.block_build = True
+    first = asyncio.create_task(
+        service.run(run_request(run_id="lock-owner"), CancellationToken())
+    )
+    while backend.active_calls == 0:
+        await asyncio.sleep(0)
+    waiting_token = CancellationToken()
+    waiting = asyncio.create_task(
+        service.run(run_request(run_id="lock-waiter"), waiting_token)
+    )
+    await asyncio.sleep(0.02)
+    waiting_token.cancel("cancel while queued")
+    result = await asyncio.wait_for(waiting, timeout=0.2)
+    assert result.failure is not None
+    assert result.failure.error_class == ErrorClass.CANCELLED
+    assert backend.active_calls == 1
+    backend.release_event.set()
+    assert (await first).success
+
+
+@pytest.mark.asyncio
+async def test_duplicate_run_id_is_rejected_without_replacing_owner_token(
+    tmp_path: Path,
+) -> None:
+    service, backend = runtime(tmp_path)
+    backend.block_build = True
+    owner_token = CancellationToken()
+    owner = asyncio.create_task(
+        service.run(run_request(run_id="duplicate"), owner_token)
+    )
+    while backend.active_calls == 0:
+        await asyncio.sleep(0)
+    duplicate = await service.run(run_request(run_id="duplicate"), CancellationToken())
+    assert duplicate.failure is not None
+    assert duplicate.failure.code == "RESOURCE_UNAVAILABLE"
+    assert service.cancel_run(
+        CancelRunRequest(
+            run_id="cancel-command", target_run_id="duplicate", reason="owner cancelled"
+        )
+    )
+    result = await owner
+    assert result.failure is not None
+    assert result.failure.error_class == ErrorClass.CANCELLED

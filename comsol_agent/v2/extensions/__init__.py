@@ -25,6 +25,7 @@ from .interfaces import (
     RepairRuleExtension,
     RetrieverExtension,
     SkillExtension,
+    SolverStrategyExtension,
     ValidatorExtension,
 )
 from .loader import ExtensionLoader
@@ -103,6 +104,7 @@ __all__ = [
     "RetrieverExtension",
     "ShellPermission",
     "SkillExtension",
+    "SolverStrategyExtension",
     "ValidationIssue",
     "ValidationResult",
     "ValidatorExtension",

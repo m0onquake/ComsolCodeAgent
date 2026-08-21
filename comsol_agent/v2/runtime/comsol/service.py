@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -45,6 +46,7 @@ from .errors import (
     CheckpointCompatibilityError,
     PhysicalAuditError,
     ResourceLeaseError,
+    WorkerTimeoutError,
     classify_backend_error,
 )
 
@@ -117,17 +119,63 @@ class ComsolRuntime:
         async with self._model_lock_guard:
             return self._model_locks.setdefault(model_id, asyncio.Lock())
 
+    async def _acquire_cancellable(
+        self,
+        acquire: Callable[[], Awaitable[bool]],
+        *,
+        cancellation: CancellationToken,
+        deadline: float,
+        label: str,
+    ) -> None:
+        while True:
+            cancellation.raise_if_cancelled()
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise WorkerTimeoutError(
+                    f"timed out while waiting for {label}", termination_confirmed=True
+                )
+            try:
+                await asyncio.wait_for(acquire(), timeout=min(0.01, remaining))
+                return
+            except TimeoutError:
+                continue
+
     @asynccontextmanager
-    async def _lease(self) -> AsyncIterator[None]:
-        await self._resource.acquire()
-        self._active_resource_leases += 1
+    async def _execution_slot(
+        self,
+        lock: asyncio.Lock,
+        *,
+        cancellation: CancellationToken,
+        timeout_seconds: float,
+    ) -> AsyncIterator[None]:
+        deadline = monotonic() + timeout_seconds
+        lock_acquired = False
+        resource_acquired = False
         try:
+            await self._acquire_cancellable(
+                lock.acquire,
+                cancellation=cancellation,
+                deadline=deadline,
+                label="model lock",
+            )
+            lock_acquired = True
+            await self._acquire_cancellable(
+                self._resource.acquire,
+                cancellation=cancellation,
+                deadline=deadline,
+                label="COMSOL resource lease",
+            )
+            resource_acquired = True
+            self._active_resource_leases += 1
             if self.worker.quarantined:
                 raise ResourceLeaseError("COMSOL worker is quarantined")
             yield
         finally:
-            self._active_resource_leases -= 1
-            self._resource.release()
+            if resource_acquired:
+                self._active_resource_leases -= 1
+                self._resource.release()
+            if lock_acquired:
+                lock.release()
 
     async def _call(
         self,
@@ -164,11 +212,28 @@ class ComsolRuntime:
         checkpoint: Checkpoint | None = None
         physical_name = f"{request.model_id}-{request.run_id}"
         lock = await self._model_lock(request.model_id)
+        if request.run_id in self._running:
+            failure = classify_backend_error(
+                ResourceLeaseError(f"run_id already active: {request.run_id}"),
+                RuntimeStage.INPUT_VALIDATION,
+            )
+            return RuntimeResult(
+                run_id=request.run_id,
+                model_id=request.model_id,
+                success=False,
+                status="failed",
+                stage_records=records,
+                failure=failure,
+            )
         self._running[request.run_id] = cancellation
         cleanup_complete = True
         model_open = False
         try:
-            async with lock, self._lease():
+            async with self._execution_slot(
+                lock,
+                cancellation=cancellation,
+                timeout_seconds=request.timeout_seconds,
+            ):
                 await self.start()
                 if request.resume_checkpoint:
                     records[RuntimeStage.INPUT_VALIDATION] = self._skipped(
@@ -636,7 +701,9 @@ class ComsolRuntime:
                 parameters=request.parameters,
                 specification=request.specification,
             )
-            async with lock, self._lease():
+            async with self._execution_slot(
+                lock, cancellation=token, timeout_seconds=300.0
+            ):
                 await self.start()
                 return await self._create_checkpoint_for_model(
                     request=runtime_request,
@@ -715,7 +782,7 @@ class ComsolRuntime:
     ) -> RuntimeResult:
         token = cancellation or CancellationToken()
         existing = self._running.get(request.run_id)
-        if existing is not None and existing is not token:
+        if existing is not None:
             failure = classify_backend_error(
                 ResourceLeaseError(f"run_id already active: {request.run_id}"),
                 RuntimeStage.BUILD,
@@ -731,7 +798,9 @@ class ComsolRuntime:
         self._running[request.run_id] = token
         try:
             lock = await self._model_lock(request.model_id)
-            async with lock, self._lease():
+            async with self._execution_slot(
+                lock, cancellation=token, timeout_seconds=timeout_seconds
+            ):
                 await self.start()
                 data = await self._call(
                     operation,

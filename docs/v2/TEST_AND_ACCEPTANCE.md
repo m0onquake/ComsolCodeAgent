@@ -269,3 +269,31 @@ V2 达到可用状态至少要求：
   未发生 verified memory 晋升。
 - 原 M5 commit 为 `9fb4bcbd52f331b7fac434286c2b3884b2414c50`；本记录中的 P0 加固以
   独立 follow-up commit 交付。
+
+## 15. M6 验收记录
+
+日期：2026-08-21。
+
+- `tests/test_v2_repair.py` 使用 fake file/runtime/COMSOL 与真实 M3 Workspace 覆盖
+  `UNKNOWN_FEATURE`、`INVALID_PROPERTY`、`INVALID_OVERLOAD`、`ENTITY_DIMENSION`、
+  `EMPTY_SELECTION` 安全停止、pytest exact patch、Solver Strategy 独占路由、环境/取消/超时、
+  物理审计阈值保护、同错、预算、checkpoint/rollback、严格 RepairCase、动态禁用/删除、冲突、
+  handler 隔离、Trace 和 RunManifest；17 passed；
+- `tests/test_v2_comsol_runtime.py` 增至 18 passed，新增同步阻塞 Builder/Path handler 的响应式
+  timeout/cancel、等待模型锁取消和重复 `run_id` owner 拒绝；
+- `.venv/bin/python -m pytest tests/test_v2_kernel.py tests/test_v2_extensions.py
+  tests/test_v2_code_tools.py tests/test_v2_memory.py tests/test_v2_comsol_runtime.py
+  tests/test_v2_repair.py -q`：108 passed；
+- core 203、bearing domain 14、web 13 passed；完整 `.venv/bin/python -m pytest -q`：338 passed，
+  1 个既有 Starlette/httpx 弃用 warning；
+- `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_repair.py tests/test_v2_comsol_runtime.py
+  scripts/run_v2_comsol_smoke.py scripts/run_v2_repair_smoke.py`：通过；附件要求的含整个 `scripts`
+  命令仍报告 1607 个既有旧脚本问题，M6 修改范围没有新增 Ruff 问题，未批量改写无关脚本；
+- `.venv/bin/python scripts/run_v2_repair_smoke.py --version 6.2 --cores 1`：真实 MPh 1.3.1 +
+  COMSOL 6.2 门通过。唯一 scratch 模型触发真实 `FlException: Unknown property`，分类为
+  `INVALID_PROPERTY`，保留双层 cause chain，从本次 B checkpoint 恢复后应用确定性属性修复，
+  API 复验通过，Trace 为 diagnosis→candidate→checkpoint→repair→verify→complete，临时目录清理；
+- 真实门只验证 API/property 修复和局部恢复，不声明 solve 或物理审计成功；没有案例晋升 verified
+  memory；
+- 新增并接受 ADR 0006。剩余生产风险是进程内线程不能硬杀阻塞 Java；可回收进程 Worker 和真实
+  卡死 kill 仍留给 M7/M9 前的独立加固。

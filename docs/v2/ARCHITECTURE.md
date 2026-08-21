@@ -299,3 +299,17 @@ Runtime 通过 `MphBackendAdapter` 复用现有 `COMSOLClient`/`ModelHandle` 和
 checkpoint、取消和失败检查，不暴露任意 Java/Python/Shell。取消是否终止 COMSOL 由 Worker 明确
 报告；普通 asyncio 取消不能伪造硬终止。该隔离和权限决策见
 [ADR 0005](adr/0005-comsol-runtime-worker-checkpoint-and-tool-boundary.md)。
+
+## 15. M6 实现映射
+
+M6 在 `comsol_agent/v2/repair/` 增加 Kernel 外的领域无关诊断与有限修复服务。`Diagnosis` 将 M3
+pytest/Ruff/文件 Observation 和 M5 `RuntimeFailure` 归一为稳定错误类、具体 code、指纹、cause
+chain、scope、checkpoint、允许修复种类和 termination truth。`RepairOrchestrator` 只依赖固定
+扩展快照、受控 executor 和候选 provider，按 Repair Rule、local pattern、严格 RepairCase、LLM
+局部补丁和用户决策排序，统一执行预算、scope/权限、checkpoint、verifier、同错停止和 rollback。
+
+Repair Rule 与 Solver Strategy 是独立扩展 kind；`NON_CONVERGENCE` 只进入后者。M3
+`WorkspaceRepairExecutor` 复用 exact `PatchSet` 和文件 checkpoint；M4 adapter 只采用 executable、
+严格兼容的 RepairCase 并回写采用后结果；M5 继续提供 RuntimeFailure、B checkpoint 和受控 MCP。
+Kernel 不导入 `repair/`，也没有 COMSOL 错误字符串或轴承分支。决策见
+[ADR 0006](adr/0006-diagnosis-bounded-repair-and-worker-execution.md)。

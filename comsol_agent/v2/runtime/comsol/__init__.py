@@ -14,6 +14,7 @@ from .backend import (
 from .contracts import (
     RUNTIME_SCHEMA_VERSION,
     CancelRunRequest,
+    CauseFrame,
     Checkpoint,
     CheckpointCreateRequest,
     CheckpointInspectRequest,
@@ -47,6 +48,8 @@ from .errors import (
     ComsolRuntimeError,
     PhysicalAuditError,
     ResourceLeaseError,
+    WorkerCancellationError,
+    WorkerTimeoutError,
     classify_backend_error,
 )
 from .mcp import RuntimeMcpTool, build_mcp_tools
@@ -59,6 +62,7 @@ __all__ = [
     "BackendCapabilities",
     "BackendWorker",
     "CancelRunRequest",
+    "CauseFrame",
     "Checkpoint",
     "CheckpointCompatibilityError",
     "CheckpointCreateRequest",
@@ -98,6 +102,8 @@ __all__ = [
     "StageRecord",
     "StageState",
     "SnapshotBindingError",
+    "WorkerCancellationError",
+    "WorkerTimeoutError",
     "build_mcp_tools",
     "classify_backend_error",
 ]

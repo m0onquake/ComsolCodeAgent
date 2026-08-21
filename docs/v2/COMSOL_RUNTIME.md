@@ -239,3 +239,19 @@ M5 位于 `comsol_agent/v2/runtime/comsol/`：
 本地复用和外部调研见 [THIRD_PARTY_COMSOL_RUNTIME.md](THIRD_PARTY_COMSOL_RUNTIME.md)，架构决策见
 [ADR 0005](adr/0005-comsol-runtime-worker-checkpoint-and-tool-boundary.md)。M5 不包含领域 Builder、
 Solver Strategy 或轴承物理 Auditor；这些由 M6/M7 扩展注入，严格物理回归属于 M7/M9。
+
+## 15. M6 接入与 M5 残余加固
+
+- `DiagnosticService.from_runtime()` 保留 `RuntimeFailure` 的 code、cause chain、stage、operation、
+  compatible B checkpoint 和 `termination_confirmed`，不在 Kernel 解析 COMSOL 文本；
+- C 阶段失败由 RepairOrchestrator 选择 scope 受限的规则或 Solver Strategy，并分别复验 API、solve
+  和 audit gate；checkpoint 损坏或不兼容仍由 Runtime 硬拒绝；
+- 同步 Builder/Path handler 改为在线程边界执行，事件循环可及时观察 BackendWorker 的 timeout 和
+  cancellation。线程不能证明硬终止，未确认终止仍 quarantine；
+- 模型锁和资源租约等待现在观察 CancellationToken 与 deadline；等待期取消不再依赖前序长任务
+  完成；
+- 所有公开运行使用单一 `run_id` owner。并发重复 ID 返回 `RESOURCE_UNAVAILABLE`，不会覆盖或
+  提前移除原 owner token。
+
+M6 真实门只触发安全、可预测的 API/property 错误并局部修复，不运行轴承物理回归。执行与修复
+边界见 [ADR 0006](adr/0006-diagnosis-bounded-repair-and-worker-execution.md)。

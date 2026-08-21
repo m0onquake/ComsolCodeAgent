@@ -24,6 +24,7 @@ V2 使用扩展系统承载可动态添加、删除、启用或禁用的能力�
 | Skill | 教 Agent 何时、按何顺序组合工具 | 提供额外权限或绕过 Policy |
 | Hook | 生命周期检查、日志、阻断和上下文注入 | 替代主要业务流程 |
 | Repair Rule | 匹配错误并产生受限修复动作 | 无限制重写模型 |
+| Solver Strategy | 非收敛时修改声明的 solver scope、延续和初始化 | 改写几何、材料或物理边界 |
 | Deterministic Path | 满足前置条件时执行稳定 DAG | 处理未声明的新拓扑 |
 | Builder | 从类型化规格生成领域模型片段 | 自主改变用户需求 |
 | Validator/Auditor | 判断合同、运行或物理门槛 | 修改被审计对象 |
@@ -285,3 +286,15 @@ M2 的领域无关实现位于 `comsol_agent/v2/extensions/`：
 `versions`；后续 Registry 热更新只影响新运行，退出上下文时释放租约和延迟清理。直接
 `register()` 实例是宿主进程内可信装配；不可信安装必须经过 Loader。
 该策略由 [ADR 0002](adr/0002-extension-trust-lifecycle-and-resolution.md) 固化。
+
+## 15. M6 Repair Rule 与 Solver Strategy 合同
+
+M6 为 `repair_rule` 增加严格 `RepairRuleContract`：匹配错误类/code/阶段、前置条件、修改 scope、
+所需权限、最多尝试次数、verifier、rollback、Agent/COMSOL/Builder 兼容和 provenance。新增独立
+`solver_strategy` kind 与 `SolverStrategyContract`，声明非收敛 code、solver scope、continuation、
+初始化、solve/核时预算、成功判据和 rollback checkpoint。
+
+两类扩展继续使用 M2 的可信 Loader、Registry、启停/卸载、兼容/权限、健康、固定快照和故障隔离。
+`ExtensionSnapshot.candidates()` 返回按 priority、quality、stable ID 排序的全部健康候选，供 M6 在
+高优先 handler 故障时隔离后继续；最高 priority/quality 同分时 Orchestrator 返回结构化冲突。
+删除或禁用规则不需要修改 Kernel。候选不得扩大 manifest 权限、合同权限或声明 scope。

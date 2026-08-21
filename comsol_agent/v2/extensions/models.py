@@ -21,6 +21,7 @@ class ExtensionKind(StrEnum):
     SKILL = "skill"
     HOOK = "hook"
     REPAIR_RULE = "repair_rule"
+    SOLVER_STRATEGY = "solver_strategy"
     DETERMINISTIC_PATH = "deterministic_path"
     BUILDER = "builder"
     VALIDATOR = "validator"
@@ -107,6 +108,8 @@ class ExtensionManifest(ContractModel):
     dependencies: list[DependencySpec] = Field(default_factory=list)
     requires_capabilities: list[CapabilityRequirement] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    repair_contract: dict[str, Any] | None = None
+    solver_strategy_contract: dict[str, Any] | None = None
     tests: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -126,6 +129,13 @@ class ExtensionManifest(ContractModel):
         ]
         if len(capability_keys) != len(set(capability_keys)):
             raise ValueError("requires_capabilities must be unique")
+        if self.kind == ExtensionKind.REPAIR_RULE and self.repair_contract is None:
+            raise ValueError("repair_rule manifests require repair_contract")
+        if (
+            self.kind == ExtensionKind.SOLVER_STRATEGY
+            and self.solver_strategy_contract is None
+        ):
+            raise ValueError("solver_strategy manifests require solver_strategy_contract")
         return self
 
 
