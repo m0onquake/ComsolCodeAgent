@@ -139,6 +139,8 @@ flowchart LR
 
 目标：提供可信、版本化和可评估的上下文检索。
 
+状态：`complete`（2026-08-21）。
+
 交付物：
 
 - Working/Session/Episodic/Semantic/Procedural/Artifact Memory；
@@ -149,6 +151,27 @@ flowchart LR
 - 从现有 artifact 回填的迁移工具。
 
 验收：兼容成功案例被命中，不兼容拓扑和失效版本被拒绝，修复案例只能在相符错误下使用。
+
+完成记录：
+
+- 实现：`comsol_agent/v2/memory/` 提供严格合同、运行态与长期层级、原子 JSON 参考后端、治理
+  状态机、结构化/BM25/向量/关系/哈希索引与检索、引用复验、Context Pack、执行结果评估和
+  RunManifest quarantine 迁移工具；
+- 安全门禁：Repository 拒绝直接新增非 quarantine 记录和绕过治理的状态转换；VerifiedCase 只有
+  最终规格、全阶段、目标步、严格物理门禁、完整 artifact/provenance 与匹配 Auditor 同时通过才
+  可执行；RepairCase 只有相符错误签名且 static/runtime 复验有来源时可自动使用；
+- 测试：M4 定向 16 passed；M1–M4 联合 71 passed；完整非 COMSOL 套件 301 passed，1 个既有
+  Starlette/httpx 弃用 warning；
+- Ruff：M4 修改范围通过；全仓 `--statistics` 仍为 3136 个 M3 已记录的旧问题，M4 未新增问题；
+- COMSOL gate：不适用。M4 验收使用受控案例、引用 catalog 和执行结果合同验证记忆/RAG 策略，
+  本里程碑没有把 fixture 或历史 artifact 晋升到持久 verified memory；
+- ADR：新增 Accepted 的 ADR 0004，固化 quarantine-first、持久化/删除、硬过滤、引用复验和执行
+  结果评估策略；
+- commit：`99b38d662b574c61aee71bc3bc7b8431af0077da`；
+- 未解决风险：参考 JSON 后端不提供多进程事务或恶意篡改防护；默认 hashing vectorizer 用于离线
+  确定性基线，生产 embedding/数据库/图后端需通过 Memory Adapter 注入且不得绕过硬门禁；
+- M6 输入：带 provenance 的 Context Pack、严格相符且 runtime 复验的 RepairCase、采用后执行/
+  审计指标、失效拦截和可配置混合重排。
 
 ## M5：COMSOL MCP Runtime
 

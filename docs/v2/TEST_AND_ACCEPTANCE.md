@@ -214,3 +214,24 @@ V2 达到可用状态至少要求：
   `477e2102d950b9e4ea3d4bfac87c0e092dbbb9d9`，领域中立守卫提交为
   `2fe8e1789bc366b7cc37ee9effad08ffbc8a8619`，流式输出资源边界修复提交为
   `3d53a65015de7e15e53135948a6622f60a7bc190`。
+
+## 13. M4 验收记录
+
+日期：2026-08-21。
+
+- `tests/test_v2_memory.py` 覆盖 MemoryRecord/VerifiedCase/RepairCase 严格 schema、Working/Session
+  与长期层级隔离、强制 quarantine、证据晋升、治理绕过拒绝、失效、删除 tombstone、原子持久化、
+  迁移幂等性，以及不完整 provenance、未过物理门禁和未 runtime 复验案例的晋升拒绝；
+- 混合 RAG 覆盖兼容案例命中、拓扑和 COMSOL 版本硬拒绝、结构化/BM25/向量/关系通道、artifact
+  丢失降级为 `needs_revalidation`、RepairCase 错误签名精确匹配和 invalidated 案例拦截；
+- Context Pack 验证一个主案例、最多两个辅助案例、角色/provenance 和 artifact 引用，不内联历史
+  基线代码；RetrievalEvaluator 使用采用后的执行、严格审计和修复结果，并回写历史采用成功率；
+- `.venv/bin/python -m pytest tests/test_v2_memory.py -q`：16 passed；
+- `.venv/bin/python -m pytest tests/test_v2_kernel.py tests/test_v2_extensions.py
+  tests/test_v2_code_tools.py tests/test_v2_memory.py -q`：71 passed；
+- `.venv/bin/python -m pytest -q`：301 passed，1 个既有 Starlette/httpx 弃用 warning；
+- `.venv/bin/ruff check comsol_agent/v2 tests/test_v2_memory.py scripts/migrate_v2_memory.py`：通过；
+  全仓 `--statistics` 仍报告 3136 个 M3 已记录的旧问题，M4 修改范围没有新增问题；
+- M4 不调用 COMSOL，真实求解和物理回归不适用；测试中的严格审计证据只验证 promotion policy，
+  没有将 fixture 或历史 artifact 写入持久 verified memory；
+- 新增并接受 ADR 0004；实现提交为 `99b38d662b574c61aee71bc3bc7b8431af0077da`。
