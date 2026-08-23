@@ -94,7 +94,9 @@ async def _v2_audits(spec: BearingSpec, summary: dict[str, Any]) -> dict[str, An
     }
 
 
-def _spec() -> BearingSpec:
+def _spec(spec_json: str | None = None) -> BearingSpec:
+    if spec_json:
+        return BearingSpec.model_validate_json(Path(spec_json).read_text(encoding="utf-8"))
     return BearingSpec(
         roller_count=10,
         inner_diameter_mm=45,
@@ -117,7 +119,7 @@ def _spec() -> BearingSpec:
 
 
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
-    spec = _spec()
+    spec = _spec(arguments.spec_json)
     source = (
         Path(arguments.segmented_code).resolve(strict=True) if arguments.segmented_code else None
     )
@@ -142,39 +144,39 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         "--cores",
         str(arguments.cores),
         "--strict-case-id",
-        "V2-M7-PARAM10-1N",
+        str(arguments.case_id),
         "--strict-target-load-n",
-        "1",
+        f"{spec.target_radial_load_n:.15g}",
         "--strict-load-axis",
-        "x",
+        spec.comsol_parameters()["load_axis"],
         "--strict-load-sign",
-        "1",
+        spec.comsol_parameters()["load_sign"],
         "--strict-cage-pocket-clearance-mm",
-        "0.3",
+        f"{spec.cage_pocket_clearance_mm:.15g}",
         "--strict-roller-angular-offset-deg",
-        "7.5",
+        f"{spec.roller_phase_deg:.15g}",
         "--strict-roller-count",
-        "10",
+        str(spec.roller_count),
         "--strict-inner-diameter-mm",
-        "45",
+        f"{spec.inner_diameter_mm:.15g}",
         "--strict-outer-diameter-mm",
-        "90",
+        f"{spec.outer_diameter_mm:.15g}",
         "--strict-bearing-width-mm",
-        "20",
+        f"{spec.bearing_width_mm:.15g}",
         "--strict-roller-diameter-mm",
-        "7.5",
+        f"{spec.roller_diameter_mm:.15g}",
         "--strict-roller-length-mm",
-        "17",
+        f"{spec.roller_length_mm:.15g}",
         "--strict-pitch-radius-mm",
-        "34",
+        f"{spec.pitch_radius_mm:.15g}",
         "--strict-inner-race-outer-radius-mm",
-        "29.5",
+        f"{spec.inner_race_outer_radius_mm:.15g}",
         "--strict-outer-race-inner-radius-mm",
-        "38.5",
+        f"{spec.outer_race_inner_radius_mm:.15g}",
         "--strict-cage-inner-radius-mm",
-        "29.8",
+        f"{spec.cage_inner_radius_mm:.15g}",
         "--strict-cage-outer-radius-mm",
-        "38.2",
+        f"{spec.cage_outer_radius_mm:.15g}",
         "--strict-solver-relative-tolerance",
         f"{spec.solver_relative_tolerance:.15g}",
     ]
@@ -244,6 +246,8 @@ def main() -> None:
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=1200)
     parser.add_argument("--output-root", default="reports/v2_m7_bearing_evidence")
+    parser.add_argument("--spec-json", default=None)
+    parser.add_argument("--case-id", default="V2-M7-PARAM10-1N")
     parser.add_argument(
         "--segmented-code",
         default=None,

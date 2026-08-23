@@ -110,6 +110,7 @@ class OpenAIProvider(LLMProvider):
                 "output_tokens": response.usage.completion_tokens if response.usage else 0,
                 "total_tokens": response.usage.total_tokens if response.usage else 0,
             },
+            provider_request_id=getattr(response, "id", None),
         )
 
     def _is_deepseek_v4(self) -> bool:

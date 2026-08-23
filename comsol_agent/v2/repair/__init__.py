@@ -2,6 +2,7 @@
 
 from .code import WorkspaceRepairExecutor
 from .diagnosis import DiagnosticService
+from .llm import RestrictedLLMPatchProvider
 from .memory import GovernedRepairCaseSource
 from .models import (
     AffectedScope,
@@ -43,6 +44,7 @@ __all__ = [
     "RepairKind",
     "RepairOrchestrator",
     "RepairResult",
+    "RestrictedLLMPatchProvider",
     "RepairRuleContract",
     "RepairStatus",
     "RepairTraceEvent",

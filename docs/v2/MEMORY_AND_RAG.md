@@ -263,3 +263,10 @@ needs_revalidation 案例不会成为自动修复候选；RAG hit 只提供 patc
 RepairOrchestrator 采用案例后仍创建 checkpoint、执行受控 patch、运行 verifier 并读取新的
 Observation。采用 ID、执行和修复结果通过 `RetrievalEvaluator` 回写采用成功率。未经过 runtime
 复验或后续 API/solve/audit gate 的案例不能因 M6 运行而晋升 verified memory。
+
+## 17. M7.5 LLM 上下文注入
+
+Planner 只接收 M4 `ContextPack` 的有界字段，并在 Prompt 中将它标记为 untrusted quoted
+data。输出必须引用实际提供的 record id，未提供引用、缺失引用或将 RAG 文本当作 capability/
+权限都在执行前被 Policy 拒绝。LLM 调用本身不会改变 memory state；只有后续真实执行和严格审计
+能产生晋升证据。详见 [LLM_GATEWAY_AND_PLANNING.md](LLM_GATEWAY_AND_PLANNING.md)。

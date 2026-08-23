@@ -310,6 +310,40 @@ M7 前 P0 加固（2026-08-21）：
 - 未改变 Kernel、扩展接口、运行隔离或审计阈值，不需要新增 ADR。M8 可从稳定的领域合同、动态
   能力和真实 A–D evidence 接入 Web/CLI。
 
+## M7.5：真实 LLM Gateway、Intake 与 Planner
+
+目标：在不污染领域中立 Kernel 的前提下，让自然语言需求经真实 LLM 转为可复验的
+类型化规格和受控计划。
+
+状态：`complete`（2026-08-23）。
+
+交付物：
+
+- provider-neutral `ModelRequest/Response/Error/Usage/StructuredOutput` 和 fake/replay/
+  OpenAI-compatible adapter；
+- 中文单轮/多轮 Bearing Intake，显式/继承/默认/派生 provenance，澄清、冲突与
+  unsupported 停止；
+- Goal/ChangeSet/Registry/预算/ContextPack 驱动的 Planner 和 Policy 复验；
+- M6 `CandidateProvider` 边界内的 exact local `PatchSet`；
+- Prompt/schema 版本、脱敏 Trace、真实 LLM smoke 和 LLM+COMSOL E2E gate；
+- Accepted [ADR 0008](adr/0008-controlled-model-gateway-and-llm-planning.md)。
+
+验收记录：
+
+- `tests/test_v2_model_gateway.py` 覆盖 fake/replay、schema/取消、中文完整规格、多轮载荷/方向
+  继承、缺参澄清、冲突/不支持拒绝、RAG 引用、route/capability 注入拒绝和受限局部修复；
+- M7.5 定向 13 passed，M1–M7.5 联合 162 passed，完整非 COMSOL 套件 392 passed，
+  1 个既有 Starlette/httpx warning；修改范围 Ruff 通过；
+- 真实 DeepSeek `deepseek-v4-pro` smoke 通过：Intake 1769 tokens，Planner 1210 tokens，
+  保存 Prompt/schema 版本、request id、digest、UTC 时间和脱敏 Trace；
+- 真实 E2E 使用另一次 DeepSeek 调用（Intake 1769 + Planner 1198 = 2967 tokens），
+  将中文需求解析为已验证 `BearingSpec`，Policy 选择 deterministic rebuild，保留
+  `m7-real-gate-20260823` RAG 引用，`llm_full_model_rewrite=false`；
+- E2E 新建 COMSOL 6.2 模型并在约 778 秒后通过严格审计；数值与 M7 重跑一致，
+  solved MPH SHA-256 为 `ab6207070a6f82ee2005b85184fba47891bbf4bfc03456cb13a2f7823982e6ae`；
+- 完整证据位于 `reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9/`，仅脱敏摘要进入 Git；
+  API key 未记录，未发生 verified memory 晋升。
+
 ## M8：Web、CLI 与可观测性
 
 目标：向用户提供真实、可干预的 Agent 运行体验。
@@ -337,7 +371,9 @@ M7 前 P0 加固（2026-08-21）：
 - 新轴承族插件指南；
 - 发布和回滚说明。
 
-验收：最终 Definition of Done 全部满足。
+验收：最终 Definition of Done 全部满足，包括普通回归不调用外部 LLM、真实 LLM gate
+显式 opt-in、Prompt/schema/provider/model/usage/Trace 可追溯、LLM 输出不能越过 Policy/
+Registry/COMSOL/Auditor，且至少一条自然语言到严格物理审计的真实 E2E 可重放。
 
 ## 3. 状态维护
 

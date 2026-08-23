@@ -1,0 +1,56 @@
+{
+  "gate": "v2_m7_5_real_llm_and_comsol",
+  "success": true,
+  "provider": "deepseek",
+  "model": "deepseek-v4-pro",
+  "api_key_recorded": false,
+  "prompt_contracts": [
+    "bearing.requirement.intake@1.0.0",
+    "bearing.execution.planner@1.0.0"
+  ],
+  "latest_real_provider_smoke": {
+    "evidence_directory": "reports/v2_m7_5_llm_evidence/20260823T211929-a0fd6ccc",
+    "calls": [
+      {
+        "task": "intake",
+        "request_id": "3b59ff1a920d4b3bb11709ee52606545",
+        "provider_request_id": "04f31b74-2c7b-44c5-a654-33fbee4d7339",
+        "prompt_digest": "c2c5f6491592f048c51b994a691f65a19a44bc844a56570867fa967d7901cb2c",
+        "input_tokens": 1286,
+        "output_tokens": 483,
+        "total_tokens": 1769
+      },
+      {
+        "task": "planning",
+        "request_id": "4d90dc2f8cff44f6b971bf3e9bfd22b2",
+        "provider_request_id": "a1fffb48-fc1b-4af2-9ce7-4ba01a32d753",
+        "prompt_digest": "edec2ec8662f5bae69004f6c328483f780e48c22e05ac920f0d6871d3819ed90",
+        "input_tokens": 1080,
+        "output_tokens": 115,
+        "total_tokens": 1195
+      }
+    ]
+  },
+  "real_llm_comsol_e2e": {
+    "evidence_directory": "reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9",
+    "intake_tokens": 1769,
+    "planner_tokens": 1198,
+    "total_tokens": 2967,
+    "rag_citations": ["m7-real-gate-20260823"],
+    "policy_route": "deterministic_rebuild",
+    "llm_full_model_rewrite": false,
+    "comsol_model": "v2_m7_bearing_953d280afa75434496380beba06e07d4",
+    "comsol_evidence_directory": "reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9/comsol/20260823T210221-55f2c93d",
+    "dataset": "dset7",
+    "solution_number": 1,
+    "target_radial_load_n": 1.0,
+    "max_von_mises_pa": 89433.33087249525,
+    "max_displacement_m": 3.0172418316622154e-7,
+    "solver_relative_tolerance_property": "stol",
+    "solver_relative_tolerance_readback": 0.001,
+    "solved_mph_sha256": "ab6207070a6f82ee2005b85184fba47891bbf4bfc03456cb13a2f7823982e6ae",
+    "configured_mph_sha256": "fa82d4a77d54754ae3e6f6a3fcf4becb16a858d7c925118b7a454d5ecb0a4ce4",
+    "native_png_sha256": "b6c1a732f799b0961d86ab76e6c61b52ced40174f164b167f7953a125d1bad23"
+  },
+  "verified_memory_promotion": false
+}

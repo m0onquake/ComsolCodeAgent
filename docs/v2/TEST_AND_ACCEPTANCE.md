@@ -348,3 +348,29 @@ V2 达到可用状态至少要求：
 - 第一次 gate 因规格漏建径向游隙在静态预检停止，驱动 `BearingSpec` 增加显式总径向游隙合同；
   该失败独立保留且未执行 COMSOL；
 - 未晋升 verified memory。-X/±Y 保持可确定性配置但未验证状态；不以历史失败或 mock 降低门禁。
+
+## 18. M7.5 真实 LLM 验收记录
+
+日期：2026-08-23。
+
+- 普通回归使用 fake/replay，覆盖严格 Gateway 合同、JSON Schema、非法输出、取消、中文
+  Intake、多轮继承、clarification/invalid/unsupported、RAG 引用、Policy route/capability 复验、
+  Prompt injection 拒绝和 exact local PatchSet；
+- `tests/test_v2_model_gateway.py` 13 passed；M1–M7.5 联合 162 passed；完整 pytest 392 passed，
+  1 个既有 Starlette/httpx warning；Model Gateway/Intake/Planner/Repair/gate 修改范围 Ruff 通过；
+- `.venv/bin/python scripts/run_v2_llm_gate.py` 显式调用真实 DeepSeek `deepseek-v4-pro`：
+  Intake 1286/483 tokens，Planner 1080/130 tokens，总计 2979 tokens；两个调用均保存版本、
+  request id、digest、UTC 时间、usage 和输出来源，API key 未写入证据；
+- `.venv/bin/python scripts/run_v2_llm_gate.py --run-comsol --cores 1
+  --comsol-timeout-seconds 1200` 完成另一次真实中文需求→Intake→Planner→Builder→
+  COMSOL 6.2→Auditor；LLM usage 为 1769 + 1198 = 2967 tokens，Policy 固定 deterministic
+  rebuild，RAG 引用保留，全模型 LLM 重写为零；
+- E2E 唯一模型 `v2_m7_bearing_953d280afa75434496380beba06e07d4` 的目标 1 N、力平衡、
+  `dset7` / solution 1、`solid.mises/1[Pa] = 89433.33087249525 Pa`、
+  `solid.disp/1[m] = 3.0172418316622154e-7 m`、原生 PNG、`stol=0.001` 读回和 solved MPH
+  全部通过；
+- 完整 E2E 证据目录为 `reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9/`；solved MPH
+  SHA-256 为 `ab6207070a6f82ee2005b85184fba47891bbf4bfc03456cb13a2f7823982e6ae`，大型产物不进 Git；
+- M9 Definition of Done 新增：外部 LLM 必须 opt-in；真实调用保存脱敏可追溯证据；
+  非法结构、未注册 capability、越权 Prompt 和 route 冲突必须在执行前失败；LLM 不能声明
+  solve/audit/memory promotion 成功。

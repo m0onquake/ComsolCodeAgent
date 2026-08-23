@@ -35,6 +35,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: dict[str, int] = field(default_factory=dict)
+    provider_request_id: str | None = None
 
     @property
     def is_text(self) -> bool:

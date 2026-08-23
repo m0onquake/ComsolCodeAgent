@@ -333,3 +333,11 @@ solve/audit。完整支持边界、审计合同和真实证据见 [BEARING_DOMAI
 运行时证据不再只保存“数值有限”：应力/位移数值节点、原生图和目标载荷必须共享显式
 dataset/solution 绑定，并保存 expression、unit 和 source。求解容差通过 Stationary `stol`
 节点属性的写入/读回证明，不使用空 parameter patch 伪装已生效。
+
+## 17. M7.5 Model Gateway 与规划边界
+
+M7.5 在 Kernel 外增加领域中立 Model Gateway，轴承扩展内增加 NL Intake/Planner，并以
+`CandidateProvider` 接入 M6 受限 PatchSet。LLM 产物始终是 proposal；本地 schema、ChangeSet、
+Registry snapshot、Policy、Runtime 和 Auditor 决定可执行性与事实。RAG 在 Prompt 中是带引用的
+untrusted data，不获得权限。详见 [LLM_GATEWAY_AND_PLANNING.md](LLM_GATEWAY_AND_PLANNING.md)
+和 [ADR 0008](adr/0008-controlled-model-gateway-and-llm-planning.md)。

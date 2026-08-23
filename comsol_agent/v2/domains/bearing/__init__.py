@@ -8,6 +8,13 @@ from .auditors import (
 )
 from .builder import CylindricalRollerBearingBuilder
 from .extensions import bearing_extensions
+from .intake import (
+    BearingIntakeResult,
+    BearingNaturalLanguageIntake,
+    BearingRequirementDraft,
+    IntakeStatus,
+    ValueOrigin,
+)
 from .models import (
     BearingChangeSet,
     BearingSpec,
@@ -17,6 +24,7 @@ from .models import (
     classify_changes,
 )
 from .paths import DynamicLoadContinuation, ParameterOverridePath
+from .planner import BearingPlanner, BearingPlanningResult, PlannedRoute
 from .results import evaluate_target_results
 from .skill import BearingSkill
 from .solver import apply_solver_relative_tolerance
@@ -25,7 +33,12 @@ __all__ = [
     "BearingChangeSet",
     "BearingContactAuditor",
     "BearingGeometryAuditor",
+    "BearingIntakeResult",
+    "BearingNaturalLanguageIntake",
     "BearingPhysicalAuditor",
+    "BearingPlanner",
+    "BearingPlanningResult",
+    "BearingRequirementDraft",
     "BearingSelectionAuditor",
     "BearingSkill",
     "BearingSpec",
@@ -33,8 +46,11 @@ __all__ = [
     "ChangeRoute",
     "CylindricalRollerBearingBuilder",
     "DynamicLoadContinuation",
+    "IntakeStatus",
     "LoadDirection",
     "ParameterOverridePath",
+    "PlannedRoute",
+    "ValueOrigin",
     "apply_solver_relative_tolerance",
     "bearing_extensions",
     "classify_changes",
