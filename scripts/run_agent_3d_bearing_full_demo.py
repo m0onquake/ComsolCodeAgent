@@ -50,6 +50,8 @@ from comsol_agent.tools.simulation import (
     simulation_retrieve_api_docs,
     simulation_run_template,
 )
+from comsol_agent.v2.domains.bearing.results import evaluate_target_results
+from comsol_agent.v2.domains.bearing.solver import apply_solver_relative_tolerance
 
 
 @dataclass(frozen=True)
@@ -135,8 +137,13 @@ def _validate_generated_bearing_code_for_args(
         roller_diameter_mm=variant.roller_diameter_mm,
         roller_length_mm=variant.roller_length_mm,
         pitch_radius_mm=variant.pitch_radius_mm,
+        roller_angular_offset_deg=float(
+            getattr(args, "strict_roller_angular_offset_deg", 0.0)
+        ),
         inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
         outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
+        cage_inner_radius_mm=variant.cage_inner_radius_mm,
+        cage_outer_radius_mm=variant.cage_outer_radius_mm,
     )
 
 
@@ -1142,6 +1149,9 @@ async def generate_segmented_3d_bearing_code(
     variant_load_sign = int(getattr(args, "strict_load_sign", 1))
     variant_clearance_mm = float(getattr(args, "strict_cage_pocket_clearance_mm", 0.2))
     variant_offset_deg = float(getattr(args, "strict_roller_angular_offset_deg", 0.0))
+    variant_target_load_n = float(
+        getattr(args, "strict_target_load_n", 10.099982438539563)
+    )
     variant = _strict_bearing_variant_from_args(args)
     load_vector = _signed_axis_vector(
         variant_load_axis,
@@ -1189,6 +1199,7 @@ async def generate_segmented_3d_bearing_code(
                     f"- Set cage_inner_radius exactly to {variant.cage_inner_radius_mm:.12g}[mm] and cage_outer_radius exactly to {variant.cage_outer_radius_mm:.12g}[mm].",
                     f"- Set cage_pocket_clearance exactly to {variant_clearance_mm:.12g}[mm].",
                     f"- Set roller_angular_offset_deg exactly to {variant_offset_deg:.12g}[deg] as an explicit model parameter.",
+                    f"- Set radial_load exactly to {variant_target_load_n:.15g}[N]; this is the user's final target load, not the baseline fixture value.",
                 ])
             elif spec.segment_id == "B_cage_pockets_and_rollers":
                 variant_lines.extend([
@@ -1203,6 +1214,7 @@ async def generate_segmented_3d_bearing_code(
                 variant_lines.extend([
                     f"- Create and bind per-roller selections/coupling operators for exactly {variant.roller_count} rollers; the terminal per-roller tags use suffix _{variant.roller_count}, not _12 unless roller_count is 12.",
                     f"- Use pitch_radius_mm={variant.pitch_radius_mm:.12g}, roller_diameter_mm={variant.roller_diameter_mm:.12g}, and roller_length_mm={variant.roller_length_mm:.12g} for spatial contact-point Box coordinates.",
+                    f"- Set the Python numeric local roller_angular_offset_deg={variant_offset_deg:.12g}; set offset_rad=math.radians(roller_angular_offset_deg); every per-roller contact selection must use angle=offset_rad+2*pi*i/{variant.roller_count}, exactly matching the roller, pocket, and split-tool phase.",
                     f"- Build box_inner_bore with x/y bounds +/-{inner_bore_half:.12g}[mm] and z bounds +/-{z_half_load:.12g}[mm], then intersect it with geom1_inner_ring_bnd.",
                     f"- Locate sel_inner_raceway_contact at x={variant.inner_race_outer_radius_mm - 0.1:.12g}..{variant.inner_race_outer_radius_mm + 0.1:.12g} mm, y=-0.1..0.1 mm.",
                     f"- Locate sel_outer_raceway_contact at x={variant.outer_race_inner_radius_mm - 0.1:.12g}..{variant.outer_race_inner_radius_mm + 0.1:.12g} mm, y=-0.1..0.1 mm.",
@@ -1258,8 +1270,11 @@ async def generate_segmented_3d_bearing_code(
                     roller_diameter_mm=variant.roller_diameter_mm,
                     roller_length_mm=variant.roller_length_mm,
                     pitch_radius_mm=variant.pitch_radius_mm,
+                    roller_angular_offset_deg=variant_offset_deg,
                     inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
                     outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
+                    cage_inner_radius_mm=variant.cage_inner_radius_mm,
+                    cage_outer_radius_mm=variant.cage_outer_radius_mm,
                 )
                 validation.update({
                     "stage": "segmented_generation",
@@ -1345,8 +1360,11 @@ async def generate_segmented_3d_bearing_code(
         roller_diameter_mm=variant.roller_diameter_mm,
         roller_length_mm=variant.roller_length_mm,
         pitch_radius_mm=variant.pitch_radius_mm,
+        roller_angular_offset_deg=variant_offset_deg,
         inner_race_outer_radius_mm=variant.inner_race_outer_radius_mm,
         outer_race_inner_radius_mm=variant.outer_race_inner_radius_mm,
+        cage_inner_radius_mm=variant.cage_inner_radius_mm,
+        cage_outer_radius_mm=variant.cage_outer_radius_mm,
     )
     assembly_manifest["strict_variant"] = {
         "case_id": str(getattr(args, "strict_case_id", "default")),
@@ -8069,16 +8087,17 @@ def _export_native_3d_stage_volume_plot(
         except Exception:
             pass
         java_model.result().create(plot_group, "PlotGroup3D")
+        if not dataset_tags:
+            raise RuntimeError("no COMSOL result dataset is available for native stress plot")
+        selected_dataset = dataset_tags[-1]
+        java_model.result(plot_group).set("data", selected_dataset)
         if dataset_tags:
-            try:
-                java_model.result(plot_group).set("data", dataset_tags[-1])
-            except Exception:
-                pass
             if solution_level is None:
                 try:
-                    java_model.result().dataset(dataset_tags[-1]).set("solnum", "last")
+                    java_model.result().dataset(selected_dataset).set("solnum", "last")
                 except Exception:
                     pass
+        solution_bindings: list[dict[str, Any]] = []
         if solution_level is not None:
             for solution_key, solution_value in (
                 ("looplevel", [int(solution_level)]),
@@ -8087,6 +8106,9 @@ def _export_native_3d_stage_volume_plot(
             ):
                 try:
                     java_model.result(plot_group).set(solution_key, solution_value)
+                    solution_bindings.append(
+                        {"property": solution_key, "value": solution_value}
+                    )
                 except Exception:
                     pass
         else:
@@ -8096,8 +8118,11 @@ def _export_native_3d_stage_volume_plot(
             for solution_key in ("solnum", "outersolnum"):
                 try:
                     java_model.result(plot_group).set(solution_key, "last")
+                    solution_bindings.append({"property": solution_key, "value": "last"})
                 except Exception:
                     pass
+        if not solution_bindings:
+            raise RuntimeError("native stress plot accepted no explicit solution-number binding")
         java_model.result(plot_group).feature().create(feature_tag, "Volume")
         java_model.result(plot_group).feature(feature_tag).set("expr", "solid.mises")
         java_model.result(plot_group).run()
@@ -8120,8 +8145,9 @@ def _export_native_3d_stage_volume_plot(
             "expression": "solid.mises",
             "filepath": str(output_path.resolve()),
             "export_method": "java:Image2D:Volume",
-            "dataset": dataset_tags[-1] if dataset_tags else None,
+            "dataset": selected_dataset,
             "solution_level": solution_level if solution_level is not None else "last",
+            "solution_bindings": solution_bindings,
             "png_quality": png_quality,
             "message": (
                 "Native COMSOL Volume plot exported for this solved stage."
@@ -8253,6 +8279,7 @@ def _run_strict_generated_global_contact_solve(
     roller_angular_offset_deg: float = 0.0,
     variant: StrictBearingVariant | None = None,
     case_id: str = "default",
+    solver_relative_tolerance: float = 1.0e-3,
 ) -> dict[str, Any]:
     """Solve the Agent-authored two-global-contact model without legacy fixture staging."""
     variant = variant or StrictBearingVariant()
@@ -8268,6 +8295,7 @@ def _run_strict_generated_global_contact_solve(
         "load_axis": load_axis.lower(),
         "load_sign": int(load_sign),
         "roller_angular_offset_deg": float(roller_angular_offset_deg),
+        "solver_relative_tolerance": float(solver_relative_tolerance),
         "variant_geometry": {
             "roller_count": variant.roller_count,
             "inner_diameter_mm": variant.inner_diameter_mm,
@@ -8390,9 +8418,23 @@ output.write('\\n' + {selection_marker_end!r} + '\\n')
         return report
     conditioning_code = f"""
 for diagnostic_roller_id in range(1, {variant.roller_count + 1}):
-    model.component('comp1').physics('solid').feature(
-        'spring_roller_' + str(diagnostic_roller_id)
-    ).set('kPerArea', ['1e6[N/m^3]', '1e6[N/m^3]', '1e6[N/m^3]'])
+    diagnostic_spring_configured = False
+    for diagnostic_spring_tag in [
+        'spring_roller_' + str(diagnostic_roller_id),
+        'spring_roller_' + str(diagnostic_roller_id) + '_stabilization',
+    ]:
+        try:
+            model.component('comp1').physics('solid').feature(
+                diagnostic_spring_tag
+            ).set('kPerArea', ['1e6[N/m^3]', '1e6[N/m^3]', '1e6[N/m^3]'])
+            diagnostic_spring_configured = True
+            break
+        except Exception:
+            pass
+    if not diagnostic_spring_configured:
+        raise RuntimeError(
+            'Missing roller stabilization feature for roller ' + str(diagnostic_roller_id)
+        )
 for diagnostic_contact_tag in ['contact_all_rollers_inner', 'contact_all_rollers_outer']:
     model.component('comp1').physics('solid').feature(diagnostic_contact_tag).set('zeroInitGap', '1')
 for diagnostic_load_tag in ['load_inner_bore_audit', 'load_inner_bore']:
@@ -8473,6 +8515,19 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
     checkpoint("configured_model_saved")
     if not conditioning.get("success"):
         report["solve"] = {"success": False, "error": "Diagnostic initialization configuration failed."}
+        report["success"] = False
+        return report
+    try:
+        java_model = COMSOLClient.get_instance().get_model(model_name).java_model
+        report["initialization_solver_tolerance_bindings"] = list(
+            apply_solver_relative_tolerance(java_model, solver_relative_tolerance)
+        )
+    except Exception as error:
+        report["initialization_solver_tolerance_bindings"] = []
+        report["solve"] = {
+            "success": False,
+            "error": f"Could not bind/read back stationary solver stol: {error}",
+        }
         report["success"] = False
         return report
     initialization_solve = comsol_solve(model_name)
@@ -8586,6 +8641,7 @@ for force_parametric_tag in ['stat', 'pstep', 'param', 'pcont', 'p1']:
         )
         target_solver_tag = str((inherited_solver.get("payload") or {}).get("target_solver_tag") or "")
         force_solver_conditioning: dict[str, Any] = {}
+        tolerance_bindings: list[dict[str, Any]] = []
         if target_solver_tag:
             force_solver_conditioning_code = f"""
 stationary_solver = model.sol({target_solver_tag!r}).feature('s1')
@@ -8613,11 +8669,35 @@ for force_solver_path, force_solver_key, force_solver_value in [
             force_solver_conditioning = _compact_runtime_result(
                 comsol_execute_java(force_solver_conditioning_code, model_name=model_name)
             )
+            try:
+                java_model = COMSOLClient.get_instance().get_model(model_name).java_model
+                tolerance_bindings = list(
+                    apply_solver_relative_tolerance(
+                        java_model,
+                        solver_relative_tolerance,
+                        solution_tag=target_solver_tag,
+                    )
+                )
+            except Exception as error:
+                force_solver_conditioning = {
+                    **force_solver_conditioning,
+                    "success": False,
+                    "solver_relative_tolerance_error": str(error),
+                }
         checkpoint(f"force_auxiliary_continuation_chunk_{chunk_index}_started")
-        solve = comsol_solve(model_name) if inherited_solver.get("success") else {
-            "success": False,
-            "error": "Could not create force-control solver inherited from the preceding solution.",
-        }
+        solve = (
+            comsol_solve(model_name)
+            if inherited_solver.get("success")
+            and force_solver_conditioning.get("success")
+            and tolerance_bindings
+            else {
+                "success": False,
+                "error": (
+                    "Could not create/configure force-control solver inherited from the "
+                    "preceding solution with verified relative tolerance."
+                ),
+            }
+        )
         force_stage_results.append({
             "stage_index": chunk_index,
             "mode": "native_auxiliary_continuation_chunk",
@@ -8627,6 +8707,7 @@ for force_solver_path, force_solver_key, force_solver_value in [
             "parameter_update": chunk_parameter_update,
             "inherited_solver": inherited_solver,
             "solver_conditioning": force_solver_conditioning,
+            "solver_relative_tolerance_bindings": tolerance_bindings,
             "solve": _compact_runtime_result(solve),
         })
         report["force_stage_results"] = force_stage_results
@@ -8646,6 +8727,19 @@ for force_solver_path, force_solver_key, force_solver_value in [
         COMSOLClient.get_instance().get_model(model_name).java_model.result().dataset()
     )
     dataset_tag = dataset_tags[-1] if dataset_tags else "dset2"
+    try:
+        target_results = evaluate_target_results(
+            COMSOLClient.get_instance().get_model(model_name).java_model,
+            dataset=dataset_tag,
+            target_load_n=target_load_n,
+        )
+    except Exception as error:
+        target_results = {
+            "success": False,
+            "dataset": dataset_tag,
+            "target_parameter_value_n": target_load_n,
+            "error": str(error),
+        }
     traction_expressions = {
         "x": "solid.sx*nx+solid.sxy*ny+solid.sxz*nz",
         "y": "solid.sxy*nx+solid.sy*ny+solid.syz*nz",
@@ -8781,21 +8875,36 @@ for force_solver_path, force_solver_key, force_solver_value in [
         "spring_total_vector_n": spring_totals,
         "spring_resultant_n": spring_resultant_n,
         "spring_load_ratio": spring_resultant_n / target_load_n,
-        "stress": _compact_runtime_result(comsol_evaluate(model_name, "solid.mises")),
-        "displacement": _compact_runtime_result(comsol_evaluate(model_name, "solid.disp")),
+        "target_results": target_results,
+        "stress": target_results.get("stress", {}),
+        "displacement": target_results.get("displacement", {}),
     }
     report["solved_model_save"] = _compact_runtime_result(
         comsol_save_model(model_name, str(solved_mph))
     )
     native_png = artifact_root / "bearing_3d_von_mises_native.png"
-    report["native_stress_plot"] = _compact_runtime_result(
-        _export_native_3d_stage_volume_plot(
-            model_name,
-            stage_name=("target_" + str(target_load_n).replace(".", "p") + "N"),
-            output_dir=native_png.parent,
-            solution_level=len(force_continuation_chunks[-1]),
-        )
+    target_solution_number = target_results.get("solution_number")
+    native_plot_result = _export_native_3d_stage_volume_plot(
+        model_name,
+        stage_name=("target_" + str(target_load_n).replace(".", "p") + "N"),
+        output_dir=native_png.parent,
+        solution_level=(
+            int(target_solution_number)
+            if isinstance(target_solution_number, int)
+            else len(force_continuation_chunks[-1])
+        ),
     )
+    native_plot_result.update(
+        {
+            "unit": "Pa",
+            "solution_number": target_solution_number,
+            "target_parameter_name": "radial_load",
+            "target_parameter_value_n": target_results.get("selected_parameter_value_n"),
+            "numerical_max_pa": (target_results.get("stress") or {}).get("value"),
+            "result_source": "same dataset/solution as java:MaxVolume.getReal",
+        }
+    )
+    report["native_stress_plot"] = _compact_runtime_result(native_plot_result)
     final_audit = report.get("final_audit") or {}
     roller_angles = {
         roller_id: (float(roller_angular_offset_deg) + 360.0 * (roller_id - 1) / variant.roller_count) % 360.0
@@ -8861,6 +8970,14 @@ for force_solver_path, force_solver_key, force_solver_value in [
         ),
         "loaded_zone_matches_direction": directional_load_fraction >= 0.90,
         "native_stress_png": bool((report.get("native_stress_plot") or {}).get("success")),
+        "target_result_evidence": bool(target_results.get("success")),
+        "solver_relative_tolerance_bound": bool(
+            report.get("initialization_solver_tolerance_bindings")
+            and all(
+                stage.get("solver_relative_tolerance_bindings")
+                for stage in report.get("force_stage_results") or []
+            )
+        ),
     }
     final_audit["mirror_pair_relative_errors"] = mirror_errors
     final_audit["mirror_pair_angle_mismatches_deg"] = mirror_pair_angle_mismatches
@@ -9076,6 +9193,9 @@ def run_direct_fixture_smoke(
                 roller_angular_offset_deg=float(getattr(args, "strict_roller_angular_offset_deg", 0.0)),
                 variant=strict_variant,
                 case_id=str(getattr(args, "strict_case_id", "default")),
+                solver_relative_tolerance=float(
+                    getattr(args, "strict_solver_relative_tolerance", 1.0e-3)
+                ),
             )
             summary["strict_global_contact_solve"] = global_result
             summary["solve"] = global_result.get("solve")
@@ -9490,6 +9610,14 @@ def _compact_runtime_result(result: dict | None) -> dict | None:
         "export_method",
         "stage",
         "dataset",
+        "solution_level",
+        "solution_number",
+        "solution_bindings",
+        "unit",
+        "target_parameter_name",
+        "target_parameter_value_n",
+        "numerical_max_pa",
+        "result_source",
         "run_id",
         "json_path",
         "markdown_path",
@@ -17350,6 +17478,7 @@ def main() -> None:
     parser.add_argument("--strict-outer-race-inner-radius-mm", type=float, default=35.0)
     parser.add_argument("--strict-cage-inner-radius-mm", type=float, default=27.2)
     parser.add_argument("--strict-cage-outer-radius-mm", type=float, default=34.8)
+    parser.add_argument("--strict-solver-relative-tolerance", type=float, default=1.0e-3)
     parser.add_argument(
         "--strict-run-timeout-seconds",
         type=float,

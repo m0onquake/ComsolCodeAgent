@@ -1,0 +1,16 @@
+api_version: comsol-agent/v2alpha1
+kind: deterministic_path
+id: bearing.dynamic-load-continuation.path
+version: 1.0.0
+enabled: true
+entrypoint: comsol_agent.v2.domains.bearing.extensions:continuation_extension
+description: Direction-aware bounded radial-load continuation path.
+capabilities: [bearing.dynamic-load-continuation]
+compatibility: {agent_api: ">=2.0,<3", comsol: ["6.x"]}
+permissions: {filesystem: none, shell: none, comsol: solve, network: none}
+priority: 100
+quality: 1.0
+requires_capabilities:
+  - {kind: auditor, capability: bearing.physics.audit}
+metadata: {domain: bearing, topology: cylindrical_roller, rollback: B_configured_model}
+tests: [tests/test_v2_bearing_domain.py]

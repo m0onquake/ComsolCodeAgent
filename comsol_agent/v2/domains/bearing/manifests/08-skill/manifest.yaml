@@ -1,0 +1,18 @@
+api_version: comsol-agent/v2alpha1
+kind: skill
+id: bearing.cylindrical-roller.skill
+version: 1.0.0
+enabled: true
+entrypoint: comsol_agent.v2.domains.bearing.extensions:skill_extension
+description: Permission-neutral bearing build, continuation and audit workflow.
+capabilities: [bearing.cylindrical-roller.workflow]
+compatibility: {agent_api: ">=2.0,<3", comsol: ["6.x"]}
+permissions: {filesystem: none, shell: none, comsol: none, network: none}
+priority: 100
+quality: 1.0
+requires_capabilities:
+  - {kind: builder, capability: bearing.cylindrical-roller.build}
+  - {kind: deterministic_path, capability: bearing.parameter-override}
+  - {kind: deterministic_path, capability: bearing.dynamic-load-continuation}
+metadata: {domain: bearing, topology: cylindrical_roller, grants_authority: false}
+tests: [tests/test_v2_bearing_domain.py]

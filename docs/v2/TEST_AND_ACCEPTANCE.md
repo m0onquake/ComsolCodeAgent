@@ -316,3 +316,35 @@ V2 达到可用状态至少要求：
   + COMSOL 6.2 产生 `INVALID_PROPERTY`，从 B checkpoint 局部恢复并通过 API gate；Trace 为
   diagnosis→candidate→checkpoint→repair→verify→complete，未运行 solve/audit；
 - 新增并接受 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。
+
+## 17. M7 验收记录
+
+日期：2026-08-23（针对应力取数和 solver tolerance 的重新严格验收）。
+
+- `tests/test_v2_bearing_domain.py` 33 passed，覆盖严格 schema/几何、ChangeSet、载荷/尺寸/数量/
+  相位/四方向零 LLM 路由、A–D 计划、动态延续、4 类 Auditor、manifest discovery、Registry
+  启停/卸载和 Kernel 领域中立守卫；
+- V2 M1–M7 联合 149 passed；完整非 COMSOL 套件 379 passed，1 个既有 Starlette/httpx
+  warning；修改范围 Ruff 通过；
+- `.venv/bin/python scripts/run_v2_bearing_gate.py --cores 1 --timeout-seconds 1200` 使用唯一空白模型
+  和新目录完成真实 COMSOL 6.2 A–D gate，耗时约 768 秒；10 滚子、45/90×20 mm、7.5×17 mm、
+  1.5 mm 总径向游隙、0.3 mm 兜孔间隙、7.5°、+X、1 N；
+- 目标步 1 N 返回；实际载荷 `0.999998899 N`，反力合量 `0.999993185 N`，外接触合量
+  `1.006473406 N`，稳定力占比 `7.884e-6`；载荷区方向、有限应力/位移、原生 PNG 和 solved MPH
+  通过；
+- 证据目录 `reports/v2_m7_bearing_evidence/20260823T203213-c9c9b297/` 含 V2 Builder 生成代码、
+  约 512 MB solved MPH、configured MPH、PNG、完整摘要、checkpoint 和
+  `v2_m7_audit_evidence.json`；每个 material artifact 均记录 SHA-256；
+- 内嵌审阅资产 SHA-256 为 `3f8e0d241a4e078f365c90497e6dc3db9be0e78be909b036bfafee684b572062`；
+  当前 Builder 输出 SHA-256 为 `a2f95a8b067de9a8c67abf2d44119c21c72169b84ed7c0cc63f13eae5415c77d`，
+  与本次真实 gate 执行文件一致；
+- 严格结果节点通过 `radial_load/1[N]` 选择目标 1 N，显式绑定 `dset7` /
+  solution 1；`solid.mises/1[Pa] = 89433.33087249525 Pa`，
+  `solid.disp/1[m] = 3.0172418316622154e-7 m`，原生 PNG 的 dataset、solution、表达式与
+  numerical maximum 一致；
+- Stationary solver 的真实属性是 `stol`，不是 `rtol`；`sol1`–`sol7` 全部写入/
+  读回 `0.001`。旧 `20260822T221835-c97e1b90` 中 `6.2959e-6 Pa` 与原生图矛盾，
+  不得再作为应力正确性证据；
+- 第一次 gate 因规格漏建径向游隙在静态预检停止，驱动 `BearingSpec` 增加显式总径向游隙合同；
+  该失败独立保留且未执行 COMSOL；
+- 未晋升 verified memory。-X/±Y 保持可确定性配置但未验证状态；不以历史失败或 mock 降低门禁。

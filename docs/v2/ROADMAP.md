@@ -265,6 +265,8 @@ M7 前 P0 加固（2026-08-21）：
 
 目标：在通用架构上实现当前支持的轴承需求。
 
+状态：`complete`（2026-08-23 重新严格验收）。
+
 交付物：
 
 - BearingSpec 和 ChangeSet；
@@ -275,6 +277,38 @@ M7 前 P0 加固（2026-08-21）：
 - 轴承 Skill 和 deterministic paths。
 
 验收：同拓扑载荷修改不调用全量 LLM；尺寸、数量、相位和方向在支持范围内由 Builder 完成。
+
+完成记录：
+
+- `comsol_agent/v2/domains/bearing/` 实现严格 `BearingSpec`、含显式径向游隙的几何约束、
+  `BearingChangeSet` 和最小路由；载荷/方向/solver 走参数路径，尺寸/游隙/数量/相位走确定性重建，
+  全部 `requires_llm=false`；
+- 8 个 manifest 可发现并动态注册 Builder、4 类 Auditor、2 条 deterministic path 和 Skill；禁用/
+  卸载不修改 Kernel，Skill 不授予权限；
+- A–D Builder 复用经审查 V1 资产，动态延续保留 B rollback checkpoint 和目标步/solve/audit
+  成功判据；Kernel 领域中立守卫通过；
+- `tests/test_v2_bearing_domain.py` 33 passed；V2 M1–M7 联合 149 passed；完整非 COMSOL 套件
+  379 passed，1 个既有弃用 warning；M7 新增模块和 gate 脚本 Ruff 通过；
+- 真实 COMSOL 6.2 gate 使用唯一新模型运行 10 滚子、改尺寸、1.5 mm 总径向游隙、7.5°、+X、
+  1 N 案例，约 768 秒完成。目标步、实际载荷、支承反力、外接触合力、稳定项、方向、有限结果、
+  原生 PNG 和 solved MPH 全部门禁通过；外接触合力相对误差约 0.647%，稳定力占比约
+  `7.88e-6`；
+- 重新严格验收证据位于 `reports/v2_m7_bearing_evidence/20260823T203213-c9c9b297/`，V2 Builder 代码、
+  configured/solved MPH、PNG、摘要和 checkpoint 均有 SHA-256；失败的首次规格尝试也独立保留，
+  未用历史 artifact 冒充；
+- 内嵌审阅资产 SHA-256 为 `3f8e0d241a4e078f365c90497e6dc3db9be0e78be909b036bfafee684b572062`；
+  当前确定性 Builder 输出 SHA-256 为 `a2f95a8b067de9a8c67abf2d44119c21c72169b84ed7c0cc63f13eae5415c77d`，
+  与真实 gate 输入逐字节一致；
+- 目标结果显式绑定 `dset7` / solution 1 / `radial_load=1 N`：`solid.mises/1[Pa]`
+  为 `89433.33087249525 Pa`，`solid.disp/1[m]` 为 `3.0172418316622154e-7 m`；原生图
+  使用同一 dataset/solution，其 numerical maximum 一致；
+- `solver_relative_tolerance` 经真实 COMSOL 确认映射 Stationary `stol`，`sol1`–`sol7`
+  全部写入并读回 `0.001`；旧报告的 `6.2959e-6 Pa` 取数与原生图矛盾，已废弃为
+  无效应力证据；
+- 未发生 verified memory 晋升。-X/±Y 虽可确定性生成和配置，但在新的相同严格真实 gate 通过前
+  仍是 candidate，不宣称为 verified；
+- 未改变 Kernel、扩展接口、运行隔离或审计阈值，不需要新增 ADR。M8 可从稳定的领域合同、动态
+  能力和真实 A–D evidence 接入 Web/CLI。
 
 ## M8：Web、CLI 与可观测性
 

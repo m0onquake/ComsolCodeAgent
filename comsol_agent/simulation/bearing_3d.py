@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import textwrap
 from collections.abc import Callable
@@ -63,6 +64,41 @@ def _difference_slot_contains_radius(java_code: str, feature_tag: str, slot: str
     radii = _geometry_feature_radii(java_code)
     expected = re.sub(r"\s+", "", radius_expr.lower())
     return any(radii.get(tag) == expected for tag in _difference_input_tags(java_code, feature_tag, slot))
+
+
+def _has_contact_selection_angular_offset(java_code: str, expected_deg: float) -> bool:
+    """Accept an offset local or an explicit phase-aware roller-angle list."""
+    lowered = java_code.lower()
+    local_match = re.search(
+        r"\b(?:roller_angular_offset_deg|offset_deg)\s*=\s*([-+]?\d+(?:\.\d+)?)\b",
+        lowered,
+    )
+    local_is_expected = bool(
+        local_match
+        and math.isclose(float(local_match.group(1)), float(expected_deg), abs_tol=1.0e-12)
+    )
+    local_used = bool(
+        re.search(r"\bangle\s*=\s*offset_rad\s*\+", lowered)
+        or re.search(r"\boffset_rad\s*=\s*math\.radians\([^\n]+\)", lowered)
+    )
+    explicit_angle_list = bool(
+        re.search(
+            rf"\broller_angles_deg\s*=\s*\[\s*{re.escape(f'{float(expected_deg):g}')}"
+            r"(?:\.0+)?\s*\+",
+            lowered,
+        )
+    )
+    return (local_is_expected and local_used) or explicit_angle_list
+
+
+def _model_parameter_numeric_value(java_code: str, name: str) -> float | None:
+    match = re.search(
+        rf"model\.param\(\)\.set\(\s*['\"]{re.escape(name)}['\"]\s*,\s*"
+        r"['\"]\s*([-+]?\d+(?:\.\d+)?)",
+        java_code,
+        flags=re.IGNORECASE,
+    )
+    return float(match.group(1)) if match else None
 
 
 def _contact_feature_variable_names(java_code: str) -> set[str]:
@@ -665,8 +701,11 @@ def validate_segmented_3d_segment(
     roller_diameter_mm: float = 8.0,
     roller_length_mm: float = 16.0,
     pitch_radius_mm: float = 31.0,
+    roller_angular_offset_deg: float = 0.0,
     inner_race_outer_radius_mm: float = 27.0,
     outer_race_inner_radius_mm: float = 35.0,
+    cage_inner_radius_mm: float = 27.2,
+    cage_outer_radius_mm: float = 34.8,
 ) -> dict[str, Any]:
     """Validate one segmented generation result before local assembly."""
     errors: list[str] = []
@@ -714,6 +753,26 @@ def validate_segmented_3d_segment(
             f"{spec.segment_id}: inner_ring, outer_ring, and cage_annulus must each set selresultshow='all'."
         )
     if spec.segment_id == "A_base_geometry":
+        expected_parameters = {
+            "inner_diameter": inner_diameter_mm,
+            "inner_race_outer_radius": inner_race_outer_radius_mm,
+            "pitch_radius": pitch_radius_mm,
+            "outer_race_inner_radius": outer_race_inner_radius_mm,
+            "outer_diameter": outer_diameter_mm,
+            "bearing_width": bearing_width_mm,
+            "roller_diameter": roller_diameter_mm,
+            "roller_length": roller_length_mm,
+            "cage_inner_radius": cage_inner_radius_mm,
+            "cage_outer_radius": cage_outer_radius_mm,
+            "cage_pocket_clearance": cage_pocket_clearance_mm,
+            "roller_angular_offset_deg": roller_angular_offset_deg,
+        }
+        for name, expected in expected_parameters.items():
+            actual = _model_parameter_numeric_value(normalized, name)
+            if actual is None or not math.isclose(actual, float(expected), abs_tol=1.0e-12):
+                errors.append(
+                    f"{spec.segment_id}: model parameter {name} must be {float(expected):g}."
+                )
         for tag in ("inner_ring", "outer_ring", "cage_annulus"):
             if not re.search(rf"\.create\(\s*['\"]{tag}['\"]\s*,\s*['\"]difference['\"]\s*\)", lowered):
                 errors.append(f"{spec.segment_id}: Boolean output must be created with exact feature tag {tag}.")
@@ -855,6 +914,17 @@ def validate_segmented_3d_segment(
             match = re.search(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?)\b", lowered)
             if not match or abs(float(match.group(1)) - expected) > 1.0e-12:
                 errors.append(f"{spec.segment_id}: {name} must be the literal {expected:g} for spatial selection boxes.")
+        if (
+            abs(float(roller_angular_offset_deg)) > 1.0e-12
+            and not _has_contact_selection_angular_offset(
+                normalized,
+                float(roller_angular_offset_deg),
+            )
+        ):
+            errors.append(
+                f"{spec.segment_id}: every per-roller contact selection must apply "
+                f"the requested {float(roller_angular_offset_deg):g} degree angular offset."
+            )
         for forbidden_local in ("pitch_radius =", "roller_diameter =", "roller_length ="):
             if forbidden_local in lowered:
                 errors.append(f"{spec.segment_id}: ambiguous/wrong local is forbidden; use *_mm exact locals: {forbidden_local}")
@@ -1012,8 +1082,11 @@ def assemble_segmented_3d_code(
     roller_diameter_mm: float = 8.0,
     roller_length_mm: float = 16.0,
     pitch_radius_mm: float = 31.0,
+    roller_angular_offset_deg: float = 0.0,
     inner_race_outer_radius_mm: float = 27.0,
     outer_race_inner_radius_mm: float = 35.0,
+    cage_inner_radius_mm: float = 27.2,
+    cage_outer_radius_mm: float = 34.8,
 ) -> tuple[str, dict[str, Any]]:
     """Assemble validated segment code and run final full-bearing quality gates."""
     code = "\n\n".join(str(item.get("code") or "").strip() for item in segment_results if item.get("code"))
@@ -1030,8 +1103,11 @@ def assemble_segmented_3d_code(
         roller_diameter_mm=roller_diameter_mm,
         roller_length_mm=roller_length_mm,
         pitch_radius_mm=pitch_radius_mm,
+        roller_angular_offset_deg=roller_angular_offset_deg,
         inner_race_outer_radius_mm=inner_race_outer_radius_mm,
         outer_race_inner_radius_mm=outer_race_inner_radius_mm,
+        cage_inner_radius_mm=cage_inner_radius_mm,
+        cage_outer_radius_mm=cage_outer_radius_mm,
     )
     manifest = {
         "segment_count": len(segment_results),
@@ -1062,8 +1138,11 @@ def validate_3d_bearing_code_draft(
     roller_diameter_mm: float = 8.0,
     roller_length_mm: float = 16.0,
     pitch_radius_mm: float = 31.0,
+    roller_angular_offset_deg: float = 0.0,
     inner_race_outer_radius_mm: float = 27.0,
     outer_race_inner_radius_mm: float = 35.0,
+    cage_inner_radius_mm: float = 27.2,
+    cage_outer_radius_mm: float = 34.8,
 ) -> dict[str, Any]:
     """Apply 3D full-bearing gates before launching COMSOL."""
     code_for_validation = _strip_hash_comments(_strip_line_comments(_strip_code_fence(textwrap.dedent(java_code))))
@@ -1196,6 +1275,24 @@ def validate_3d_bearing_code_draft(
         if token not in compact:
             errors.append(f"Generated 3D bearing code is missing expected {label}: {token}")
     if require_named_selections:
+        expected_parameters = {
+            "inner_diameter": inner_diameter_mm,
+            "inner_race_outer_radius": inner_race_outer_radius_mm,
+            "pitch_radius": pitch_radius_mm,
+            "outer_race_inner_radius": outer_race_inner_radius_mm,
+            "outer_diameter": outer_diameter_mm,
+            "bearing_width": bearing_width_mm,
+            "roller_diameter": roller_diameter_mm,
+            "roller_length": roller_length_mm,
+            "cage_inner_radius": cage_inner_radius_mm,
+            "cage_outer_radius": cage_outer_radius_mm,
+            "cage_pocket_clearance": cage_pocket_clearance_mm,
+            "roller_angular_offset_deg": roller_angular_offset_deg,
+        }
+        for name, expected in expected_parameters.items():
+            actual = _model_parameter_numeric_value(code_for_validation, name)
+            if actual is None or not math.isclose(actual, float(expected), abs_tol=1.0e-12):
+                errors.append(f"Production model parameter {name} must be {float(expected):g}.")
         axis_index = 0 if load_axis.lower() == "x" else 1
         signed_pressure = "radial_load/(pi*inner_diameter*bearing_width)"
         signed_displacement = "inner_radial_displacement"
@@ -1270,6 +1367,17 @@ def validate_3d_bearing_code_draft(
                     errors.append(
                         f"Generated local {name}={match.group(1)} contradicts required {expected:g} mm."
                     )
+        if (
+            abs(float(roller_angular_offset_deg)) > 1.0e-12
+            and not _has_contact_selection_angular_offset(
+                code_for_validation,
+                float(roller_angular_offset_deg),
+            )
+        ):
+            errors.append(
+                "Production per-roller contact selections must apply the requested "
+                f"{float(roller_angular_offset_deg):g} degree angular offset."
+            )
         if lowered.count("selresultshow") < 5:
             errors.append("Base rings/cage annulus, roller loop, and final cage must expose all result selections.")
         if not (

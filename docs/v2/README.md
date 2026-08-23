@@ -9,6 +9,7 @@
 | [TOOLS_MCP_SKILLS.md](TOOLS_MCP_SKILLS.md) | Function、MCP、Skill 的执行与权限边界是什么？ |
 | [MEMORY_AND_RAG.md](MEMORY_AND_RAG.md) | Agent 记住什么、如何检索、何时可信、何时失效？ |
 | [COMSOL_RUNTIME.md](COMSOL_RUNTIME.md) | Agent 如何执行 COMSOL、保存检查点、诊断并修复错误？ |
+| [BEARING_DOMAIN.md](BEARING_DOMAIN.md) | M7 轴承规格、最小路由、Builder、Auditor 和真实支持边界是什么？ |
 | [THIRD_PARTY_COMSOL_RUNTIME.md](THIRD_PARTY_COMSOL_RUNTIME.md) | M5 评估了哪些本地/外部实现及其许可证？ |
 | [TEST_AND_ACCEPTANCE.md](TEST_AND_ACCEPTANCE.md) | 如何证明代码、运行和物理结果正确？ |
 | [ROADMAP.md](ROADMAP.md) | 应按什么依赖顺序开发，每个里程碑交付什么？ |

@@ -268,3 +268,19 @@ M6 真实门只触发安全、可预测的 API/property 错误并局部修复，
   标记 `manual_recovery_required` 并禁止继续自动修复。
 
 决策见 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。
+
+## 17. M7 轴承运行时接入
+
+M7 不扩大 MCP 面。轴承 Builder 和 deterministic paths 继续通过 `PinnedExecutionCatalog` 绑定
+固定快照；Skill 没有执行权限。Geometry/Selection/Contact/Physics Auditor 分别返回结构化门禁，
+Runtime 仍区分 B configured checkpoint、C solve 和 D strict audit。
+
+方向感知载荷延续声明目标序列、分块、最大 solve、B rollback checkpoint 和成功判据。尺寸、
+游隙、滚子数量或相位变化不在已构建几何上伪装成纯参数求解，而由确定性 Builder 重建；载荷、
+方向和 solver 参数可复用相容 B checkpoint，但必须重新 solve/audit。真实 gate 和证据格式见
+[BEARING_DOMAIN.md](BEARING_DOMAIN.md)。
+
+`solver_relative_tolerance` 不是 model parameter；COMSOL 6.2 的 Stationary solver feature 使用
+`stol`。参数路径和 Builder 执行都必须对每个目标 solution sequence 写入并读回该属性，
+空绑定、部分绑定或读回不一致均是 gate 失败。结果评估必须从目标 `radial_load`
+参数值选择 solution number，不得使用“最后一个数组元素”或绘图层序号代替数据集/解绑定。

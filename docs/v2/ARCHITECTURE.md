@@ -319,3 +319,17 @@ Builder 版本、前置条件、强制门禁和已消耗 solver 预算，`Repair
 要求传给受控 executor。成功条件由 Policy/Goal 最低门禁与候选附加门禁取并集；checkpoint、commit
 和 rollback 二级故障均产生结构化终态，未确认回滚必须人工恢复。决策见
 [ADR 0007](adr/0007-repair-contract-enforcement-and-recovery-failure.md)。
+
+## 16. M7 实现映射
+
+M7 位于 `comsol_agent/v2/domains/bearing/`，以 8 个可发现 manifest 提供严格 `BearingSpec`、
+`BearingChangeSet`、圆柱滚子 A–D Builder、参数覆盖、动态载荷延续、Geometry/Selection/Contact/
+Physics Auditor 和 permission-neutral Skill。Kernel、Runtime 和 Repair 均未增加轴承导入或分支。
+
+载荷/方向/solver 变更走 B checkpoint 后的类型化参数或物理节点路径；尺寸、游隙、数量和相位
+影响几何或选择，走注册 Builder 确定性重建。两者的 LLM 全量重写次数均为零，并都强制重新
+solve/audit。完整支持边界、审计合同和真实证据见 [BEARING_DOMAIN.md](BEARING_DOMAIN.md)。
+
+运行时证据不再只保存“数值有限”：应力/位移数值节点、原生图和目标载荷必须共享显式
+dataset/solution 绑定，并保存 expression、unit 和 source。求解容差通过 Stationary `stol`
+节点属性的写入/读回证明，不使用空 parameter patch 伪装已生效。

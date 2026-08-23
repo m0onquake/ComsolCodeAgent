@@ -1,0 +1,51 @@
+{
+  "gate": "v2_m7_real_comsol_bearing_a_d",
+  "success": true,
+  "fresh_run": true,
+  "comsol_version": "6.2",
+  "started_at": "2026-08-23T20:32:13.846321+08:00",
+  "finished_at": "2026-08-23T20:44:57.417127+08:00",
+  "evidence_directory": "reports/v2_m7_bearing_evidence/20260823T203213-c9c9b297",
+  "model_name": "v2_m7_bearing_11fbcf8949874285a10a5b30144b04cb",
+  "target": {
+    "parameter_expression": "radial_load/1[N]",
+    "value_n": 1.0,
+    "dataset": "dset7",
+    "solution_number": 1
+  },
+  "stress": {
+    "expression": "solid.mises/1[Pa]",
+    "value_pa": 89433.33087249525,
+    "source": "java:MaxVolume.getReal"
+  },
+  "displacement": {
+    "expression": "solid.disp/1[m]",
+    "value_m": 3.0172418316622154e-7,
+    "source": "java:MaxVolume.getReal"
+  },
+  "solver_relative_tolerance": {
+    "comsol_property": "stol",
+    "requested": 0.001,
+    "readback": 0.001,
+    "solution_tags": ["sol1", "sol2", "sol3", "sol4", "sol5", "sol6", "sol7"]
+  },
+  "force_balance": {
+    "applied_load_n": 0.999998899245114,
+    "support_reaction_n": 0.9999931853088775,
+    "outer_contact_resultant_n": 1.0064734057334992,
+    "stabilization_force_n": 7.884150327581654e-6
+  },
+  "sha256": {
+    "reviewed_source_asset": "3f8e0d241a4e078f365c90497e6dc3db9be0e78be909b036bfafee684b572062",
+    "builder_code": "a2f95a8b067de9a8c67abf2d44119c21c72169b84ed7c0cc63f13eae5415c77d",
+    "native_png": "b6c1a732f799b0961d86ab76e6c61b52ced40174f164b167f7953a125d1bad23",
+    "solved_mph": "66aa294b55b8d73f3f33f78a4b33632040896708550bae18c7a3fef8f6c278a1",
+    "configured_mph": "60cc29aa487d83740dc5bdfa9254ad1b8343d65de2f619970a5e9c83c6bf4b18"
+  },
+  "supersedes_stress_evidence": {
+    "directory": "reports/v2_m7_bearing_evidence/20260822T221835-c97e1b90",
+    "invalid_value_pa": 6.2959002748793795e-6,
+    "reason": "generic numerical evaluation was not bound to the native plot dataset and target load solution"
+  },
+  "verified_memory_promotion": false
+}

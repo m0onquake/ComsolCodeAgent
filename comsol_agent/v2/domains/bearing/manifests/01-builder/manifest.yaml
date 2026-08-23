@@ -1,0 +1,14 @@
+api_version: comsol-agent/v2alpha1
+kind: builder
+id: bearing.cylindrical-roller.builder
+version: 1.0.0
+enabled: true
+entrypoint: comsol_agent.v2.domains.bearing.extensions:cylindrical_builder_extension
+description: Deterministic A-D builder for supported 3D cylindrical roller bearings.
+capabilities: [bearing.cylindrical-roller.build]
+compatibility: {agent_api: ">=2.0,<3", comsol: ["6.x"]}
+permissions: {filesystem: none, shell: none, comsol: model_write, network: none}
+priority: 100
+quality: 1.0
+metadata: {domain: bearing, topology: cylindrical_roller, provenance: reviewed_v1_asset}
+tests: [tests/test_v2_bearing_domain.py]
