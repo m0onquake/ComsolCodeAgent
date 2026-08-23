@@ -284,3 +284,16 @@ Runtime 仍区分 B configured checkpoint、C solve 和 D strict audit。
 `stol`。参数路径和 Builder 执行都必须对每个目标 solution sequence 写入并读回该属性，
 空绑定、部分绑定或读回不一致均是 gate 失败。结果评估必须从目标 `radial_load`
 参数值选择 solution number，不得使用“最后一个数组元素”或绘图层序号代替数据集/解绑定。
+
+### M7.5.1 参数覆盖恢复语义
+
+`parameter_override` 必须同时提供完整 previous/requested spec、相容 B checkpoint、
+固定 parameter path 和 continuation path。Runtime 首先用 previous 物理输入验证检查点，
+再执行局部覆盖和新的 C/D；A/B 必须记录为 skipped。恢复兼容性排除 provenance、
+build/topology 派生字段，但仍强制 model、stage、COMSOL/runtime/backend、Builder 和
+snapshot 版本一致。
+
+进程内 MPh 调用的强取消风险仍存在：2026-08-24 的 `-Y / 10 N` 真实覆盖运行
+正确跳过 A/B，但 C 在 1200 s 超时且 `termination_confirmed=false`。该运行是失败
+证据，不得用于声明 -Y/10 N 物理支持；也说明生产环境仍需要可回收进程
+Worker 才能提供确定硬取消。

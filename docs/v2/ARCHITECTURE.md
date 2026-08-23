@@ -341,3 +341,17 @@ M7.5 在 Kernel 外增加领域中立 Model Gateway，轴承扩展内增加 NL I
 Registry snapshot、Policy、Runtime 和 Auditor 决定可执行性与事实。RAG 在 Prompt 中是带引用的
 untrusted data，不获得权限。详见 [LLM_GATEWAY_AND_PLANNING.md](LLM_GATEWAY_AND_PLANNING.md)
 和 [ADR 0008](adr/0008-controlled-model-gateway-and-llm-planning.md)。
+
+M7.5.1 把这个边界延伸到真实执行链。Planner 从同一个 `ExtensionSnapshot` 获取类型化
+catalog，并为 Function、Builder、deterministic path 和 Auditor 生成
+ID/version/kind/capability pin。Kernel 只执行 `bearing.workflow.execute` 这个已注册
+Function；该领域工作流在进入 COMSOL 前复验全部 pin，然后调用 M5 Runtime。领域
+规则仍位于轴承扩展，Kernel 只记录通用 Observation 和 audit manifest。见
+[ADR 0009](adr/0009-pinned-plan-execution-bridge.md)。
+失败 Observation 由 Tool 边界的 `ObservationRepairRouter` 送入 M6 Diagnosis/Orchestrator；
+没有符合范围、版本、预算、checkpoint 和不可降低门禁的候选时安全停止，Kernel
+不再对原 Action 盲目重试。
+
+因此“Agent 生成模型”的准确含义是：LLM 将自然语言解释为 proposal 并提议路由；
+Policy/Registry 将其约束为已注册能力；最终 COMSOL API 操作由版本固定的确定性
+Builder/Path 产生。LLM 不生成或执行整段 COMSOL Python/Java 模型代码。

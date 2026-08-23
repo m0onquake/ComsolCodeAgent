@@ -26,6 +26,7 @@ from .errors import (
 from .interfaces import INTERFACE_BY_KIND, Extension
 from .loader import ExtensionLoader
 from .models import (
+    CapabilityDescriptor,
     ConflictReport,
     ExtensionCandidate,
     ExtensionKind,
@@ -171,6 +172,24 @@ class ExtensionSnapshot:
                 -item.manifest.quality,
                 item.manifest.id,
             ),
+        )
+
+    def capability_catalog(self) -> tuple[CapabilityDescriptor, ...]:
+        """Return the fixed, typed capability surface visible to this run."""
+        if self._closed:
+            raise ExtensionStateError("extension snapshot is closed")
+        return tuple(
+            CapabilityDescriptor(
+                extension_id=record.extension.manifest.id,
+                extension_version=record.extension.manifest.version,
+                extension_kind=record.extension.manifest.kind,
+                capability=capability,
+                permissions=record.extension.manifest.permissions.tokens(),
+            )
+            for record in sorted(
+                self._records, key=lambda item: item.extension.manifest.id
+            )
+            for capability in sorted(record.extension.manifest.capabilities)
         )
 
     async def close(self) -> None:

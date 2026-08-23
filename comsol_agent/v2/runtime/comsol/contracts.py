@@ -133,6 +133,22 @@ class RuntimeRunRequest(ModelRequestBase):
     extension_versions: dict[str, str] = Field(min_length=1)
     parameters: dict[str, str] = Field(default_factory=dict)
     specification: dict[str, Any] = Field(default_factory=dict)
+    previous_parameters: dict[str, str] | None = None
+    previous_specification: dict[str, Any] | None = None
+    override_extension_id: str | None = Field(
+        default=None, pattern=r"^[a-z0-9][a-z0-9_.-]*$"
+    )
+    override_extension_capability: str | None = None
+    override_extension_version: str | None = Field(
+        default=None, pattern=r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
+    )
+    continuation_extension_id: str | None = Field(
+        default=None, pattern=r"^[a-z0-9][a-z0-9_.-]*$"
+    )
+    continuation_extension_capability: str | None = None
+    continuation_extension_version: str | None = Field(
+        default=None, pattern=r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
+    )
     expressions: tuple[str, ...] = Field(default_factory=tuple)
     timeout_seconds: float = Field(default=3600.0, gt=0, le=86400)
     resume_checkpoint: str | None = None
@@ -141,6 +157,34 @@ class RuntimeRunRequest(ModelRequestBase):
     def builder_is_in_snapshot(self) -> RuntimeRunRequest:
         if self.extension_versions.get(self.builder_id) != self.builder_version:
             raise ValueError("builder version must match the pinned extension snapshot")
+        override = (
+            self.override_extension_id,
+            self.override_extension_capability,
+            self.override_extension_version,
+        )
+        if any(override) and not all(override):
+            raise ValueError("override extension binding must be complete")
+        if self.override_extension_id and (
+            self.extension_versions.get(self.override_extension_id)
+            != self.override_extension_version
+        ):
+            raise ValueError("override version must match the pinned extension snapshot")
+        continuation = (
+            self.continuation_extension_id,
+            self.continuation_extension_capability,
+            self.continuation_extension_version,
+        )
+        if any(continuation) and not all(continuation):
+            raise ValueError("continuation extension binding must be complete")
+        if self.continuation_extension_id and (
+            self.extension_versions.get(self.continuation_extension_id)
+            != self.continuation_extension_version
+        ):
+            raise ValueError("continuation version must match the pinned extension snapshot")
+        if self.resume_checkpoint and self.override_extension_id and (
+            self.previous_specification is None or self.previous_parameters is None
+        ):
+            raise ValueError("override resume requires full previous specification and parameters")
         return self
 
 

@@ -5,22 +5,41 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from comsol_agent.cli.config import load_config
 from comsol_agent.llm.router import create_provider
-from comsol_agent.v2.contracts import GoalSpec, SourceRef
+from comsol_agent.v2.contracts import GoalSpec, RunStatus, SourceRef
 from comsol_agent.v2.domains.bearing import (
     BearingNaturalLanguageIntake,
     BearingPlanner,
+    BearingSpec,
+    BearingWorkflowTool,
     IntakeStatus,
+    ReviewedStrictAuditCollector,
+    bearing_extensions,
 )
+from comsol_agent.v2.extensions import (
+    CompatibilityPolicy,
+    ExtensionLoader,
+    ExtensionRegistry,
+    PermissionPolicy,
+    PermissionSet,
+    RegistryToolExecutor,
+)
+from comsol_agent.v2.kernel import AgentKernel
 from comsol_agent.v2.memory import ContextPack, ContextPackBuilder
 from comsol_agent.v2.model_gateway import ModelGateway, ProviderBackend
+from comsol_agent.v2.repair import ObservationRepairRouter, RepairExecutionContext
+from comsol_agent.v2.runtime.comsol import (
+    ArtifactStore,
+    ComsolRuntime,
+    InProcessWorkerExecutor,
+    MphBackendAdapter,
+)
 
 DEFAULT_REQUIREMENT = (
     "创建一个三维单列圆柱滚子轴承：10个滚子，内径45 mm，外径90 mm，宽20 mm；"
@@ -47,7 +66,16 @@ async def run(arguments: argparse.Namespace) -> dict:
         datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]
     )
     output_dir.mkdir(parents=True, exist_ok=False)
-    intake = await BearingNaturalLanguageIntake(gateway).parse([arguments.requirement])
+    current = (
+        BearingSpec.model_validate_json(
+            Path(arguments.current_spec_json).read_text(encoding="utf-8")
+        )
+        if arguments.current_spec_json
+        else None
+    )
+    intake = await BearingNaturalLanguageIntake(gateway).parse(
+        [arguments.requirement], current=current
+    )
     if intake.status != IntakeStatus.READY or intake.specification is None:
         evidence = {
             "success": False,
@@ -76,71 +104,98 @@ async def run(arguments: argparse.Namespace) -> dict:
             )
         ],
     )
-    planner = await BearingPlanner(gateway).plan(
-        goal=GoalSpec(
+    goal = GoalSpec(
             objective="Build and strictly audit the requested cylindrical roller bearing",
-            constraints={"full_model_llm_rewrite": False},
+            constraints={
+                "full_model_llm_rewrite": False,
+                "model_id": arguments.model_id or f"bearing-{uuid4().hex[:16]}",
+                "timeout_seconds": arguments.comsol_timeout_seconds,
+                "resume_checkpoint": arguments.resume_checkpoint,
+            },
             acceptance=["strict_physics_audit"],
-        ),
-        requested=intake.specification,
-        current=None,
-        registry_snapshot=[
-            "bearing.cylindrical-roller.builder",
-            "bearing.load-continuation",
-            "bearing.strict-audit",
-        ],
-        budget={"max_solves": 3, "max_llm_full_model_rewrites": 0},
-        context_pack=context,
     )
-    spec_path = output_dir / "validated_bearing_spec.json"
-    spec_path.write_text(
+    runtime = None
+    if arguments.run_comsol:
+        collector = ReviewedStrictAuditCollector(
+            intake.specification,
+            output_dir / "strict_audit",
+            case_id="V2-M7.5.1-KERNEL-E2E",
+        )
+        backend = MphBackendAdapter(
+            version="6.2", cores=arguments.cores, port=0, auditor=collector
+        )
+        runtime = ComsolRuntime(
+            backend=backend,
+            # A stable gate root permits an explicitly supplied compatible B
+            # checkpoint from an earlier failed run while every run/model still
+            # receives its own isolated subdirectory.
+            artifacts=ArtifactStore(Path(arguments.output_root).resolve()),
+            worker=InProcessWorkerExecutor(backend),
+        )
+    workflow = BearingWorkflowTool(runtime or SimpleNamespace())
+    registry = _registry()
+    for extension in bearing_extensions():
+        await registry.register(extension)
+    await registry.register(workflow)
+    async with registry.snapshot() as snapshot:
+        workflow.failure_router = ObservationRepairRouter(
+            snapshot,
+            execution_context=RepairExecutionContext(
+                agent_version=snapshot.agent_version,
+                comsol_version=snapshot.comsol_version,
+                mandatory_gates=frozenset(goal.acceptance),
+            ),
+        )
+        planner = await BearingPlanner(gateway).plan(
+            goal=goal,
+            requested=intake.specification,
+            current=current,
+            registry_snapshot=snapshot,
+            budget={"max_solves": 3, "max_llm_full_model_rewrites": 0},
+            context_pack=context,
+        )
+        manifest = None
+        if arguments.run_comsol:
+            workflow.bind_snapshot(snapshot)
+            manifest = await AgentKernel(RegistryToolExecutor(snapshot)).run(
+                goal, planner.plan
+            )
+            manifest.versions.update(dict(snapshot.versions))
+            manifest.routing_decisions.append(planner.route.value)
+            manifest.retrievals.extend(
+                item.source for item in context.observations
+            )
+            manifest.tests.append(
+                {
+                    "kind": "real_llm_gateway",
+                    "provider": config.llm.provider,
+                    "model": config.llm.model,
+                    "policy_validated": planner.policy_validated,
+                    "prompt_contracts": [
+                        "bearing.requirement.intake@1.0.0",
+                        "bearing.execution.planner@1.0.0",
+                    ],
+                }
+            )
+        snapshot_catalog = [
+            item.model_dump(mode="json") for item in snapshot.capability_catalog()
+        ]
+        snapshot_versions = dict(snapshot.versions)
+    if runtime is not None:
+        await runtime.stop()
+    (output_dir / "validated_bearing_spec.json").write_text(
         intake.specification.model_dump_json(
-            indent=2,
-            exclude={"topology_signature", "build_signature"},
+            indent=2, exclude={"topology_signature", "build_signature"}
         ),
         encoding="utf-8",
     )
-    comsol = None
-    if arguments.run_comsol:
-        comsol_root = output_dir / "comsol"
-        command = [
-            sys.executable,
-            "scripts/run_v2_bearing_gate.py",
-            "--cores",
-            str(arguments.cores),
-            "--timeout-seconds",
-            str(arguments.comsol_timeout_seconds),
-            "--output-root",
-            str(comsol_root),
-            "--spec-json",
-            str(spec_path),
-            "--case-id",
-            "V2-M7.5-REAL-LLM-E2E",
-        ]
-        process = subprocess.run(
-            command,
-            cwd=Path(__file__).resolve().parents[1],
-            capture_output=True,
-            text=True,
-            timeout=arguments.comsol_timeout_seconds + 60,
-            check=False,
-        )
-        evidence_files = list(comsol_root.glob("*/v2_m7_audit_evidence.json"))
-        gate_evidence = (
-            json.loads(evidence_files[-1].read_text(encoding="utf-8"))
-            if evidence_files
-            else None
-        )
-        comsol = {
-            "returncode": process.returncode,
-            "success": bool(gate_evidence and gate_evidence.get("success")),
-            "evidence_path": str(evidence_files[-1]) if evidence_files else None,
-            "stdout_tail": process.stdout[-2000:],
-            "stderr_tail": process.stderr[-2000:],
-        }
+    kernel_success = bool(manifest and manifest.status == RunStatus.COMPLETED)
     evidence = {
-        "success": bool(planner.policy_validated and (comsol is None or comsol["success"])),
-        "gate": "v2_m7_5_real_llm" + ("_comsol_e2e" if arguments.run_comsol else "_smoke"),
+        "success": bool(
+            planner.policy_validated
+            and (kernel_success if arguments.run_comsol else True)
+        ),
+        "gate": "v2_m7_5_1_kernel_e2e" if arguments.run_comsol else "v2_m7_5_llm_smoke",
         "provider": config.llm.provider,
         "model": config.llm.model,
         "prompt_contracts": [
@@ -150,10 +205,19 @@ async def run(arguments: argparse.Namespace) -> dict:
         "requirement": arguments.requirement,
         "intake": intake.model_dump(mode="json"),
         "planner": planner.model_dump(mode="json"),
+        "extension_snapshot": {
+            "versions": snapshot_versions,
+            "capabilities": snapshot_catalog,
+        },
+        "kernel_manifest": manifest.model_dump(mode="json") if manifest else None,
         "trace": trace,
         "api_key_recorded": False,
         "llm_full_model_rewrite": False,
-        "comsol": comsol,
+        "comsol": {
+            "requested": bool(arguments.run_comsol),
+            "executed_by_kernel": bool(manifest),
+            "legacy_gate_subprocess": False,
+        },
     }
     return _write(output_dir, evidence)
 
@@ -165,6 +229,21 @@ def _write(output_dir: Path, evidence: dict) -> dict:
     return evidence
 
 
+def _registry() -> ExtensionRegistry:
+    root = Path(__file__).resolve().parents[1]
+    loader = ExtensionLoader(
+        compatibility=CompatibilityPolicy(agent_version="2.0", comsol_version="6.2"),
+        permissions=PermissionPolicy(
+            PermissionSet(
+                filesystem="write", shell="none", comsol="solve", network="none"
+            )
+        ),
+        trusted_manifest_roots=(root,),
+        trusted_code_roots=(root,),
+    )
+    return ExtensionRegistry(loader)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--requirement", default=DEFAULT_REQUIREMENT)
@@ -172,6 +251,9 @@ def main() -> None:
     parser.add_argument("--run-comsol", action="store_true")
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--comsol-timeout-seconds", type=float, default=1200)
+    parser.add_argument("--resume-checkpoint", default=None)
+    parser.add_argument("--model-id", default=None)
+    parser.add_argument("--current-spec-json", default=None)
     evidence = asyncio.run(run(parser.parse_args()))
     print(json.dumps(evidence, ensure_ascii=False, indent=2))
     raise SystemExit(0 if evidence["success"] else 1)

@@ -88,6 +88,16 @@ class CapabilityRequirement(ContractModel):
     capability: str = Field(min_length=1)
 
 
+class CapabilityDescriptor(ContractModel):
+    """One immutable capability binding advertised by a run snapshot."""
+
+    extension_id: str
+    extension_version: str
+    extension_kind: ExtensionKind
+    capability: str
+    permissions: frozenset[str]
+
+
 class ExtensionManifest(ContractModel):
     """Versioned manifest shared by every extension kind."""
 

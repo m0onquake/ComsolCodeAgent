@@ -37,6 +37,12 @@ unsupported。模型不得用默认值冒充用户显式值。
 - 参数变更只生成 parameter override → continuation → strict audit；几何变更调用
   registered deterministic Builder；两者都不允许 LLM 整模型生成。
 
+Registry 输入必须是不可变 `ExtensionSnapshot`，不接受由提示词或调用者伪造的
+capability 字符串列表。Planner 生成的可执行 Action 固定 Function、Builder、Path 和
+Auditor 的 ID/version/kind/capability；`RegistryToolExecutor` 与轴承工作流在 COMSOL
+调用前再次校验这些 pin。伪造版本、未注册 capability、schema 或权限一律在
+求解前拒绝。
+
 Context Pack 在 Prompt 中明确标记为 untrusted quoted data。RAG 引用可追溯，但不变成执行权限
 或物理真理。
 
@@ -56,5 +62,8 @@ verifier、rollback 和强制 gates。候选不能输出或执行 Shell/Java/Pyt
 .venv/bin/python scripts/run_v2_llm_gate.py --run-comsol --cores 1 --comsol-timeout-seconds 1200
 ```
 
-第二条从中文需求开始，经真实 Intake/Planner，再将已验证 `BearingSpec` 交给确定性
-Builder 和本地 COMSOL 严格审计。完整运行 artifact 保存在 `reports/`，Git 只保存脱敏摘要与哈希。
+第二条从中文需求开始，经真实 Intake/Planner 生成类型化 Plan，再由
+`AgentKernel` 通过固定 Registry snapshot 执行轴承工作流、M5 Runtime 和严格 Auditor。
+完整运行 artifact 保存在 `reports/`，Git 只保存脱敏摘要与哈希。普通 pytest 不调用
+DeepSeek，所以 API 控制台无 token 消耗是预期行为；只有显式运行上述 gate 才会产生
+并保存真实 usage。

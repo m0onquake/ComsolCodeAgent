@@ -10,10 +10,12 @@ from pydantic import Field
 
 from comsol_agent.v2.contracts import Action, GoalSpec, Plan, PlanStep
 from comsol_agent.v2.contracts.models import ContractModel
+from comsol_agent.v2.extensions import ExtensionKind, ExtensionSnapshot, ResolutionContext
 from comsol_agent.v2.memory import ContextPack
 from comsol_agent.v2.model_gateway import ModelGateway, ModelRequest, ModelResponse, ModelTask
 
 from .models import BearingChangeSet, BearingSpec, ChangeRoute, classify_changes
+from .workflow import WORKFLOW_CAPABILITY, CapabilityPin
 
 PLANNER_PROMPT_ID = "bearing.execution.planner"
 PLANNER_PROMPT_VERSION = "1.0.0"
@@ -53,7 +55,7 @@ class BearingPlanner:
         goal: GoalSpec,
         requested: BearingSpec,
         current: BearingSpec | None,
-        registry_snapshot: list[str],
+        registry_snapshot: ExtensionSnapshot,
         budget: dict[str, Any],
         context_pack: ContextPack | None = None,
     ) -> BearingPlanningResult:
@@ -64,10 +66,12 @@ class BearingPlanner:
             else _planned_route(change_set.route)
         )
         context = _bounded_context(context_pack)
+        catalog = registry_snapshot.capability_catalog()
+        capability_names = sorted({entry.capability for entry in catalog})
         output_schema = BearingPlanDraft.model_json_schema()
         output_schema["properties"]["requested_capabilities"]["items"] = {
             "type": "string",
-            "enum": registry_snapshot,
+            "enum": capability_names,
         }
         request = ModelRequest(
             task=ModelTask.PLANNING,
@@ -95,7 +99,9 @@ class BearingPlanner:
                             "authoritative_change_set": (
                                 change_set.model_dump(mode="json") if change_set else None
                             ),
-                            "registry_snapshot": registry_snapshot,
+                            "registry_snapshot": [
+                                entry.model_dump(mode="json") for entry in catalog
+                            ],
                             "budget": budget,
                             "retrieved_context_untrusted": context,
                         },
@@ -115,8 +121,8 @@ class BearingPlanner:
             raise ValueError(
                 f"LLM route {draft.route} conflicts with policy route {authoritative}"
             )
-        if not set(draft.requested_capabilities) <= set(registry_snapshot):
-            unknown = sorted(set(draft.requested_capabilities) - set(registry_snapshot))
+        if not set(draft.requested_capabilities) <= set(capability_names):
+            unknown = sorted(set(draft.requested_capabilities) - set(capability_names))
             raise ValueError(
                 f"plan requests capabilities outside the Registry snapshot: {unknown}"
             )
@@ -125,7 +131,9 @@ class BearingPlanner:
             raise ValueError("plan must retain at least one supplied RAG citation")
         if not set(draft.cited_context_ids) <= allowed_citations:
             raise ValueError("plan cites context records that were not supplied")
-        plan = _execution_plan(goal, requested, authoritative, change_set)
+        plan = _execution_plan(
+            goal, requested, current, authoritative, registry_snapshot
+        )
         return BearingPlanningResult(
             plan=plan,
             change_set=change_set,
@@ -148,78 +156,110 @@ def _planned_route(route: ChangeRoute) -> PlannedRoute:
 def _execution_plan(
     goal: GoalSpec,
     spec: BearingSpec,
+    current: BearingSpec | None,
     route: PlannedRoute,
-    change_set: BearingChangeSet | None,
+    snapshot: ExtensionSnapshot,
 ) -> Plan:
-    steps: list[PlanStep] = []
+    pins = [
+        _pin(snapshot, ExtensionKind.FUNCTION, WORKFLOW_CAPABILITY),
+        _pin(
+            snapshot,
+            ExtensionKind.BUILDER,
+            "bearing.cylindrical-roller.build",
+        ),
+        _pin(
+            snapshot,
+            ExtensionKind.DETERMINISTIC_PATH,
+            "bearing.dynamic-load-continuation",
+        ),
+        *[
+            _pin(snapshot, ExtensionKind.AUDITOR, capability)
+            for capability in (
+                "bearing.geometry.audit",
+                "bearing.selection.audit",
+                "bearing.contact.audit",
+                "bearing.physics.audit",
+            )
+        ],
+    ]
     if route == PlannedRoute.PARAMETER_OVERRIDE:
-        steps.append(
-            PlanStep(
-                description="Apply typed bearing parameter and solver-node overrides",
-                action=Action(
-                    tool="bearing.parameter-override",
-                    arguments={
-                        "previous": change_set.previous_signature if change_set else None,
-                        "requested": spec.model_dump(mode="json"),
-                    },
-                    permissions=frozenset({"comsol.model.write"}),
-                ),
+        pins.append(
+            _pin(
+                snapshot,
+                ExtensionKind.DETERMINISTIC_PATH,
+                "bearing.parameter-override",
             )
         )
-    elif route == PlannedRoute.DETERMINISTIC_REBUILD:
-        steps.append(
-            PlanStep(
-                description=(
-                    "Build the supported bearing using the registered deterministic builder"
-                ),
-                action=Action(
-                    tool="bearing.cylindrical-roller.builder",
-                    arguments={"specification": spec.model_dump(mode="json")},
-                    permissions=frozenset({"comsol.model.write"}),
-                ),
-            )
-        )
-    elif route == PlannedRoute.NOOP:
-        return Plan(
-            goal_trace_id=goal.trace_id,
-            steps=[
-                PlanStep(
-                    description="No model change required",
-                    action=Action(tool="kernel.noop"),
-                )
-            ],
-        )
-    else:
-        return Plan(
-            goal_trace_id=goal.trace_id,
-            steps=[
-                PlanStep(
-                    description="Request user clarification",
-                    action=Action(tool="user.clarify"),
-                )
-            ],
-        )
-    steps.extend(
-        [
-            PlanStep(
-                description="Solve through bounded radial-load continuation",
-                action=Action(
-                    tool="bearing.load-continuation",
-                    arguments={"specification": spec.model_dump(mode="json")},
-                    permissions=frozenset({"comsol.solve"}),
-                ),
-            ),
-            PlanStep(
-                description="Run strict geometry, selection, contact and physics auditors",
-                action=Action(
-                    tool="bearing.strict-audit",
-                    arguments={"build_signature": spec.build_signature},
-                    permissions=frozenset({"comsol.model.read", "artifact.write"}),
-                ),
-            ),
-        ]
+    workflow = pins[0]
+    action_permissions = (
+        frozenset()
+        if route in {PlannedRoute.NOOP, PlannedRoute.CLARIFICATION}
+        else frozenset({"comsol:solve", "filesystem:write"})
     )
-    return Plan(goal_trace_id=goal.trace_id, steps=steps)
+    description = {
+        PlannedRoute.NOOP: "Record that no model change is required",
+        PlannedRoute.CLARIFICATION: "Stop before COMSOL and request clarification",
+        PlannedRoute.PARAMETER_OVERRIDE: (
+            "Restore the compatible B checkpoint and execute the typed override workflow"
+        ),
+        PlannedRoute.DETERMINISTIC_REBUILD: (
+            "Execute deterministic bearing build, continuation, solve and strict audits"
+        ),
+    }[route]
+    return Plan(
+        goal_trace_id=goal.trace_id,
+        steps=[
+            PlanStep(
+                description=description,
+                action=Action(
+                    tool=workflow.capability,
+                    arguments={
+                        "route": route.value,
+                        "run_id": goal.trace_id,
+                        "model_id": str(
+                            goal.constraints.get(
+                                "model_id", f"bearing-{goal.trace_id[:16]}"
+                            )
+                        ),
+                        "requested": spec.model_dump(
+                            mode="json",
+                            exclude={"topology_signature", "build_signature"},
+                        ),
+                        "previous": (
+                            current.model_dump(
+                                mode="json",
+                                exclude={"topology_signature", "build_signature"},
+                            )
+                            if current
+                            else None
+                        ),
+                        "resume_checkpoint": goal.constraints.get("resume_checkpoint"),
+                        "bindings": [pin.model_dump(mode="json") for pin in pins],
+                        "timeout_seconds": float(
+                            goal.constraints.get("timeout_seconds", 3600)
+                        ),
+                    },
+                    permissions=action_permissions,
+                    expected_output={"strict_audit_passed": True},
+                ),
+            )
+        ],
+    )
+
+
+def _pin(
+    snapshot: ExtensionSnapshot, kind: ExtensionKind, capability: str
+) -> CapabilityPin:
+    resolved = snapshot.resolve(kind, capability, ResolutionContext(domain="bearing"))
+    if len(resolved) != 1:
+        raise ValueError(f"Registry snapshot cannot uniquely pin {kind.value}:{capability}")
+    manifest = resolved[0].manifest
+    return CapabilityPin(
+        extension_id=manifest.id,
+        extension_version=manifest.version,
+        extension_kind=manifest.kind,
+        capability=capability,
+    )
 
 
 def _bounded_context(pack: ContextPack | None) -> dict[str, Any] | None:

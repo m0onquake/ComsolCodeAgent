@@ -32,6 +32,7 @@ from .loader import ExtensionLoader
 from .models import (
     API_VERSION,
     CandidateState,
+    CapabilityDescriptor,
     CapabilityRequirement,
     CompatibilitySpec,
     ComsolPermission,
@@ -61,6 +62,7 @@ __all__ = [
     "AuditorExtension",
     "BuilderExtension",
     "CapabilityRequirement",
+    "CapabilityDescriptor",
     "CandidateState",
     "ComsolPermission",
     "CompatibilityPolicy",

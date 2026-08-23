@@ -190,6 +190,61 @@ def deterministic_model_code(spec: BearingSpec) -> str:
             "deterministic builder replacement conflict for radial load continuation: "
             f"expected 0 or 1 matches, found {continuation_count}"
         )
+    # A COMSOL Contact feature bound through its ``pairs`` property owns a
+    # non-editable derived selection.  The reviewed V1 fragment also contained
+    # two redundant ``contact.selection().named(...)`` calls which COMSOL 6.2
+    # rejects before geometry build.  Remove only those pair-bound edits; pair
+    # endpoint selections remain explicit on the ContactPair nodes.
+    code, removed_contact_selections = re.subn(
+        r"(?m)^contact_all_rollers_(?:inner|outer)\.selection\(\)\.named\([^\n]+\)\s*$\n?",
+        "",
+        code,
+    )
+    if removed_contact_selections not in {0, 2}:
+        raise RuntimeError(
+            "deterministic builder expected zero or two redundant pair-bound "
+            f"contact selection edits, found {removed_contact_selections}"
+        )
+    # Result datasets are created by the solver, not during model setup.  A
+    # premature fixed ``dset1`` binding makes a fresh blank-model build fail.
+    code, removed_early_datasets = re.subn(
+        r"(?m)^model\.result\([^\n]+\)\.set\('data',\s*'dset\d+'\)\s*$\n?",
+        "",
+        code,
+    )
+    if removed_early_datasets not in {0, 1}:
+        raise RuntimeError(
+            "deterministic builder found ambiguous early dataset bindings: "
+            f"{removed_early_datasets}"
+        )
+    # Disambiguate JPype's PropFeature.set(String, String[]) overload for the
+    # four loop-generated selection lists in the reviewed asset.
+    list_replacements = {
+        "[f'geom1_roller_partition_{n}_dom']": (
+            "[str(f'geom1_roller_partition_{n}_dom')]"
+        ),
+        "[f'geom1_roller_partition_{n}_bnd']": (
+            "[str(f'geom1_roller_partition_{n}_bnd')]"
+        ),
+        "[box_inner_tag, f'geom1_roller_partition_{n}_bnd']": (
+            "[str(box_inner_tag), str(f'geom1_roller_partition_{n}_bnd')]"
+        ),
+        "[box_outer_tag, f'geom1_roller_partition_{n}_bnd']": (
+            "[str(box_outer_tag), str(f'geom1_roller_partition_{n}_bnd')]"
+        ),
+    }
+    for before, after in list_replacements.items():
+        count = code.count(before)
+        if count not in {0, 1}:
+            raise RuntimeError(f"ambiguous deterministic list overload: {before}")
+        code = code.replace(before, after)
+    code, invalid_method_count = re.subn(
+        r"(?m)^model\.result\(\)\.numerical\([^\n]+\)\.set\('method',\s*'max'\)\s*$\n?",
+        "",
+        code,
+    )
+    if invalid_method_count not in {0, 1}:
+        raise RuntimeError("ambiguous invalid EvalGlobal method property")
     return code
 
 

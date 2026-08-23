@@ -131,6 +131,7 @@ class Observation(ContractModel):
     retryable: bool = False
     duration_ms: float = Field(default=0.0, ge=0)
     resource_usage: dict[str, float] = Field(default_factory=dict)
+    audits: list[dict[str, Any]] = Field(default_factory=list)
     checkpoint: str | None = None
     source: SourceRef
     created_at: datetime = Field(default_factory=utc_now)

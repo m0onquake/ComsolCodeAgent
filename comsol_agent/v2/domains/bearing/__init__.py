@@ -26,8 +26,16 @@ from .models import (
 from .paths import DynamicLoadContinuation, ParameterOverridePath
 from .planner import BearingPlanner, BearingPlanningResult, PlannedRoute
 from .results import evaluate_target_results
+from .runtime_audit import ReviewedStrictAuditCollector
 from .skill import BearingSkill
 from .solver import apply_solver_relative_tolerance
+from .workflow import (
+    WORKFLOW_CAPABILITY,
+    BearingWorkflowRequest,
+    BearingWorkflowResult,
+    BearingWorkflowTool,
+    CapabilityPin,
+)
 
 __all__ = [
     "BearingChangeSet",
@@ -42,6 +50,10 @@ __all__ = [
     "BearingSelectionAuditor",
     "BearingSkill",
     "BearingSpec",
+    "BearingWorkflowRequest",
+    "BearingWorkflowResult",
+    "BearingWorkflowTool",
+    "CapabilityPin",
     "ChangeClass",
     "ChangeRoute",
     "CylindricalRollerBearingBuilder",
@@ -50,7 +62,9 @@ __all__ = [
     "LoadDirection",
     "ParameterOverridePath",
     "PlannedRoute",
+    "ReviewedStrictAuditCollector",
     "ValueOrigin",
+    "WORKFLOW_CAPABILITY",
     "apply_solver_relative_tolerance",
     "bearing_extensions",
     "classify_changes",

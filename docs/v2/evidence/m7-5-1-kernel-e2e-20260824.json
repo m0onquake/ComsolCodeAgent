@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "milestone": "M7.5.1",
+  "date": "2026-08-24",
+  "claim": "Real Planner plans are executed by AgentKernel through one pinned ExtensionSnapshot, Registry Function, bearing workflow, M5 Runtime, and strict auditors.",
+  "successful_rebuild": {
+    "case": "+X, 1 N",
+    "full_report": "reports/v2_m7_5_llm_evidence/20260824T005747-333bcb11/v2_m7_5_llm_evidence.json",
+    "full_report_sha256": "1c8faf25d9a3f12483223c7ddeeed126031d284376a077cbd54c1f951ad92a2b",
+    "executed_by_kernel": true,
+    "legacy_gate_subprocess": false,
+    "route": "deterministic_rebuild",
+    "llm_usage": {
+      "intake_tokens": 1769,
+      "planner_tokens": 2081,
+      "total_tokens": 3850
+    },
+    "strict_auditors": {
+      "geometry": true,
+      "selection": true,
+      "contact": true,
+      "physics": true
+    },
+    "stress": {
+      "value_pa": 89433.38638405208,
+      "native_plot_numerical_max_pa": 89433.38638405208,
+      "expression": "solid.mises/1[Pa]",
+      "dataset": "dset7",
+      "solution_number": 1
+    },
+    "solver_relative_tolerance": {
+      "requested": 0.001,
+      "property": "stol",
+      "readback_passed": true
+    }
+  },
+  "failed_parameter_override": {
+    "case": "-Y, 10 N",
+    "full_report": "reports/v2_m7_5_llm_evidence/20260824T012153-95cb6a82/v2_m7_5_llm_evidence.json",
+    "full_report_sha256": "e3f7747a237401624e5d6c3defff4b0d6f06677103b5d58d2c0a9f1146f6daea",
+    "executed_by_kernel": true,
+    "legacy_gate_subprocess": false,
+    "route": "parameter_override",
+    "llm_usage": {
+      "intake_tokens": 1644,
+      "planner_tokens": 2649,
+      "total_tokens": 4293
+    },
+    "stage_A": "skipped",
+    "stage_B": "skipped",
+    "stage_C": "timed_out",
+    "stage_D": "pending",
+    "timeout_seconds": 1200,
+    "termination_confirmed": false,
+    "verified_support_promoted": false
+  },
+  "supersedes_as_agent_e2e": "reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9/",
+  "api_key_recorded": false,
+  "verified_memory_promoted": false
+}

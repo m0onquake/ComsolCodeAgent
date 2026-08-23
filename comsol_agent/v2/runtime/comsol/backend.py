@@ -428,7 +428,22 @@ class MphBackendAdapter:
         return await self._sync(evaluate)
 
     async def export(self, model_name: str, target: Path) -> None:
-        await self._sync(lambda: self._handle(model_name).mph_model.export("data", str(target)))
+        def export() -> None:
+            java = self._handle(model_name).mph_model.java
+            exports = java.result().export()
+            tag = "v2_runtime_data"
+            try:
+                if tag in [str(value) for value in exports.tags()]:
+                    exports.remove(tag)
+            except Exception:
+                pass
+            exports.create(tag, "Data")
+            node = java.result().export(tag)
+            node.set("filename", str(target))
+            node.set("expr", ["solid.mises", "solid.disp"])
+            node.run()
+
+        await self._sync(export)
 
     async def audit(self, model_name: str) -> dict[str, Any]:
         if self.auditor is None:

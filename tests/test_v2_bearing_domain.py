@@ -172,6 +172,9 @@ def test_builder_has_exact_a_d_plan_and_specializes_reviewed_asset() -> None:
     assert [stage.stage[0] for stage in plan.stages] == ["A", "B", "C", "D"]
     assert plan.llm_calls == 0
     code = deterministic_model_code(spec)
+    assert "contact_all_rollers_inner.selection().named" not in code
+    assert "contact_all_rollers_outer.selection().named" not in code
+    assert ".set('data', 'dset1')" not in code
     assert "model.param().set('roller_count', '10')" in code
     assert "for i in range(roller_count)" in code
     assert "model.param().set('roller_angular_offset_deg', '7.5[deg]')" in code

@@ -242,7 +242,16 @@ class ComsolRuntime:
                     records[RuntimeStage.BUILD] = self._skipped(
                         RuntimeStage.BUILD, "restored compatible B checkpoint"
                     )
-                    checkpoint = await self.restore_checkpoint(request)
+                    compatibility_request = request
+                    if request.override_extension_id:
+                        compatibility_request = request.model_copy(
+                            update={
+                                "parameters": request.previous_parameters,
+                                "specification": request.previous_specification,
+                                "resume_checkpoint": request.resume_checkpoint,
+                            }
+                        )
+                    checkpoint = await self.restore_checkpoint(compatibility_request)
                     await self._call(
                         RuntimeOperation.RESTORE_CHECKPOINT,
                         lambda: self.backend.load_model(
@@ -252,6 +261,23 @@ class ComsolRuntime:
                         cancellation=cancellation,
                     )
                     model_open = True
+                    if request.override_extension_id:
+                        await self._call(
+                            RuntimeOperation.EXECUTE_REGISTERED,
+                            lambda: self.backend.execute_registered(
+                                physical_name,
+                                request.override_extension_id or "",
+                                request.override_extension_version or "",
+                                "deterministic_path",
+                                request.override_extension_capability or "",
+                                {
+                                    "previous": request.previous_specification,
+                                    "requested": request.specification,
+                                },
+                            ),
+                            timeout_seconds=request.timeout_seconds,
+                            cancellation=cancellation,
+                        )
                 else:
                     records[RuntimeStage.INPUT_VALIDATION] = self._running_record(
                         RuntimeStage.INPUT_VALIDATION
@@ -330,6 +356,20 @@ class ComsolRuntime:
                         {"checkpoint_id": checkpoint.checkpoint_id},
                     )
 
+                if request.continuation_extension_id:
+                    await self._call(
+                        RuntimeOperation.EXECUTE_REGISTERED,
+                        lambda: self.backend.execute_registered(
+                            physical_name,
+                            request.continuation_extension_id or "",
+                            request.continuation_extension_version or "",
+                            "deterministic_path",
+                            request.continuation_extension_capability or "",
+                            {"spec": request.specification},
+                        ),
+                        timeout_seconds=request.timeout_seconds,
+                        cancellation=cancellation,
+                    )
                 records[RuntimeStage.SOLVE] = self._running_record(RuntimeStage.SOLVE)
                 solve_detail = await self._call(
                     RuntimeOperation.SOLVE,
@@ -511,7 +551,6 @@ class ComsolRuntime:
             "builder_capability": request.builder_capability,
             "builder_version": request.builder_version,
             "extension_versions": request.extension_versions,
-            "input_sha256": self._input_hash(request),
         }
         actual = {
             "model_id": checkpoint.provenance.model_id,
@@ -523,9 +562,20 @@ class ComsolRuntime:
             "builder_capability": checkpoint.builder_capability,
             "builder_version": checkpoint.builder_version,
             "extension_versions": checkpoint.extension_versions,
-            "input_sha256": checkpoint.input_sha256,
         }
         mismatches = [name for name, value in expected.items() if actual[name] != value]
+        requested_physical_input = {
+            "parameters": request.parameters,
+            "specification": _physical_specification(request.specification),
+        }
+        checkpoint_physical_input = {
+            "parameters": checkpoint.input_summary.get("parameters", {}),
+            "specification": _physical_specification(
+                checkpoint.input_summary.get("specification", {})
+            ),
+        }
+        if requested_physical_input != checkpoint_physical_input:
+            mismatches.append("physical_input")
         if mismatches:
             raise CheckpointCompatibilityError(
                 f"checkpoint compatibility mismatch: {', '.join(mismatches)}"
@@ -876,3 +926,12 @@ class ComsolRuntime:
                 "specification": request.specification,
             }
         )
+
+
+def _physical_specification(specification: dict[str, Any]) -> dict[str, Any]:
+    """Exclude non-physical provenance from B-checkpoint compatibility."""
+    return {
+        name: value
+        for name, value in specification.items()
+        if name not in {"provenance", "build_signature", "topology_signature"}
+    }

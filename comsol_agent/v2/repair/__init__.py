@@ -25,6 +25,7 @@ from .models import (
     VersionCompatibility,
 )
 from .orchestrator import CandidateProvider, RepairExecutor, RepairOrchestrator
+from .router import ObservationRepairRouter
 
 __all__ = [
     "CandidateProvider",
@@ -43,6 +44,7 @@ __all__ = [
     "RepairExecutionLimits",
     "RepairKind",
     "RepairOrchestrator",
+    "ObservationRepairRouter",
     "RepairResult",
     "RestrictedLLMPatchProvider",
     "RepairRuleContract",

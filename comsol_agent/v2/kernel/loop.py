@@ -123,6 +123,7 @@ class AgentKernel:
                         ActionRecord(action=step.action, observation=observation, attempt=attempt)
                     )
                     manifest.artifacts.extend(observation.artifacts)
+                    manifest.audits.extend(observation.audits)
                     if observation.checkpoint:
                         manifest.checkpoints.append(observation.checkpoint)
                     await event_bus.emit(
