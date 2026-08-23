@@ -315,9 +315,9 @@ M7 前 P0 加固（2026-08-21）：
 目标：在不污染领域中立 Kernel 的前提下，让自然语言需求经真实 LLM 转为可复验的
 类型化规格和受控计划。
 
-状态：`in_progress`（2026-08-24 M7.5.1 follow-up）。2026-08-23 的证据仅证明了
-LLM Intake/Planner 与旁路 COMSOL gate 分别成功；由于 Planner 生成的 Plan 未经 Agent
-Kernel、固定 Registry snapshot 和 M5 Runtime 执行，该证据不再计为 Agent E2E 完成证据。
+状态：`complete`（2026-08-24 M7.5.1 重新验收）。2026-08-23 的旁路证据不再计为
+Agent E2E；新证据已证明 Planner Plan 经 Agent Kernel、固定 Registry snapshot、领域
+Workflow、M5 Runtime、确定性 Builder 和严格 Auditor 完整执行。
 
 交付物：
 
@@ -351,15 +351,17 @@ M7.5.1 补验记录：
 - Planner 现从真实 `ExtensionSnapshot` 构造 capability catalog，生成固定 Function/Builder/
   Path/Auditor 版本的 Action；`bearing.workflow.execute` 由 Kernel 经 Registry 执行，再进入
   M5 Runtime，不再 subprocess 旁路旧 gate；
-- +X/1 N 真实 Kernel E2E 通过：DeepSeek 用量 3850 tokens，四类 Auditor 通过，
+- +X/1 N 无 checkpoint 真实 Kernel E2E 通过：DeepSeek 用量 3758 tokens，A/B/C/D
+  全部 passed，四类 Auditor 通过，
   stress 数值与原生图 numerical maximum 均为 `89433.38638405208 Pa`，同为
   `dset7` / solution 1，`stol=0.001` 读回通过；
 - -Y/10 N 真实多轮覆盖正确路由为 `parameter_override` 并跳过 A/B，证明没有
   整模型 LLM 重写或几何重建；但 C solve 在 1200 s 超时，所以该签名仍未验证；
 - 紧凑证据位于 `docs/v2/evidence/m7-5-1-kernel-e2e-20260824.json`；完整成功/失败 artifact
   保留在各自隔离的 `reports/v2_m7_5_llm_evidence/` 运行目录；
-- 当前仍为 `in_progress`：需要可回收进程 Worker 或其他可证明的硬取消方案，并且至少
-  一个非 +X/1 N 参数签名通过同等严格物理门禁后，才能恢复 `complete`。
+- M7.5.1 完成条件已满足，M8 可开始。这不扩大轴承 verified parameter envelope：
+  -Y/10 N 仍是超时 candidate；进程内 MPh 硬取消和更多参数签名的真实门禁作为
+  M8/M9 明示风险和扩展工作保留。
 
 ## M8：Web、CLI 与可观测性
 

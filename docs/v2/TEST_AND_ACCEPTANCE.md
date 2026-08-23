@@ -386,13 +386,14 @@ V2 达到可用状态至少要求：
 - 失败 Observation 定向测试证明进入 M6 Diagnosis/Orchestrator；未确认终止的 timeout
   无可自动修复类型，返回 `user_decision_required`，不重试原 Action；M6 原有预算、
   不可降低门禁和 rollback 套件继续通过；
-- +X/1 N 重建链通过：DeepSeek Intake 1769 tokens、Planner 2081 tokens，Kernel plan/action
-  完成，四类 Auditor 通过；`solid.mises/1[Pa]` 与原生图 numerical maximum 均为
+- +X/1 N 无 checkpoint 重建链通过：DeepSeek Intake 1760 tokens、Planner 1998 tokens，
+  `resume_checkpoint=null`，A/B/C/D 全部 passed，Kernel plan/action 完成，四类 Auditor
+  通过；`solid.mises/1[Pa]` 与原生图 numerical maximum 均为
   `89433.38638405208 Pa`，共用 `dset7` / solution 1；`stol=0.001` 完整读回；
 - -Y/10 N 多轮覆盖链使用另一次真实 DeepSeek 调用（Intake 1644 + Planner 2649 =
   4293 tokens），路由为 `parameter_override`，A/B 因相容 B checkpoint 而 skipped，证明没有
   全量 LLM 重写或几何重建；但 C solve 在 1200 s 超时，D 未运行，因此必须
   判为失败，不扩大 verified 支持范围；
-- 紧凑 Git 证据见 `docs/v2/evidence/m7-5-1-kernel-e2e-20260824.json`；完整成功/失败
-  artifact 分别位于 `reports/v2_m7_5_llm_evidence/20260824T005747-333bcb11/` 和
+- 紧凑 Git 证据见 `docs/v2/evidence/m7-5-1-kernel-e2e-20260824.json`；完整无恢复点成功/
+  参数覆盖失败 artifact 分别位于 `reports/v2_m7_5_llm_evidence/20260824T015929-fe862157/` 和
   `reports/v2_m7_5_llm_evidence/20260824T012153-95cb6a82/`。

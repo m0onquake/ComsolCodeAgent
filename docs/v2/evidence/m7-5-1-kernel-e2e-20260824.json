@@ -5,15 +5,22 @@
   "claim": "Real Planner plans are executed by AgentKernel through one pinned ExtensionSnapshot, Registry Function, bearing workflow, M5 Runtime, and strict auditors.",
   "successful_rebuild": {
     "case": "+X, 1 N",
-    "full_report": "reports/v2_m7_5_llm_evidence/20260824T005747-333bcb11/v2_m7_5_llm_evidence.json",
-    "full_report_sha256": "1c8faf25d9a3f12483223c7ddeeed126031d284376a077cbd54c1f951ad92a2b",
+    "full_report": "reports/v2_m7_5_llm_evidence/20260824T015929-fe862157/v2_m7_5_llm_evidence.json",
+    "full_report_sha256": "e04171eb59df7fde5911702eec103678b52ee553faf5f7a13d7d40cc8c2b1c23",
     "executed_by_kernel": true,
     "legacy_gate_subprocess": false,
     "route": "deterministic_rebuild",
     "llm_usage": {
-      "intake_tokens": 1769,
-      "planner_tokens": 2081,
-      "total_tokens": 3850
+      "intake_tokens": 1760,
+      "planner_tokens": 1998,
+      "total_tokens": 3758
+    },
+    "resume_checkpoint": null,
+    "stages": {
+      "A_input_validation": "passed",
+      "B_build": "passed",
+      "C_solve": "passed",
+      "D_results_audit": "passed"
     },
     "strict_auditors": {
       "geometry": true,
@@ -32,6 +39,11 @@
       "requested": 0.001,
       "property": "stol",
       "readback_passed": true
+    },
+    "artifacts": {
+      "configured_checkpoint_sha256": "a5eebb0f9f0e8e84ea6e9c6893e038fc81bd9b920dba988ec4f3949e30998634",
+      "results_csv_sha256": "46c0ba1941acc69fbcc5c7517c9a024802eab59e947676f6a4f426105ca1d772",
+      "solved_mph_sha256": "ab1b286e4ff64786e5635e55c059eda41a71221f89d99b9e4c9b4aa2178174e0"
     }
   },
   "failed_parameter_override": {
@@ -55,6 +67,8 @@
     "verified_support_promoted": false
   },
   "supersedes_as_agent_e2e": "reports/v2_m7_5_llm_evidence/20260823T210207-dceed0e9/",
+  "supersedes_recovery_only_success": "reports/v2_m7_5_llm_evidence/20260824T005747-333bcb11/",
+  "m8_ready": true,
   "api_key_recorded": false,
   "verified_memory_promoted": false
 }
