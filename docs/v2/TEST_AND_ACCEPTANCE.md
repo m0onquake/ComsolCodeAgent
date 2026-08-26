@@ -397,3 +397,36 @@ V2 达到可用状态至少要求：
 - 紧凑 Git 证据见 `docs/v2/evidence/m7-5-1-kernel-e2e-20260824.json`；完整无恢复点成功/
   参数覆盖失败 artifact 分别位于 `reports/v2_m7_5_llm_evidence/20260824T015929-fe862157/` 和
   `reports/v2_m7_5_llm_evidence/20260824T012153-95cb6a82/`。
+
+## 20. M8 验收记录
+
+日期：2026-08-25。
+
+- `tests/test_v2_web.py` 覆盖共享事件合同、A/B/C/D 独立状态投影、API/SSE、safe-point
+  pause/resume、取消、结构化失败、已执行修复、预算累计、artifact 哈希下载、原生图、Runtime
+  artifact 阶段和多轮规格/checkpoint 继承；`tests/test_v2_comsol_runtime.py` 追加真实时间顺序的
+  A-D stage sink 断言；
+- 兼容 Web 的既有 demo/live/strict preview 路由和 `comsol-agent` 未替换；新增独立
+  `/api/v2/sessions` 路由、页面 V2 模式和 `comsol-agent-v2`；静态回放不写 V2 Gate；
+- `.venv/bin/python -m pytest -q`：409 passed，1 个既有 Starlette/httpx 弃用 warning；
+  `node --check comsol_agent/web/static/app.js` 通过；M8 修改范围 Ruff 通过；
+- 全仓 `.venv/bin/ruff check comsol_agent tests scripts --statistics` 仍报告 3138 个既有旧代码和
+  当前无关用户工作树问题；M8 修改范围没有新增 Ruff 问题，未批量改写无关文件；
+- `.venv/bin/python scripts/run_v2_m8_web_gate.py --cores 1 --timeout-seconds 1800` 使用新
+  session/model 完成真实 DeepSeek Intake/Planner、Kernel、固定 Registry、M5 Runtime、COMSOL
+  6.2 和四类严格 Auditor。A-D 独立 passed，1 action、0 repair、耗时约 1328.7 秒；
+- 目标 1 N；实际载荷 `0.999998899 N`、支承反力 `0.999993186 N`、外接触合力
+  `1.006473412 N`、稳定项占比 `7.884e-6`；`dset7` / solution 1 的最大应力
+  `89433.38638405208 Pa`、最大位移 `3.017245199640648e-7 m`、`stol=0.001` 和原生 PNG
+  全部通过；
+- 本次 B checkpoint、results CSV、约 511.8 MB solved MPH 和原生 PNG 均重新计算 SHA-256；
+  紧凑 Git 证据见 [evidence/m8-web-cli-e2e-20260825.json](evidence/m8-web-cli-e2e-20260825.json)，
+  完整 material evidence 位于 `reports/v2_m8_web_evidence/9e5e4267.../`；
+- 首次 family alias 失败、1200 秒总预算失败和一次外部连接失败均保留为失败，不计入成功；未降低
+  审计门槛，未晋升 verified memory。成功 gate 后的预算累计、artifact stage 和原生 PNG 下载
+  修复只改变投影，并由最终非 COMSOL 套件验证；不改变本次 COMSOL/审计事实；
+- 未改变架构不变量，不需要新增 ADR。M9 输入为可干预 V2 Web/CLI、可重放事件流、真实 M8
+  A-D 证据以及仍需处理的进程内 MPh 强取消生产风险。
+- 真实 M8 gate 直接使用 `V2SessionManager`，而 HTTP/SSE 组合测试注入 fake driver；本里程碑
+  不声明已经验证真实浏览器→HTTP→SSE→Agent 传输链。该 smoke gate、跨服务重启的会话/
+  事件持久化，以及独立进程 Worker 强取消归入 M9。

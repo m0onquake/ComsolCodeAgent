@@ -257,6 +257,21 @@ async def test_chinese_full_requirement_becomes_strict_spec_with_provenance() ->
 
 
 @pytest.mark.asyncio
+async def test_intake_normalizes_bounded_cylindrical_family_aliases() -> None:
+    draft = _full_draft()
+    draft["family"] = "cylindrical roller"
+    draft["explicit_fields"] = [*draft["explicit_fields"], "family", "load_kind"]
+
+    result = await BearingNaturalLanguageIntake(
+        ModelGateway(FakeBackend([draft]))
+    ).parse(["Create a cylindrical roller bearing"])
+
+    assert result.status == IntakeStatus.READY
+    assert result.specification is not None
+    assert result.specification.family == "cylindrical_roller"
+
+
+@pytest.mark.asyncio
 async def test_multiturn_load_and_direction_inherit_existing_spec() -> None:
     current = _verified_spec()
     draft = {

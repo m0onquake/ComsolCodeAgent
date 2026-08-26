@@ -367,6 +367,8 @@ M7.5.1 补验记录：
 
 目标：向用户提供真实、可干预的 Agent 运行体验。
 
+状态：`complete`（2026-08-25）。
+
 交付物：
 
 - V2 Web/CLI adapter；
@@ -376,6 +378,26 @@ M7.5.1 补验记录：
 - 多轮规格变化。
 
 验收：界面不混淆静态、建模、求解和审计状态；失败能显示分类、证据和已执行修复。
+
+完成记录：
+
+- `comsol_agent/v2/web/` 提供 Web/CLI 共用的严格事件、四 Gate 投影、会话控制、artifact 下载、
+  多轮规格/checkpoint 和真实轴承 driver；`ComsolRuntime` 可选 stage sink 实时发送 A-D；
+- 旧 `/api/chat`、demo/live/strict preview、`comsol-agent` 保持兼容；新增 V2 API、页面模式与
+  `comsol-agent-v2`，静态回放不写 V2 运行 Gate；
+- M8/API/Runtime/CLI 定向测试通过；完整非 COMSOL 套件 409 passed，1 个既有 warning；修改范围
+  Ruff 和前端 JavaScript 语法通过；
+- 全仓 Ruff 仍有 3138 个历史/当前无关工作树问题；M8 修改范围通过，未混入批量清理；
+- 真实 DeepSeek + Kernel + Registry + COMSOL 6.2 + strict Auditor 新案例在 1800 秒预算内完成，
+  A-D 和四类 Auditor passed，1 action、0 repair、约 1328.7 秒；本次 solved MPH/PNG/CSV/
+  checkpoint 有 SHA-256；证据见 `docs/v2/evidence/m8-web-cli-e2e-20260825.json`；
+- 1200 秒总预算运行即使 A-D 已执行通过仍被正确判为失败；family alias 与外部连接失败也没有被
+  混入成功。未发生 verified memory 晋升；
+- 未改变架构不变量，无新增 ADR。剩余风险是进程内 MPh 对阻塞 Java 调用不能保证硬取消；Web/
+  CLI 明确显示 `termination_confirmed`，生产强取消仍需可回收进程 Worker；
+- 真实 gate 驱动 `V2SessionManager`→Agent→COMSOL，HTTP/SSE 功能测试使用 fake driver；
+  因此不将它记录为真实浏览器组合 E2E。会话/事件是内存态，服务重启恢复不属于 M8；
+- M9 输入：真实可重放 M8 事件证据、独立 Gate、交互控制、下载和多轮路径。
 
 ## M9：全量验收与扩展准备
 
@@ -389,6 +411,9 @@ M7.5.1 补验记录：
 - 性能、成本和可靠性指标；
 - 新轴承族插件指南；
 - 发布和回滚说明。
+- 真实浏览器或真实 HTTP client→HTTP→SSE→Agent smoke gate；
+- 会话/事件持久化与服务重启恢复策略；
+- 生产级可回收独立进程 Worker 及阻塞 COMSOL 强取消验证。
 
 验收：最终 Definition of Done 全部满足，包括普通回归不调用外部 LLM、真实 LLM gate
 显式 opt-in、Prompt/schema/provider/model/usage/Trace 可追溯、LLM 输出不能越过 Policy/

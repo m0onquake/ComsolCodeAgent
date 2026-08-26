@@ -276,6 +276,14 @@ class StageRecord(ContractModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class RuntimeStageEvent(ContractModel):
+    """One real-time A-D transition emitted by the controlled runtime."""
+
+    run_id: str
+    model_id: str
+    record: StageRecord
+
+
 class Checkpoint(ContractModel):
     schema_version: str = RUNTIME_SCHEMA_VERSION
     checkpoint_id: str

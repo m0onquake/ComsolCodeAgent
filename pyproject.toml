@@ -64,6 +64,7 @@ web = [
 [project.scripts]
 comsol-agent = "comsol_agent.main:main"
 comsol-agent-web = "comsol_agent.web.app:main"
+comsol-agent-v2 = "comsol_agent.v2.web.cli:main"
 
 [tool.setuptools.package-data]
 "comsol_agent.web" = ["static/*.html", "static/*.css", "static/*.js"]

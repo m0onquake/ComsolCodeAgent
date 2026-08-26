@@ -332,6 +332,33 @@ async def test_artifacts_are_isolated_hashed_and_provenanced(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_runtime_emits_real_time_a_d_stage_transitions(tmp_path: Path) -> None:
+    backend = FakeBackend()
+    events = []
+    service = ComsolRuntime(
+        backend=backend,
+        artifacts=ArtifactStore(tmp_path),
+        worker=FakeWorkerExecutor(backend),
+        stage_sink=events.append,
+    )
+
+    result = await service.run(run_request(run_id="observable"), CancellationToken())
+
+    assert result.success
+    assert [(event.record.stage, event.record.state) for event in events] == [
+        (RuntimeStage.INPUT_VALIDATION, StageState.RUNNING),
+        (RuntimeStage.INPUT_VALIDATION, StageState.PASSED),
+        (RuntimeStage.BUILD, StageState.RUNNING),
+        (RuntimeStage.BUILD, StageState.PASSED),
+        (RuntimeStage.SOLVE, StageState.RUNNING),
+        (RuntimeStage.SOLVE, StageState.PASSED),
+        (RuntimeStage.RESULTS_AUDIT, StageState.RUNNING),
+        (RuntimeStage.RESULTS_AUDIT, StageState.PASSED),
+    ]
+    assert all(event.run_id == "observable" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_parameter_patch_and_checkpoint_tools_are_typed(tmp_path: Path) -> None:
     service, backend = runtime(tmp_path)
     created = await service.create_model(

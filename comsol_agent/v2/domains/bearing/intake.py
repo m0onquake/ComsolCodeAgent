@@ -146,7 +146,8 @@ class BearingNaturalLanguageIntake:
                 errors=[draft.unsupported_reason] if draft.unsupported_reason else [],
                 model_response=response,
             )
-        if draft.family not in {None, "cylindrical_roller"}:
+        normalized_family = _normalize_family(draft.family)
+        if normalized_family not in {None, "cylindrical_roller"}:
             return _unsupported(response, f"unsupported bearing family: {draft.family}")
         if draft.load_kind not in {None, "radial"}:
             return _unsupported(response, f"unsupported load kind: {draft.load_kind}")
@@ -234,3 +235,15 @@ def _unsupported(response: ModelResponse, reason: str) -> BearingIntakeResult:
         errors=[reason],
         model_response=response,
     )
+
+
+def _normalize_family(value: str | None) -> str | None:
+    """Normalize only the documented cylindrical-roller spelling aliases."""
+    if value is None:
+        return None
+    token = "_".join(value.strip().lower().replace("-", " ").split())
+    aliases = {
+        "cylindrical_roller": "cylindrical_roller",
+        "cylindrical_roller_bearing": "cylindrical_roller",
+    }
+    return aliases.get(token, token)

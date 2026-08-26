@@ -41,6 +41,7 @@
           <div class="mode-switch" role="group" aria-label="运行模式">
             <button class="mode-btn active" data-mode="demo">案例回放</button>
             <button class="mode-btn" data-mode="live">实时运行</button>
+            <button class="mode-btn" data-mode="v2">V2 严格运行</button>
           </div>
         </div>
         <label class="sr-only" for="requirement">仿真需求</label>
@@ -48,6 +49,17 @@
         <div class="control-actions">
           <div class="mode-note" id="modeNote">使用仓库内真实 COMSOL 结果，约 5 秒完成稳定回放。</div>
           <button id="runBtn" class="run-button"><span>启动演示</span><b>→</b></button>
+        </div>
+        <div id="v2Controls" class="v2-controls" hidden>
+          <button id="pauseBtn" class="quiet-button" disabled>暂停（安全点）</button>
+          <button id="resumeBtn" class="quiet-button" disabled>恢复</button>
+          <button id="cancelBtn" class="quiet-button danger" disabled>取消</button>
+        </div>
+        <div id="evidenceGates" class="evidence-gates" aria-label="V2 独立验证门">
+          <div data-gate="static_validation"><span>A 静态验证</span><strong>NOT REQUESTED</strong></div>
+          <div data-gate="model_build"><span>B 建模</span><strong>NOT REQUESTED</strong></div>
+          <div data-gate="solve"><span>C 求解</span><strong>NOT REQUESTED</strong></div>
+          <div data-gate="physical_audit"><span>D 物理审计</span><strong>NOT REQUESTED</strong></div>
         </div>
       </section>
 
@@ -65,7 +77,7 @@
 
         <article class="glass-panel code-panel">
           <div class="panel-title-row">
-            <div><p class="section-kicker">03 · GENERATED CODE</p><h2>COMSOL API 代码</h2></div>
+            <div><p class="section-kicker">03 · EXECUTION VIEW</p><h2 id="codePanelTitle">COMSOL API 代码</h2></div>
             <button id="copyBtn" class="quiet-button" disabled>复制</button>
           </div>
           <pre id="codeView" class="code-view"><code>// 等待 Agent 生成代码...</code></pre>

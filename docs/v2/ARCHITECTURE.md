@@ -355,3 +355,19 @@ Function；该领域工作流在进入 COMSOL 前复验全部 pin，然后调用
 因此“Agent 生成模型”的准确含义是：LLM 将自然语言解释为 proposal 并提议路由；
 Policy/Registry 将其约束为已注册能力；最终 COMSOL API 操作由版本固定的确定性
 Builder/Path 产生。LLM 不生成或执行整段 COMSOL Python/Java 模型代码。
+
+## 18. M8 Web、CLI 与可观测性映射
+
+M8 在 `comsol_agent/v2/web/` 增加 transport-neutral 的严格事件、会话投影、运行控制和轴承
+driver。Web SSE 与独立 V2 CLI 消费同一个 `V2Event`；旧 `/api/chat`、案例回放和
+`comsol-agent` 入口保持兼容。生命周期状态与 A 静态验证、B 建模、C 求解、D 物理审计四个
+证据 Gate 分离，`completed` 本身不代表物理审计通过。
+
+`ComsolRuntime` 的可选 `stage_sink` 在真实 A-D 转换处发出 `RuntimeStageEvent`，consumer 故障
+被隔离且不能改变运行事实。Kernel、Runtime 和 Auditor 事件投影包含规格、检索、计划、工具、
+修复、预算、失败和 artifact。暂停只在安全点生效；取消保留 termination truth。多轮 turn 继承
+类型化规格和相容 B checkpoint，但新参数的 Gate 重新从 pending 开始并必须重跑 C/D。
+
+公共 API、CLI、下载哈希策略和真实 gate 见
+[WEB_CLI_OBSERVABILITY.md](WEB_CLI_OBSERVABILITY.md)。该兼容扩展没有改变 Kernel 领域边界、
+Runtime 权限、检查点格式或审计阈值，不需要新增 ADR。

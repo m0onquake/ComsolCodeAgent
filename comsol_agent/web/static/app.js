@@ -5,6 +5,17 @@ const runBtn = el("runBtn");
 const timeline = el("timeline");
 const codeView = el("codeView");
 const copyBtn = el("copyBtn");
+const v2Controls = el("v2Controls");
+
+function setExecutionView() {
+  const isV2 = state.mode === "v2";
+  el("codePanelTitle").textContent = isV2 ? "确定性执行边界" : "COMSOL API 代码";
+  if (isV2) {
+    state.code = "";
+    codeView.textContent = "// V2 不在此生成整段 COMSOL 模型代码。\n// LLM 仅提交类型化规格与路由建议；注册的 Builder / Path 负责执行。";
+    copyBtn.disabled = true;
+  }
+}
 
 function setHealth(ok, message) {
   el("healthDot").className = `status-dot ${ok ? "ok" : "bad"}`;
@@ -26,12 +37,18 @@ async function bootstrap() {
 document.querySelectorAll(".mode-btn").forEach((button) => {
   button.addEventListener("click", () => {
     if (state.running) return;
-    state.mode = button.dataset.mode;
+    const nextMode = button.dataset.mode;
+    if (state.mode !== nextMode) state.sessionId = null;
+    state.mode = nextMode;
     document.querySelectorAll(".mode-btn").forEach((item) => item.classList.toggle("active", item === button));
     el("modeNote").textContent = state.mode === "demo"
       ? "使用仓库内真实 COMSOL 结果，约 5 秒完成稳定回放。"
-      : "调用当前 AgentLoop 与本机 COMSOL；耗时取决于模型复杂度。";
-    runBtn.querySelector("span").textContent = state.mode === "demo" ? "启动演示" : "开始实时运行";
+      : state.mode === "v2"
+        ? "调用 V2 Intake→RAG→Planner→Kernel→COMSOL A-D；四个证据门独立显示。"
+        : "调用兼容 AgentLoop 与本机 COMSOL；耗时取决于模型复杂度。";
+    v2Controls.hidden = state.mode !== "v2";
+    runBtn.querySelector("span").textContent = state.mode === "demo" ? "启动演示" : state.mode === "v2" ? "开始 V2 运行" : "开始实时运行";
+    setExecutionView();
   });
 });
 
@@ -109,6 +126,56 @@ function handleEvent(event) {
   if (event.type === "error") el("agentResponse").textContent = `运行失败：${event.message}`;
 }
 
+function setGate(name, status, source = "") {
+  const gate = document.querySelector(`[data-gate="${name}"]`);
+  if (!gate) return;
+  gate.className = status;
+  gate.querySelector("strong").textContent = `${String(status).replaceAll("_", " ").toUpperCase()}${source ? ` · ${source}` : ""}`;
+}
+
+function resetGates() {
+  ["static_validation", "model_build", "solve", "physical_audit"].forEach((name) => setGate(name, "not_requested"));
+}
+
+function handleV2Event(event) {
+  const gateByPhase = { A_input_validation: "static_validation", B_build: "model_build", C_solve: "solve", D_results_audit: "physical_audit" };
+  if (event.kind === "specification") setGate("static_validation", event.status, event.source);
+  if (event.kind === "comsol_stage" && gateByPhase[event.phase]) setGate(gateByPhase[event.phase], event.status, event.source);
+  if (event.kind === "audit") setGate("physical_audit", event.status, event.source);
+  const item = { type: event.kind === "failure" ? "error" : "tool_result", name: `${event.kind} · ${event.phase}`, failed: ["failed", "timed_out", "cancelled"].includes(event.status), detail: `${event.status}${event.message ? ` · ${event.message}` : ""}`, timestamp: event.occurred_at };
+  addTrace(item);
+  if (event.kind === "session") {
+    el("sessionBadge").textContent = `V2 · ${event.status.toUpperCase()}`;
+    el("pauseBtn").disabled = event.status !== "running";
+    el("resumeBtn").disabled = !["pause_requested", "paused"].includes(event.status);
+    el("cancelBtn").disabled = ["completed", "failed", "cancelled"].includes(event.status);
+  }
+  if (event.kind === "failure") el("agentResponse").textContent = `V2 失败 [${event.data.error_class || "unknown"}]：${event.message}`;
+  if (event.kind === "artifact") {
+    const link = document.createElement("a"); link.className = "file-chip"; link.href = event.data.download_url; link.textContent = event.data.name; el("fileList").append(link);
+  }
+}
+
+async function runV2() {
+  resetRun(Boolean(state.sessionId)); resetGates();
+  setExecutionView();
+  const endpoint = state.sessionId ? `/api/v2/sessions/${state.sessionId}/turns` : "/api/v2/sessions";
+  const created = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requirement: requirement.value.trim(), mode: "live" }) });
+  if (!created.ok) throw new Error(`V2 start HTTP ${created.status}`);
+  const snapshot = await created.json(); state.sessionId = snapshot.session_id;
+  const response = await fetch(`/api/v2/sessions/${state.sessionId}/events`, { headers: { Accept: "text/event-stream" } });
+  if (!response.ok || !response.body) throw new Error(`V2 events HTTP ${response.status}`);
+  const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read(); if (done) break;
+    buffer += decoder.decode(value, { stream: true }); const blocks = buffer.split("\n\n"); buffer = blocks.pop() || "";
+    blocks.forEach((block) => { const line = block.split("\n").find((row) => row.startsWith("data: ")); if (line) handleV2Event(JSON.parse(line.slice(6))); });
+  }
+  const final = await (await fetch(`/api/v2/sessions/${state.sessionId}`)).json();
+  Object.entries(final.gates || {}).forEach(([name, gate]) => setGate(name, gate.state, gate.source || ""));
+  el("agentResponse").textContent = `V2 运行状态：${final.status}；最高证据等级：${final.verification_level}。`;
+}
+
 async function run() {
   if (state.running || !requirement.value.trim()) return;
   state.running = true;
@@ -116,6 +183,7 @@ async function run() {
   runBtn.disabled = true;
   runBtn.querySelector("span").textContent = "运行中";
   try {
+    if (state.mode === "v2") { await runV2(); return; }
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
@@ -144,6 +212,16 @@ async function run() {
     runBtn.querySelector("span").textContent = state.mode === "demo" ? "再次回放" : "继续对话";
   }
 }
+
+async function v2Control(action, body = {}) {
+  if (!state.sessionId) return;
+  const response = await fetch(`/api/v2/sessions/${state.sessionId}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) el("agentResponse").textContent = `V2 ${action} 失败：HTTP ${response.status}`;
+}
+
+el("pauseBtn").addEventListener("click", () => v2Control("pause"));
+el("resumeBtn").addEventListener("click", () => v2Control("resume"));
+el("cancelBtn").addEventListener("click", () => v2Control("cancel", { reason: "cancelled from Web UI" }));
 
 function renderArtifacts(items, metrics, loads) {
   renderMetrics(metrics);

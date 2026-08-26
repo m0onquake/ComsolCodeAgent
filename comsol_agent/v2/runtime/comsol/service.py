@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +38,7 @@ from .contracts import (
     RuntimeResult,
     RuntimeRunRequest,
     RuntimeStage,
+    RuntimeStageEvent,
     SessionStatus,
     StageRecord,
     StageState,
@@ -63,6 +65,7 @@ class ComsolRuntime:
         artifacts: ArtifactStore,
         worker: BackendWorker,
         resource_capacity: int = 1,
+        stage_sink: Callable[[RuntimeStageEvent], None | Awaitable[None]] | None = None,
     ) -> None:
         if resource_capacity < 1:
             raise ValueError("resource_capacity must be positive")
@@ -78,6 +81,7 @@ class ComsolRuntime:
         self._models: set[str] = set()
         self._running: dict[str, CancellationToken] = {}
         self._failures: dict[str, RuntimeFailure] = {}
+        self._stage_sink = stage_sink
 
     @property
     def active_resource_leases(self) -> int:
@@ -236,12 +240,12 @@ class ComsolRuntime:
             ):
                 await self.start()
                 if request.resume_checkpoint:
-                    records[RuntimeStage.INPUT_VALIDATION] = self._skipped(
+                    await self._record(request, records, self._skipped(
                         RuntimeStage.INPUT_VALIDATION, "validated by compatible checkpoint"
-                    )
-                    records[RuntimeStage.BUILD] = self._skipped(
+                    ))
+                    await self._record(request, records, self._skipped(
                         RuntimeStage.BUILD, "restored compatible B checkpoint"
-                    )
+                    ))
                     compatibility_request = request
                     if request.override_extension_id:
                         compatibility_request = request.model_copy(
@@ -279,9 +283,9 @@ class ComsolRuntime:
                             cancellation=cancellation,
                         )
                 else:
-                    records[RuntimeStage.INPUT_VALIDATION] = self._running_record(
+                    await self._record(request, records, self._running_record(
                         RuntimeStage.INPUT_VALIDATION
-                    )
+                    ))
                     cancellation.raise_if_cancelled()
                     execution_catalog = getattr(self.backend, "execution_catalog", None)
                     if (
@@ -292,11 +296,13 @@ class ComsolRuntime:
                             "request extension_versions do not match the pinned snapshot"
                         )
                     self.artifacts.run_directory(request.run_id, request.model_id)
-                    records[RuntimeStage.INPUT_VALIDATION] = self._passed(
+                    await self._record(request, records, self._passed(
                         RuntimeStage.INPUT_VALIDATION,
                         {"input_sha256": self._input_hash(request)},
+                    ))
+                    await self._record(
+                        request, records, self._running_record(RuntimeStage.BUILD)
                     )
-                    records[RuntimeStage.BUILD] = self._running_record(RuntimeStage.BUILD)
                     await self._call(
                         RuntimeOperation.CREATE_MODEL,
                         lambda: self.backend.create_model(physical_name),
@@ -351,10 +357,10 @@ class ComsolRuntime:
                         cancellation=cancellation,
                     )
                     artifacts.append(checkpoint.artifact)
-                    records[RuntimeStage.BUILD] = self._passed(
+                    await self._record(request, records, self._passed(
                         RuntimeStage.BUILD,
                         {"checkpoint_id": checkpoint.checkpoint_id},
-                    )
+                    ))
 
                 if request.continuation_extension_id:
                     await self._call(
@@ -370,18 +376,20 @@ class ComsolRuntime:
                         timeout_seconds=request.timeout_seconds,
                         cancellation=cancellation,
                     )
-                records[RuntimeStage.SOLVE] = self._running_record(RuntimeStage.SOLVE)
+                await self._record(request, records, self._running_record(RuntimeStage.SOLVE))
                 solve_detail = await self._call(
                     RuntimeOperation.SOLVE,
                     lambda: self.backend.solve(physical_name),
                     timeout_seconds=request.timeout_seconds,
                     cancellation=cancellation,
                 )
-                records[RuntimeStage.SOLVE] = self._passed(RuntimeStage.SOLVE, solve_detail)
-
-                records[RuntimeStage.RESULTS_AUDIT] = self._running_record(
-                    RuntimeStage.RESULTS_AUDIT
+                await self._record(
+                    request, records, self._passed(RuntimeStage.SOLVE, solve_detail)
                 )
+
+                await self._record(request, records, self._running_record(
+                    RuntimeStage.RESULTS_AUDIT
+                ))
                 values = await self._call(
                     RuntimeOperation.EVALUATE,
                     lambda: self.backend.evaluate(physical_name, request.expressions),
@@ -430,9 +438,9 @@ class ComsolRuntime:
                         media_type="application/vnd.comsol.mph",
                     )
                 )
-                records[RuntimeStage.RESULTS_AUDIT] = self._passed(
+                await self._record(request, records, self._passed(
                     RuntimeStage.RESULTS_AUDIT, {"values": values, "audit": audit}
-                )
+                ))
                 await self.backend.close_model(physical_name)
                 model_open = False
                 return RuntimeResult(
@@ -469,6 +477,7 @@ class ComsolRuntime:
             records[stage] = current.model_copy(
                 update={"state": state, "finished_at": utc_now(), "detail": {"code": failure.code}}
             )
+            await self._notify_stage(request, records[stage])
             return RuntimeResult(
                 run_id=request.run_id,
                 model_id=request.model_id,
@@ -487,6 +496,34 @@ class ComsolRuntime:
                 except Exception:
                     pass
             self._running.pop(request.run_id, None)
+
+    async def _record(
+        self,
+        request: RuntimeRunRequest,
+        records: dict[RuntimeStage, StageRecord],
+        record: StageRecord,
+    ) -> None:
+        records[record.stage] = record
+        await self._notify_stage(request, record)
+
+    async def _notify_stage(
+        self, request: RuntimeRunRequest, record: StageRecord
+    ) -> None:
+        if self._stage_sink is None:
+            return
+        try:
+            result = self._stage_sink(
+                RuntimeStageEvent(
+                    run_id=request.run_id,
+                    model_id=request.model_id,
+                    record=record,
+                )
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # Observability consumers cannot alter COMSOL execution truth.
+            return
 
     async def _create_checkpoint_for_model(
         self,

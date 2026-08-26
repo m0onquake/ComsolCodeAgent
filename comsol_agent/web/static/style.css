@@ -86,6 +86,15 @@ h2 { margin: 0; font-size: 23px; letter-spacing: -.025em; }
 textarea { width: 100%; min-height: 132px; resize: vertical; margin-top: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; color: #dce8f8; background: rgba(3, 9, 17, .62); outline: none; line-height: 1.7; }
 textarea:focus { border-color: rgba(67, 140, 255, .72); box-shadow: 0 0 0 3px rgba(67,140,255,.1); }
 .control-actions { margin-top: 18px; }
+.v2-controls { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.quiet-button.danger { color: var(--red); border-color: rgba(255,108,122,.35); }
+.evidence-gates { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 18px; }
+.evidence-gates > div { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(3,9,17,.45); }
+.evidence-gates span, .evidence-gates strong { display: block; }
+.evidence-gates span { color: var(--muted); font-size: 10px; }
+.evidence-gates strong { margin-top: 7px; font: 700 9px var(--mono); color: #7f92ab; overflow-wrap: anywhere; }
+.evidence-gates .running strong { color: var(--cyan); }.evidence-gates .passed strong { color: var(--green); }
+.evidence-gates .failed strong, .evidence-gates .timed_out strong { color: var(--red); }.evidence-gates .skipped strong { color: var(--amber); }
 .mode-note { color: var(--muted); font-size: 12px; }
 .run-button { min-width: 166px; padding: 13px 17px; border: 0; border-radius: 12px; background: linear-gradient(115deg, #347ef0, #35bfc8); display: flex; justify-content: space-between; gap: 24px; font-weight: 800; cursor: pointer; box-shadow: 0 12px 34px rgba(40,118,231,.25); }
 .run-button:hover { filter: brightness(1.08); transform: translateY(-1px); }.run-button:disabled { opacity: .45; cursor: progress; transform: none; }

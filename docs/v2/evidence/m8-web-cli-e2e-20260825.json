@@ -1,0 +1,85 @@
+{
+  "gate": "v2_m8_web_cli_observability_e2e",
+  "date": "2026-08-25",
+  "success": true,
+  "session_id": "9e5e4267d0c1491c9e6ad95c5c5dbf06",
+  "turn_id": "3d114ed1dff3499085e7b18cc39bcbd1",
+  "execution": {
+    "real_llm": true,
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro",
+    "llm_requests": 2,
+    "prompt_tokens": 3094,
+    "completion_tokens": 715,
+    "total_tokens": 3809,
+    "kernel_event_stream": true,
+    "executed_by_kernel": true,
+    "legacy_gate_subprocess": false,
+    "static_demo_used": false,
+    "actions_used": 1,
+    "repairs_used": 0,
+    "elapsed_seconds": 1328.698425250128,
+    "elapsed_budget_seconds": 1800.0
+  },
+  "gates": {
+    "A_input_validation": "passed",
+    "B_build": "passed",
+    "C_solve": "passed",
+    "D_results_audit": "passed",
+    "physical_audit_source": "bearing.auditor",
+    "verification_level": "physical_audit_passed"
+  },
+  "auditors": {
+    "bearing_geometry": true,
+    "bearing_selection": true,
+    "bearing_contact": true,
+    "bearing_strict_physics": true
+  },
+  "physics": {
+    "target_load_n": 1.0,
+    "applied_load_n": 0.999998899245114,
+    "support_reaction_n": 0.9999931857595045,
+    "outer_contact_resultant_n": 1.0064734120581351,
+    "stabilization_ratio": 7.884150125749439e-06,
+    "loaded_zone_direction": "+X",
+    "dataset": "dset7",
+    "solution_number": 1,
+    "max_stress_pa": 89433.38638405208,
+    "max_displacement_m": 3.017245199640648e-07,
+    "solver_relative_tolerance": 0.001,
+    "native_plot_passed": true
+  },
+  "artifacts": [
+    {
+      "kind": "B_checkpoint_mph",
+      "size_bytes": 8875779,
+      "sha256": "d89685f1a73543f75a21c1738f69461c8bf436a278221799dc089b94f7bc4861"
+    },
+    {
+      "kind": "results_csv",
+      "size_bytes": 7277222,
+      "sha256": "94c1ebb6d9b92171bb42be8d820fc9aa25bc83a9e65b4f856dd6a06bceb02902"
+    },
+    {
+      "kind": "solved_mph",
+      "size_bytes": 511800566,
+      "sha256": "2bd7fe7e4ea75c4a4638dd1a914af4aac60f8f08a7e438f95e5ab87ee51e8a65"
+    },
+    {
+      "kind": "native_stress_png",
+      "sha256": "398d7d74700be1b39efce8d0383db4b2a8fa2d8742981e92289b90cbe13d1c7a"
+    }
+  ],
+  "full_evidence": "reports/v2_m8_web_evidence/9e5e4267d0c1491c9e6ad95c5c5dbf06/v2_m8_web_e2e.json",
+  "post_gate_projection_fixes": {
+    "llm_usage": "The raw budget events total 3809 tokens; projection now accumulates requests.",
+    "artifact_stage": "RuntimeArtifact source stages are preserved: checkpoint B, results and solved model D.",
+    "native_plot_download": "The strict-audit PNG is indexed as a hashed D artifact.",
+    "verification": "Covered by test_v2_web.py and the final 409-test suite; COMSOL and audit logic did not change."
+  },
+  "failed_attempts_retained": {
+    "intake_alias": "The live spelling 'cylindrical roller' caused a safe Intake stop before bounded alias normalization.",
+    "budget": "A prior A-D-passed run exceeded 1200 seconds and remained failed; evidence is m8_budget_failure_20260825.json.",
+    "connection": "One retry stopped before COMSOL on APIConnectionError and was not counted as success."
+  }
+}
