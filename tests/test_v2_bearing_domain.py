@@ -206,6 +206,18 @@ def test_builder_specializes_reviewed_strict_asset_for_roller_count_and_geometry
     assert code.count("roller_diameter_mm = 8") == 2
     assert code.count("roller_length_mm = 16") == 2
     assert code.count("offset_deg = 15") == 2
+    assert "comp.selection('box_inner_raceway').set('xmin', '30.9[mm]')" in code
+    assert "comp.selection('box_inner_raceway').set('xmax', '31.1[mm]')" in code
+    assert "comp.selection('box_outer_raceway').set('xmin', '38.9[mm]')" in code
+    assert "comp.selection('box_outer_raceway').set('xmax', '39.1[mm]')" in code
+    assert "comp.selection('box_outer_support').set('xmin', '39.9[mm]')" in code
+    assert "comp.selection('box_outer_support').set('xmax', '40.1[mm]')" in code
+    assert "comp.selection('box_inner_bore').set('xmin', '-20.1[mm]')" in code
+    assert "comp.selection('box_inner_bore').set('zmax', '9.1[mm]')" in code
+    assert "comp.selection(box_inner_tag).set('zmin', '-7.4[mm]')" in code
+    assert "comp.selection(box_outer_tag).set('zmax', '7.4[mm]')" in code
+    for stale in ("29.4[mm]", "29.6[mm]", "38.4[mm]", "38.6[mm]", "44.9[mm]", "45.1[mm]"):
+        assert stale not in code
     assert "sel_all_roller_boundaries" in code
     assert "cp_all_rollers_inner" in code
     assert "contact_all_rollers_inner" in code

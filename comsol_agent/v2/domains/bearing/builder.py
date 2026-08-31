@@ -83,6 +83,7 @@ def deterministic_model_code(spec: BearingSpec) -> str:
     # topology.  Candidate variants remain unverified until a fresh strict gate
     # passes; specializing the reviewed loop bounds does not promote them.
     code = _specialize_reviewed_topology(reviewed_asset_code(), spec)
+    code = _specialize_reviewed_selection_boxes(code, spec)
     replacements = {
         "inner_diameter": f"{spec.inner_diameter_mm:.12g}[mm]",
         "outer_diameter": f"{spec.outer_diameter_mm:.12g}[mm]",
@@ -266,6 +267,80 @@ def _specialize_reviewed_topology(code: str, spec: BearingSpec) -> str:
             raise RuntimeError(
                 "reviewed bearing asset topology specialization conflict for "
                 f"{pattern}: expected 1 match, found {count}"
+            )
+    return code
+
+
+def _specialize_reviewed_selection_boxes(code: str, spec: BearingSpec) -> str:
+    """Move every reviewed spatial selection with the requested 3D geometry."""
+    radial_margin_mm = 0.1
+    raceway_axial_half_mm = min(
+        spec.roller_length_mm / 2 + 0.4,
+        spec.bearing_width_mm / 2 - radial_margin_mm,
+    )
+    roller_contact_axial_half_mm = min(
+        spec.roller_length_mm / 2 - 0.6,
+        spec.bearing_width_mm / 2 - radial_margin_mm,
+    )
+    if roller_contact_axial_half_mm <= 0:
+        raise RuntimeError("roller contact selection has no positive axial span")
+
+    bounds = {
+        "box_inner_raceway": {
+            "xmin": spec.inner_race_outer_radius_mm - radial_margin_mm,
+            "xmax": spec.inner_race_outer_radius_mm + radial_margin_mm,
+            "ymin": -radial_margin_mm,
+            "ymax": radial_margin_mm,
+            "zmin": -raceway_axial_half_mm,
+            "zmax": raceway_axial_half_mm,
+        },
+        "box_outer_raceway": {
+            "xmin": spec.outer_race_inner_radius_mm - radial_margin_mm,
+            "xmax": spec.outer_race_inner_radius_mm + radial_margin_mm,
+            "ymin": -radial_margin_mm,
+            "ymax": radial_margin_mm,
+            "zmin": -raceway_axial_half_mm,
+            "zmax": raceway_axial_half_mm,
+        },
+        "box_outer_support": {
+            "xmin": spec.outer_diameter_mm / 2 - radial_margin_mm,
+            "xmax": spec.outer_diameter_mm / 2 + radial_margin_mm,
+            "ymin": -radial_margin_mm,
+            "ymax": radial_margin_mm,
+            "zmin": -raceway_axial_half_mm,
+            "zmax": raceway_axial_half_mm,
+        },
+        "box_inner_bore": {
+            "xmin": -(spec.inner_diameter_mm / 2 + radial_margin_mm),
+            "xmax": spec.inner_diameter_mm / 2 + radial_margin_mm,
+            "ymin": -(spec.inner_diameter_mm / 2 + radial_margin_mm),
+            "ymax": spec.inner_diameter_mm / 2 + radial_margin_mm,
+            "zmin": -(spec.bearing_width_mm / 2 + radial_margin_mm),
+            "zmax": spec.bearing_width_mm / 2 + radial_margin_mm,
+        },
+    }
+    for tag, properties in bounds.items():
+        for name, value in properties.items():
+            code = _replace_exact(
+                code,
+                (
+                    rf"comp\.selection\('{re.escape(tag)}'\)\.set\("  # noqa: ISC003
+                    rf"'{name}',\s*'[^']+'\)"
+                ),
+                f"comp.selection('{tag}').set('{name}', '{value:.12g}[mm]')",
+                label=f"{tag}.{name}",
+            )
+
+    for variable in ("box_inner_tag", "box_outer_tag"):
+        for name, value in (
+            ("zmin", -roller_contact_axial_half_mm),
+            ("zmax", roller_contact_axial_half_mm),
+        ):
+            code = _replace_exact(
+                code,
+                rf"comp\.selection\({variable}\)\.set\('{name}',\s*'[^']+'\)",
+                f"comp.selection({variable}).set('{name}', '{value:.12g}[mm]')",
+                label=f"{variable}.{name}",
             )
     return code
 

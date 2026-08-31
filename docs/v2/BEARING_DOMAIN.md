@@ -39,6 +39,8 @@ M7 在 `comsol_agent/v2/domains/bearing/` 提供圆柱滚子轴承领域插件�
 
 Builder 的公开输入只有 `BearingSpec`。执行 handler 只能运行内部固定的、经过审查的 V1
 确定性资产，不接受用户源代码，也不增加任意 Java/Python/Shell 工具。
+内/外滚道、外圈支承、内孔和逐滚子接触选择框由 `BearingSpec` 中的半径、直径、宽度和
+滚子长度动态计算；几何重建不得沿用基准模型的空间坐标。
 
 ## 4. Auditor
 
