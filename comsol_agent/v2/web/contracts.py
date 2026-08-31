@@ -54,6 +54,7 @@ class VerificationLevel(StrEnum):
     PLANNED = "planned"
     MODEL_BUILT = "model_built"
     SOLVE_PASSED = "solve_passed"
+    ENGINEERING_PREVIEW_ACCEPTED = "engineering_preview_accepted"
     PHYSICAL_AUDIT_PASSED = "physical_audit_passed"
     FAILED = "failed"
 

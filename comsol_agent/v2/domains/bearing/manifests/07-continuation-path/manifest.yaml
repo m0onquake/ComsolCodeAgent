@@ -12,5 +12,6 @@ priority: 100
 quality: 1.0
 requires_capabilities:
   - {kind: auditor, capability: bearing.physics.audit}
+  - {kind: auditor, capability: bearing.engineering-preview.audit}
 metadata: {domain: bearing, topology: cylindrical_roller, rollback: B_configured_model}
 tests: [tests/test_v2_bearing_domain.py]

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .auditors import engineering_preview_report
 from .models import BearingSpec
 
 
@@ -65,8 +66,7 @@ class ReviewedStrictAuditCollector:
         solved_path = Path((report.get("solved_model_save") or {}).get("saved_to") or "")
         plot = report.get("native_stress_plot") or {}
         plot_path = Path(plot.get("filepath") or "")
-        return {
-            "passed": bool(report.get("success")),
+        payload = {
             "selections": selection.get("selections") or {},
             "pairs": selection.get("pairs") or {},
             "metrics": {
@@ -99,6 +99,18 @@ class ReviewedStrictAuditCollector:
                 "reuse_scope": "force integration, target result binding, native plot",
             },
         }
+        preview = engineering_preview_report(
+            {"spec": spec, **payload}
+        ).model_dump(mode="json")
+        payload.update(
+            {
+                "passed": bool(preview["passed"]),
+                "strict_passed": bool(report.get("success")),
+                "engineering_preview": preview,
+                "acceptance_mode": "engineering_preview",
+            }
+        )
+        return payload
 
 
 def _magnitude(vector: dict[str, Any]) -> float:

@@ -1,0 +1,18 @@
+api_version: comsol-agent/v2alpha1
+kind: auditor
+id: bearing.engineering-preview.auditor
+version: 1.0.0
+enabled: true
+entrypoint: comsol_agent.v2.domains.bearing.extensions:engineering_preview_auditor_extension
+description: Approximate-stress acceptance auditor for non-promotable engineering previews.
+capabilities: [bearing.engineering-preview.audit]
+compatibility: {agent_api: ">=2.0,<3", comsol: ["6.x"]}
+permissions: {filesystem: none, shell: none, comsol: model_read, network: none}
+priority: 100
+quality: 1.0
+metadata:
+  domain: bearing
+  topology: cylindrical_roller
+  audit_contract: 1.0.0
+  promotion_eligible: false
+tests: [tests/test_v2_bearing_domain.py]

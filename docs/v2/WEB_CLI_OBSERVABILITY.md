@@ -15,6 +15,11 @@ cancelled/failed/completed` 只描述 Agent 会话；以下四个 Gate 分别保
 静态案例回放使用原兼容入口，不写入 V2 Gate。V2 `completed` 仍须结合
 `verification_level` 和四个 Gate 解读；`plan_only` 可以完成规划，但不能显示 B/C/D 通过。
 
+轴承默认 `engineering_preview` 仍把选中的工程应力审计投影到 D Gate，但
+`verification_level` 必须显示 `engineering_preview_accepted`。未选中的严格审计失败作为
+warning 展示，不覆盖当前门。只有 `strict_verified` 可显示
+`physical_audit_passed`；两者都不自动晋升记忆。
+
 ## 2. 事件合同
 
 `V2Event` 是 Web SSE 与 CLI 的共同来源，包含单调 `sequence`、session/turn、kind、phase、status、

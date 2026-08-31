@@ -3,7 +3,7 @@
 ## 1. 边界与支持范围
 
 M7 在 `comsol_agent/v2/domains/bearing/` 提供圆柱滚子轴承领域插件。Kernel、Runtime 和 Repair
-包不导入该插件；能力由 8 个 manifest 经 Registry 动态发现、校验、启停和固定快照。
+包不导入该插件；能力由 9 个 manifest 经 Registry 动态发现、校验、启停和固定快照。
 
 当前类型化范围是 3D 单列圆柱滚子轴承、Boolean 兜孔保持架、内外两组全局滚道接触、内孔径向
 载荷和外圈支承。`BearingSpec` 显式保存尺寸、滚子数量、总径向游隙、兜孔间隙、相位、方向、
@@ -27,7 +27,8 @@ M7 在 `comsol_agent/v2/domains/bearing/` 提供圆柱滚子轴承领域插件�
 - 未知 family 或拓扑返回 `unsupported_topology`；
 - 上述支持变更的 `requires_llm` 均为 false。
 
-参数路径和重建路径都必须重新求解并通过严格物理审计。参数覆盖不等于复用旧结果。
+参数路径和重建路径都必须重新求解并运行严格物理审计。默认工程预览可按第 4 节的
+近似应力门交付；参数覆盖不等于复用旧结果。
 
 ## 3. A–D Builder 与延续
 
@@ -41,7 +42,7 @@ Builder 的公开输入只有 `BearingSpec`。执行 handler 只能运行内部�
 
 ## 4. Auditor
 
-四类 Auditor 独立注册：
+五类 Auditor 独立注册：
 
 - Geometry：滚道/滚子/游隙闭合、环厚、周向不重叠；
 - Selection：所有载荷、支承、滚道、聚合滚子和逐滚子选择非空；
@@ -50,8 +51,13 @@ Builder 的公开输入只有 `BearingSpec`。执行 handler 只能运行内部�
   和 solved MPH。数值应力必须显式使用 `solid.mises/1[Pa]`，位移必须使用
   `solid.disp/1[m]`；报告保存 expression、unit、dataset、solution number 和 source。原生图必须绑定
   同一 dataset/solution/base expression，且其记录的 numerical maximum 与数值结果一致。
+- Engineering Preview：目标步、`solid.mises/1[Pa]` 有限正值、版本化近似应力
+  范围和相同 dataset/solution 的原生应力图。默认范围为 `1e3..1e9 Pa`，也可传入
+  期望应力与相对容差。严格 Physics 失败在预览中保留为 warning。
 
-物理阈值是版本化合同，修复路径不能降低。COMSOL API 成功、solve 成功和 audit 成功保持分离。
+严格物理阈值是版本化合同，修复路径不能暗中降低。预览通过始终为
+`promotion_eligible=false`；COMSOL API 成功、solve 成功、preview 成功和 strict audit 成功
+保持分离。见 [ADR 0011](adr/0011-layered-engineering-preview-and-strict-physical-acceptance.md)。
 
 ## 5. Skill、权限和证据
 

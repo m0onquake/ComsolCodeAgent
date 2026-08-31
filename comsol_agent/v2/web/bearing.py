@@ -13,10 +13,12 @@ from comsol_agent.cli.config import load_config
 from comsol_agent.llm.router import create_provider
 from comsol_agent.v2.contracts import GoalSpec, RunStatus, SourceRef
 from comsol_agent.v2.domains.bearing import (
+    BearingAcceptanceMode,
     BearingNaturalLanguageIntake,
     BearingPlanner,
     BearingSpec,
     BearingWorkflowTool,
+    EngineeringStressPolicy,
     IntakeStatus,
     ReviewedStrictAuditCollector,
     bearing_extensions,
@@ -77,12 +79,20 @@ class BearingV2Driver:
         cores: int = 1,
         timeout_seconds: float = 1800,
         process_worker: bool = True,
+        acceptance_mode: BearingAcceptanceMode | str = (
+            BearingAcceptanceMode.ENGINEERING_PREVIEW
+        ),
+        preview_policy: EngineeringStressPolicy | dict[str, Any] | None = None,
     ) -> None:
         self.output_root = Path(output_root).resolve()
         self.comsol_version = comsol_version
         self.cores = cores
         self.timeout_seconds = timeout_seconds
         self.process_worker = process_worker
+        self.acceptance_mode = BearingAcceptanceMode(acceptance_mode)
+        self.preview_policy = EngineeringStressPolicy.model_validate(
+            preview_policy or {}
+        )
 
     async def run(
         self,
@@ -161,14 +171,22 @@ class BearingV2Driver:
             context.model_dump(mode="json"),
         )
         goal = GoalSpec(
-            objective="Build and strictly audit the requested cylindrical roller bearing",
+            objective="Build and evaluate the requested cylindrical roller bearing",
             constraints={
                 "full_model_llm_rewrite": False,
                 "model_id": _model_id_for_checkpoint(request.checkpoint),
                 "timeout_seconds": self.timeout_seconds,
                 "resume_checkpoint": request.checkpoint,
+                "acceptance_mode": self.acceptance_mode.value,
+                "preview_policy": self.preview_policy.model_dump(mode="json"),
             },
-            acceptance=["strict_physics_audit"],
+            acceptance=[
+                (
+                    "strict_physics_audit"
+                    if self.acceptance_mode == BearingAcceptanceMode.STRICT_VERIFIED
+                    else "engineering_stress_preview"
+                )
+            ],
             trace_id=request.turn_id,
         )
         registry = _registry(self.comsol_version)

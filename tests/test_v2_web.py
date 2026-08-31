@@ -336,6 +336,47 @@ async def test_v2_event_stream_keeps_all_evidence_gates_distinct(tmp_path):
     json.dumps([event.model_dump(mode="json") for event in events])
 
 
+def test_projection_distinguishes_preview_acceptance_from_strict_verification() -> None:
+    snapshot = new_snapshot("preview-session")
+    strict = V2Event(
+        sequence=1,
+        session_id=snapshot.session_id,
+        turn_id="turn-preview",
+        kind=V2EventKind.AUDIT,
+        phase="D_results_audit",
+        status="failed",
+        source="bearing.physics.auditor",
+        data={
+            "kind": "bearing_strict_physics",
+            "passed": False,
+            "selected_for_acceptance": False,
+        },
+    )
+    preview = V2Event(
+        sequence=2,
+        session_id=snapshot.session_id,
+        turn_id="turn-preview",
+        kind=V2EventKind.AUDIT,
+        phase="D_results_audit",
+        status="passed",
+        source="bearing.engineering-preview.auditor",
+        data={
+            "kind": "bearing_engineering_stress_preview",
+            "passed": True,
+            "selected_for_acceptance": True,
+        },
+    )
+
+    apply_event(snapshot, strict)
+    apply_event(snapshot, preview)
+
+    assert snapshot.verification_level.value == "engineering_preview_accepted"
+    assert snapshot.gates["physical_audit"].state.value == "passed"
+    assert snapshot.gates["physical_audit"].source == (
+        "bearing.engineering-preview.auditor"
+    )
+
+
 @pytest.mark.asyncio
 async def test_v2_pause_is_effective_only_at_safe_point_and_can_resume():
     driver = PausableDriver()

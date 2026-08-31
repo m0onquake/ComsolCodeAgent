@@ -15,6 +15,7 @@ from comsol_agent.v2.extensions import (
 
 from .auditors import (
     BearingContactAuditor,
+    BearingEngineeringPreviewAuditor,
     BearingGeometryAuditor,
     BearingPhysicalAuditor,
     BearingSelectionAuditor,
@@ -107,15 +108,20 @@ class BearingExtension:
                 "restore_B",
                 "apply_parameter_patch",
                 "solve_continuation",
-                "strict_audit",
+                "run_strict_and_preview_audits",
             )
-        return ("restore_B", "configure_directional_continuation", "solve", "strict_audit")
+        return (
+            "restore_B",
+            "configure_directional_continuation",
+            "solve",
+            "run_strict_and_preview_audits",
+        )
 
     def rollback(self) -> dict[str, Any]:
         return {"checkpoint": "B_configured_model", "required": True}
 
     def acceptance(self) -> tuple[str, ...]:
-        return ("target_load_reached", "solve_converged", "strict_physics_audit_passed")
+        return ("target_load_reached", "solve_converged", "selected_acceptance_gate_passed")
 
     def execute_model(self, handle: Any, specification: dict[str, Any]) -> dict[str, Any]:
         return self.service.execute_model(handle, specification)
@@ -171,6 +177,16 @@ def bearing_extensions() -> list[BearingExtension]:
         ),
         BearingPhysicalAuditor(),
     )
+    preview = BearingExtension(
+        _manifest(
+            "bearing.engineering-preview.auditor",
+            ExtensionKind.AUDITOR,
+            ["bearing.engineering-preview.audit"],
+            "Approximate-stress acceptance auditor for non-promotable engineering previews.",
+            comsol="model_read",
+        ),
+        BearingEngineeringPreviewAuditor(),
+    )
     override = BearingExtension(
         _manifest(
             "bearing.parameter-override.path",
@@ -189,7 +205,10 @@ def bearing_extensions() -> list[BearingExtension]:
             ["bearing.dynamic-load-continuation"],
             "Direction-aware bounded radial-load continuation path.",
             comsol="solve",
-            requires=[{"kind": "auditor", "capability": "bearing.physics.audit"}],
+            requires=[
+                {"kind": "auditor", "capability": "bearing.physics.audit"},
+                {"kind": "auditor", "capability": "bearing.engineering-preview.audit"},
+            ],
         ),
         DynamicLoadContinuation(),
     )
@@ -207,7 +226,17 @@ def bearing_extensions() -> list[BearingExtension]:
         ),
         BearingSkill(),
     )
-    return [builder, geometry, selection, contact, physical, override, continuation, skill]
+    return [
+        builder,
+        geometry,
+        selection,
+        contact,
+        physical,
+        preview,
+        override,
+        continuation,
+        skill,
+    ]
 
 
 def baseline_spec() -> BearingSpec:
@@ -245,6 +274,12 @@ def physical_auditor_extension(
     *, manifest: ExtensionManifest, config: dict[str, Any]
 ) -> BearingExtension:
     return BearingExtension(manifest, BearingPhysicalAuditor())
+
+
+def engineering_preview_auditor_extension(
+    *, manifest: ExtensionManifest, config: dict[str, Any]
+) -> BearingExtension:
+    return BearingExtension(manifest, BearingEngineeringPreviewAuditor())
 
 
 def parameter_override_extension(

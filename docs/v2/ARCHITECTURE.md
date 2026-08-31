@@ -218,6 +218,16 @@ comsol_agent/v2/
 - 物理审计门槛降低；
 - 新的持久化格式或兼容策略。
 
+### 9.1 分层验收语义
+
+轴承领域默认交付门为 `engineering_preview`：必须完成本次真实 COMSOL
+求解，通过几何/选择集/接触结构审计，并产生来自正确解的有限正应力和原生图。
+力平衡、稳定项和载荷区方向仍执行严格审计，但在该模式下作为 warning。
+
+`strict_verified` 保留原严格物理门，是正式验证、VerifiedCase 和 verified
+memory 晋升的唯一入口。预览通过不等于 `physical_audit_passed`。详见
+[ADR 0011](adr/0011-layered-engineering-preview-and-strict-physical-acceptance.md)。
+
 ## 10. M1 实现映射
 
 M1 的领域无关骨架位于 `comsol_agent/v2/`：

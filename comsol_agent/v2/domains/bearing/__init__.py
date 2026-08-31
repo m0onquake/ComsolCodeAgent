@@ -1,10 +1,14 @@
 """V2 cylindrical-roller bearing domain plugin."""
 
 from .auditors import (
+    BearingAcceptanceMode,
     BearingContactAuditor,
+    BearingEngineeringPreviewAuditor,
     BearingGeometryAuditor,
     BearingPhysicalAuditor,
     BearingSelectionAuditor,
+    EngineeringStressPolicy,
+    engineering_preview_report,
 )
 from .builder import CylindricalRollerBearingBuilder
 from .extensions import bearing_extensions
@@ -39,7 +43,9 @@ from .workflow import (
 
 __all__ = [
     "BearingChangeSet",
+    "BearingAcceptanceMode",
     "BearingContactAuditor",
+    "BearingEngineeringPreviewAuditor",
     "BearingGeometryAuditor",
     "BearingIntakeResult",
     "BearingNaturalLanguageIntake",
@@ -58,6 +64,7 @@ __all__ = [
     "ChangeRoute",
     "CylindricalRollerBearingBuilder",
     "DynamicLoadContinuation",
+    "EngineeringStressPolicy",
     "IntakeStatus",
     "LoadDirection",
     "ParameterOverridePath",
@@ -69,4 +76,5 @@ __all__ = [
     "bearing_extensions",
     "classify_changes",
     "evaluate_target_results",
+    "engineering_preview_report",
 ]

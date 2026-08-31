@@ -421,6 +421,10 @@ M7.5.1 补验记录：
 显式 opt-in、Prompt/schema/provider/model/usage/Trace 可追溯、LLM 输出不能越过 Policy/
 Registry/COMSOL/Auditor，且至少一条自然语言到严格物理审计的真实 E2E 可重放。
 
+产品默认交付使用 `engineering_preview`：真实求解、结构审计、正确应力源、近似应力
+范围和原生图为阻断门，严格平衡审计为 warning。该变更不降低 M9 正式验证或
+verified memory 的 Definition of Done；它们仍要求 `strict_verified`。
+
 当前记录：
 
 - 本次最终非 COMSOL 全套 420 passed，1 个已知依赖弃用 warning；修改范围 Ruff 和前端语法通过；

@@ -27,6 +27,7 @@ from comsol_agent.v2.runtime.comsol import (
     RuntimeRunRequest,
 )
 
+from .auditors import BearingAcceptanceMode, EngineeringStressPolicy
 from .models import BearingSpec
 
 WORKFLOW_CAPABILITY = "bearing.workflow.execute"
@@ -54,12 +55,19 @@ class BearingWorkflowRequest(ContractModel):
     resume_checkpoint: str | None = None
     bindings: tuple[CapabilityPin, ...] = Field(min_length=1)
     timeout_seconds: float = Field(default=3600, gt=0, le=86400)
+    acceptance_mode: BearingAcceptanceMode = BearingAcceptanceMode.ENGINEERING_PREVIEW
+    preview_policy: EngineeringStressPolicy = Field(
+        default_factory=EngineeringStressPolicy
+    )
 
 
 class BearingWorkflowResult(ContractModel):
     route: str
     runtime: dict[str, Any] | None = None
     audits: dict[str, Any] = Field(default_factory=dict)
+    acceptance_mode: BearingAcceptanceMode = BearingAcceptanceMode.ENGINEERING_PREVIEW
+    accepted: bool = False
+    engineering_preview_passed: bool = False
     strict_audit_passed: bool = False
     comsol_called: bool = False
 
@@ -170,6 +178,9 @@ class BearingWorkflowTool:
         if request.route in {"noop", "clarification"}:
             data = BearingWorkflowResult(
                 route=request.route,
+                acceptance_mode=request.acceptance_mode,
+                accepted=request.route == "noop",
+                engineering_preview_passed=request.route == "noop",
                 strict_audit_passed=request.route == "noop",
                 comsol_called=False,
             )
@@ -219,15 +230,49 @@ class BearingWorkflowTool:
         )
         result = await self.runtime.run(runtime_request, cancellation)
         audits = (
-            await self._audits(request.requested, result.data.get("audit", {}), pins)
+            await self._audits(
+                request.requested,
+                result.data.get("audit", {}),
+                pins,
+                request.preview_policy,
+            )
             if result.success
             else {}
         )
-        strict = bool(result.success and audits and all(item["passed"] for item in audits.values()))
+        structural_capabilities = (
+            "bearing.geometry.audit",
+            "bearing.selection.audit",
+            "bearing.contact.audit",
+        )
+        structural = bool(
+            result.success
+            and audits
+            and all(audits[name]["passed"] for name in structural_capabilities)
+        )
+        strict = bool(structural and audits["bearing.physics.audit"]["passed"])
+        preview = bool(
+            structural and audits["bearing.engineering-preview.audit"]["passed"]
+        )
+        accepted = (
+            strict
+            if request.acceptance_mode == BearingAcceptanceMode.STRICT_VERIFIED
+            else preview
+        )
+        selected_capability = (
+            "bearing.physics.audit"
+            if request.acceptance_mode == BearingAcceptanceMode.STRICT_VERIFIED
+            else "bearing.engineering-preview.audit"
+        )
+        for capability, report in audits.items():
+            report["selected_for_acceptance"] = capability == selected_capability
+            report["acceptance_mode"] = request.acceptance_mode.value
         data = BearingWorkflowResult(
             route=request.route,
             runtime=result.model_dump(mode="json"),
             audits=audits,
+            acceptance_mode=request.acceptance_mode,
+            accepted=accepted,
+            engineering_preview_passed=preview,
             strict_audit_passed=strict,
             comsol_called=True,
         )
@@ -248,16 +293,21 @@ class BearingWorkflowTool:
             action,
             data,
             started,
-            success=strict,
+            success=accepted,
             artifacts=artifacts,
             checkpoint=result.checkpoint.manifest_path if result.checkpoint else None,
             error_class=(
                 None
-                if strict
+                if accepted
                 else (
                     result.failure.error_class.value
                     if result.failure
-                    else "physics_audit_failure"
+                    else (
+                        "physics_audit_failure"
+                        if request.acceptance_mode
+                        == BearingAcceptanceMode.STRICT_VERIFIED
+                        else "engineering_preview_failure"
+                    )
                 )
             ),
         )
@@ -272,6 +322,7 @@ class BearingWorkflowTool:
         spec: BearingSpec,
         runtime_audit: dict[str, Any],
         pins: dict[tuple[ExtensionKind, str], CapabilityPin],
+        preview_policy: EngineeringStressPolicy,
     ) -> dict[str, Any]:
         snapshot = self.snapshot
         assert snapshot is not None
@@ -290,6 +341,21 @@ class BearingWorkflowTool:
                 ResolutionContext(selected_extension_id=pin.extension_id),
             )[0]
             reports[capability] = await extension.audit(subject)
+        preview_capability = "bearing.engineering-preview.audit"
+        preview_pin = _required_pin(pins, ExtensionKind.AUDITOR, preview_capability)
+        preview_extension = snapshot.resolve(
+            ExtensionKind.AUDITOR,
+            preview_capability,
+            ResolutionContext(selected_extension_id=preview_pin.extension_id),
+        )[0]
+        reports[preview_capability] = await preview_extension.audit(
+            {
+                "spec": spec,
+                **runtime_audit,
+                "preview_policy": preview_policy.model_dump(mode="json"),
+                "strict_balance_errors": reports["bearing.physics.audit"]["errors"],
+            }
+        )
         return reports
 
     def _observation(

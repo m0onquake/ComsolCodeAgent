@@ -46,6 +46,7 @@ class WorkflowBackend:
         self.calls: list[tuple[str, Any]] = []
         self.build_calls = 0
         self.spec = _SPEC
+        self.outer_contact_scale = 1.0
 
     async def start(self) -> None:
         self.calls.append(("start", None))
@@ -163,7 +164,9 @@ class WorkflowBackend:
                 "returned_target_load_n": spec.target_radial_load_n,
                 "applied_load_n": spec.target_radial_load_n,
                 "support_reaction_n": spec.target_radial_load_n,
-                "outer_contact_resultant_n": spec.target_radial_load_n,
+                "outer_contact_resultant_n": (
+                    spec.target_radial_load_n * self.outer_contact_scale
+                ),
                 "stabilization_force_n": 0,
                 "loaded_zone_direction": spec.load_direction.value,
             },
@@ -296,15 +299,81 @@ async def test_fake_runtime_rebuild_closes_through_kernel_and_strict_audits(
     assert manifest.plan.steps[0].status == StepStatus.COMPLETE
     observation = manifest.action_records[0].observation
     assert observation.data["strict_audit_passed"] is True
+    assert observation.data["engineering_preview_passed"] is True
+    assert observation.data["accepted"] is True
     assert set(observation.data["audits"]) == {
         "bearing.geometry.audit",
         "bearing.selection.audit",
         "bearing.contact.audit",
         "bearing.physics.audit",
+        "bearing.engineering-preview.audit",
     }
     assert backend.build_calls == 1
     assert any(call[0] == "registered" for call in backend.calls)
     assert manifest.checkpoints
+
+
+@pytest.mark.asyncio
+async def test_engineering_preview_completes_when_only_strict_balance_fails(
+    tmp_path: Path,
+) -> None:
+    backend, snapshot = await _setup(tmp_path)
+    backend.outer_contact_scale = 0.5
+    try:
+        goal = GoalSpec(
+            objective="build preview",
+            constraints={
+                "model_id": "bearing-preview",
+                "acceptance_mode": "engineering_preview",
+                "preview_policy": {
+                    "expected_pa": 50000.0,
+                    "relative_tolerance": 0.2,
+                },
+            },
+        )
+        planned = await _plan(snapshot, goal, None, _SPEC)
+        manifest = await AgentKernel(RegistryToolExecutor(snapshot)).run(
+            goal, planned.plan
+        )
+    finally:
+        await snapshot.close()
+
+    observation = manifest.action_records[0].observation
+    assert manifest.status == RunStatus.COMPLETED
+    assert observation.data["accepted"] is True
+    assert observation.data["engineering_preview_passed"] is True
+    assert observation.data["strict_audit_passed"] is False
+    assert observation.data["audits"]["bearing.physics.audit"]["passed"] is False
+    assert (
+        observation.data["audits"]["bearing.engineering-preview.audit"]["passed"]
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_still_rejects_the_same_balance_failure(tmp_path: Path) -> None:
+    backend, snapshot = await _setup(tmp_path)
+    backend.outer_contact_scale = 0.5
+    try:
+        goal = GoalSpec(
+            objective="build verified model",
+            constraints={
+                "model_id": "bearing-strict",
+                "acceptance_mode": "strict_verified",
+            },
+        )
+        planned = await _plan(snapshot, goal, None, _SPEC)
+        manifest = await AgentKernel(RegistryToolExecutor(snapshot)).run(
+            goal, planned.plan
+        )
+    finally:
+        await snapshot.close()
+
+    observation = manifest.action_records[0].observation
+    assert manifest.status == RunStatus.FAILED
+    assert observation.data["accepted"] is False
+    assert observation.data["engineering_preview_passed"] is True
+    assert observation.data["strict_audit_passed"] is False
 
 
 @pytest.mark.asyncio

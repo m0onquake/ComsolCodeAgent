@@ -179,6 +179,7 @@ def _execution_plan(
                 "bearing.selection.audit",
                 "bearing.contact.audit",
                 "bearing.physics.audit",
+                "bearing.engineering-preview.audit",
             )
         ],
     ]
@@ -203,7 +204,7 @@ def _execution_plan(
             "Restore the compatible B checkpoint and execute the typed override workflow"
         ),
         PlannedRoute.DETERMINISTIC_REBUILD: (
-            "Execute deterministic bearing build, continuation, solve and strict audits"
+            "Execute deterministic bearing build, continuation, solve and selected audits"
         ),
     }[route]
     return Plan(
@@ -238,9 +239,17 @@ def _execution_plan(
                         "timeout_seconds": float(
                             goal.constraints.get("timeout_seconds", 3600)
                         ),
+                        "acceptance_mode": str(
+                            goal.constraints.get(
+                                "acceptance_mode", "engineering_preview"
+                            )
+                        ),
+                        "preview_policy": dict(
+                            goal.constraints.get("preview_policy", {})
+                        ),
                     },
                     permissions=action_permissions,
-                    expected_output={"strict_audit_passed": True},
+                    expected_output={"accepted": True},
                 ),
             )
         ],

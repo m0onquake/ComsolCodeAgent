@@ -52,7 +52,8 @@ def apply_event(snapshot: SessionSnapshot, event: V2Event) -> None:
         if gate:
             _gate(snapshot, gate, event)
     elif event.kind == V2EventKind.AUDIT:
-        _gate(snapshot, "physical_audit", event)
+        if event.data.get("selected_for_acceptance", True):
+            _gate(snapshot, "physical_audit", event)
     elif event.kind == V2EventKind.REPAIR:
         snapshot.repairs.append(dict(event.data))
     elif event.kind == V2EventKind.BUDGET:
@@ -76,6 +77,11 @@ def verification_level(snapshot: SessionSnapshot) -> VerificationLevel:
         return VerificationLevel.FAILED
     states = {name: gate.state for name, gate in snapshot.gates.items()}
     if states["physical_audit"] == EvidenceState.PASSED:
+        if (
+            snapshot.gates["physical_audit"].evidence.get("kind")
+            == "bearing_engineering_stress_preview"
+        ):
+            return VerificationLevel.ENGINEERING_PREVIEW_ACCEPTED
         return VerificationLevel.PHYSICAL_AUDIT_PASSED
     if states["solve"] == EvidenceState.PASSED:
         return VerificationLevel.SOLVE_PASSED

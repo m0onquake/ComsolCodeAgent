@@ -23,7 +23,8 @@
 | [0007](0007-repair-contract-enforcement-and-recovery-failure.md) | 修复合同执行、验收治理与恢复二级故障 | Accepted |
 | [0008](0008-controlled-model-gateway-and-llm-planning.md) | 受控 Model Gateway 与 LLM 解释/规划边界 | Accepted |
 | [0009](0009-pinned-plan-execution-bridge.md) | 固定计划到 Kernel/Registry/Runtime 的执行桥 | Accepted |
-| [0010](0010-durable-sessions-and-recyclable-comsol-worker.md) | 持久会话与可回收 COMSOL 子进程 Worker | Proposed |
+| [0010](0010-durable-sessions-and-recyclable-comsol-worker.md) | 持久会话与可回收 COMSOL 子进程 Worker | Accepted |
+| [0011](0011-layered-engineering-preview-and-strict-physical-acceptance.md) | 分层的工程预览与严格物理验收 | Accepted |
 
 ## 新建模板
 

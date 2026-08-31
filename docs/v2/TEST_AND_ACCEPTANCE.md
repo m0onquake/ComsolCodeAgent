@@ -61,6 +61,20 @@ V2 使用分层证据证明完成：合同测试证明接口，沙箱测试证�
 - 应力/位移有限性；
 - 原生结果图和 MPH 完整性。
 
+### 2.6 Engineering Preview Acceptance Tests
+
+默认模型生成使用 `engineering_preview`，但仍要求本次真实 COMSOL 求解，不得用
+mock、fixture 或历史 artifact 代替。验收项为：
+
+- Geometry/Selection/Contact 结构审计通过；
+- 应力来自目标步和 `solid.mises/1[Pa]`；
+- 应力是有限正值，且在配置的近似数值范围内；
+- 原生应力图绑定相同 dataset/solution；
+- 严格力平衡、稳定项和方向审计继续运行，失败以 warning 记录。
+
+只有 `strict_verified` 模式要求 2.5 全部通过，也只有该模式可晋升 VerifiedCase/
+verified memory。预览通过不能写为“严格物理审计通过”。
+
 ## 3. 常用本地命令
 
 ```bash
@@ -466,3 +480,12 @@ V2 达到可用状态至少要求：
   10.1 N 未通过严格平衡门；不得晋升 verified memory；
 - 方向/尺寸/数量矩阵与真实非收敛 solver-strategy 证据仍未齐备，M9 继续保持
   `in_progress`。
+
+2026-08-31 产品验收分层记录：
+
+- 根据 [ADR 0011](adr/0011-layered-engineering-preview-and-strict-physical-acceptance.md)，默认生成结果改为
+  `engineering_preview`；严格平衡门失败不再阻断应力量级合理的工程预览。
+- 这是验收合同变更，本记录不把 2026-08-28 的历史 artifact 冒充为本次新 COMSOL
+  运行；严格 M9 物理矩阵的未通过项仍然保留。
+- 非 COMSOL 合同测试要求同一不平衡证据在 preview 模式下可交付、在 strict 模式下仍
+  失败，且不得进入 verified memory。

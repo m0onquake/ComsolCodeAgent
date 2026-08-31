@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from comsol_agent.v2.domains.bearing import (
     BearingContactAuditor,
+    BearingEngineeringPreviewAuditor,
     BearingGeometryAuditor,
     BearingPhysicalAuditor,
     BearingSelectionAuditor,
@@ -556,6 +557,91 @@ async def test_physics_auditor_does_not_accept_solve_without_force_evidence() ->
 
 
 @pytest.mark.asyncio
+async def test_engineering_preview_accepts_approximate_stress_without_force_balance() -> None:
+    spec = BearingSpec()
+    results = result_evidence(spec)
+    subject = {
+        "spec": spec,
+        "metrics": {
+            "returned_target_load_n": spec.target_radial_load_n,
+            "applied_load_n": spec.target_radial_load_n,
+            "support_reaction_n": spec.target_radial_load_n * 0.5,
+            "outer_contact_resultant_n": spec.target_radial_load_n * 0.4,
+            "stabilization_force_n": spec.target_radial_load_n * 0.2,
+            "loaded_zone_direction": "-Y",
+        },
+        "result_evidence": results,
+        "solver_evidence": {
+            "requested": spec.solver_relative_tolerance,
+            "bindings": [
+                {
+                    "property": "stol",
+                    "actual": spec.solver_relative_tolerance,
+                }
+            ],
+        },
+        "native_plot": "artifact://plot.png",
+        "native_plot_evidence": {
+            "success": True,
+            "expression": "solid.mises",
+            "unit": "Pa",
+            "dataset": results["dataset"],
+            "solution_number": results["solution_number"],
+            "numerical_max_pa": results["stress"]["value"],
+        },
+        "preview_policy": {
+            "expected_pa": results["stress"]["value"] * 1.1,
+            "relative_tolerance": 0.2,
+        },
+        "strict_balance_errors": [
+            "support_reaction_balance",
+            "outer_contact_balance",
+            "stabilization_ratio",
+            "loaded_zone_direction",
+        ],
+        "solved_mph": "artifact://solved.mph",
+    }
+
+    strict = await BearingPhysicalAuditor().audit(subject)
+    preview = await BearingEngineeringPreviewAuditor().audit(subject)
+
+    assert strict["passed"] is False
+    assert preview["passed"] is True
+    assert preview["evidence"]["promotion_eligible"] is False
+    assert set(preview["evidence"]["strict_balance_warnings"]) == {
+        "support_reaction_balance",
+        "outer_contact_balance",
+        "stabilization_ratio",
+        "loaded_zone_direction",
+    }
+
+
+@pytest.mark.asyncio
+async def test_engineering_preview_rejects_stress_outside_configured_range() -> None:
+    spec = BearingSpec()
+    results = result_evidence(spec)
+    results["stress"]["value"] = 5.0e10
+    preview = await BearingEngineeringPreviewAuditor().audit(
+        {
+            "spec": spec,
+            "result_evidence": results,
+            "native_plot": "artifact://plot.png",
+            "native_plot_evidence": {
+                "success": True,
+                "expression": "solid.mises",
+                "unit": "Pa",
+                "dataset": results["dataset"],
+                "solution_number": results["solution_number"],
+                "numerical_max_pa": results["stress"]["value"],
+            },
+        }
+    )
+
+    assert preview["passed"] is False
+    assert "approximate_stress" in preview["errors"]
+
+
+@pytest.mark.asyncio
 async def test_physics_auditor_rejects_cross_dataset_stress_and_plot() -> None:
     spec = BearingSpec()
     results = result_evidence(spec)
@@ -632,7 +718,7 @@ async def test_all_bearing_extension_kinds_register_resolve_disable_and_remove()
         assert len(paths) == 1
     await selected.disable("bearing.cylindrical-roller.skill")
     selected.unregister("bearing.cylindrical-roller.skill")
-    assert len(extensions) == 8
+    assert len(extensions) == 9
 
 
 @pytest.mark.asyncio
@@ -647,7 +733,7 @@ async def test_manifest_discovery_loads_complete_plugin_without_kernel_edits() -
         / "manifests"
     )
     candidates = selected.discover([manifest_root])
-    assert len(candidates) == 8
+    assert len(candidates) == 9
     assert all(selected.validate(candidate).valid for candidate in candidates)
     registrations = await selected.load_and_register(candidates)
     assert all(registration.error is None for registration in registrations)
