@@ -186,6 +186,32 @@ def test_bundled_reviewed_asset_is_content_addressed() -> None:
     assert hashlib.sha256(raw).hexdigest() == ASSET_SHA256
 
 
+def test_builder_specializes_reviewed_strict_asset_for_roller_count_and_geometry() -> None:
+    spec = variant(
+        roller_count=12,
+        pitch_radius_mm=35,
+        roller_diameter_mm=8,
+        roller_length_mm=16,
+        cage_inner_radius_mm=31.2,
+        cage_outer_radius_mm=38.8,
+        roller_phase_deg=15,
+    )
+    code = deterministic_model_code(spec)
+    assert "model.param().set('roller_count', '12')" in code
+    assert "num_rollers = 12" in code
+    assert "roller_count = 12" in code
+    assert "for i in range(12):" in code
+    assert code.count("pitch_radius_mm = 35") == 2
+    assert code.count("roller_diameter_mm = 8") == 2
+    assert code.count("roller_length_mm = 16") == 2
+    assert code.count("offset_deg = 15") == 2
+    assert "sel_all_roller_boundaries" in code
+    assert "cp_all_rollers_inner" in code
+    assert "contact_all_rollers_inner" in code
+    assert "sel_roller_{n}_boundary" in code
+    assert "intop_roller_{n}" in code
+
+
 @pytest.mark.parametrize("direction", list(LoadDirection))
 def test_builder_direction_and_continuation_are_deterministic(direction: LoadDirection) -> None:
     spec = variant(load_direction=direction, roller_phase_deg=15)

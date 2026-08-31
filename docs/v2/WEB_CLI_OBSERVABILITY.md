@@ -81,7 +81,20 @@ Gate 从 pending 开始，旧轮求解/审计不能冒充新参数结果。
 该命令显式调用真实 LLM、Kernel、固定 Registry、M5 Runtime、COMSOL 6.2 和严格 Auditor；每次
 生成新 session、模型与 artifact 目录。只有 A-D 独立通过且存在本次 material artifact 时返回成功。
 
-验证边界需要明确：上述真实 gate 直接驱动 `V2SessionManager`，验证 Agent 到 COMSOL 的真实执行链；
-HTTP/SSE 传输层由 fake driver 功能测试覆盖。M8 不声明已验证“真实浏览器→HTTP→SSE→真实
-Agent”组合链；该 smoke gate 作为 M9 首项。会话和事件当前仅在内存中，服务重启后不支持恢复或
-SSE replay；跨重启恢复需要 M9 持久化设计。
+M9 增加 `JsonSessionStore`：snapshot 与连续 event 流按 session 原子落盘，终态服务重启后支持
+`after` SSE replay；活动 turn 在重启时明确失败，不伪装恢复。存储故障记录为独立 degraded 证据，
+不覆盖先发生的 runtime/physics 失败。
+
+显式 gate：
+
+```bash
+.venv/bin/python scripts/run_v2_m9_http_gate.py --cores 1 --timeout-seconds 2400
+```
+
+它启动真实 Uvicorn，用独立 HTTP client 提交需求、消费 SSE、运行 Agent/COMSOL，随后重启服务并
+复验 snapshot/replay。2026-08-26 的首次本次运行已证明 HTTP/SSE、A/B/C 和重启 replay，但 D 因
+磁盘耗尽失败；详细边界见 [M9_ACCEPTANCE_REPORT.md](M9_ACCEPTANCE_REPORT.md)。
+
+真实强取消 gate 由 `scripts/run_v2_m9_cancel_gate.py` 在 C solve 进入 `running` 后取消，并要求
+`termination_confirmed=true`、无 solved artifact 且取消后新 COMSOL lifecycle 通过。2026-08-26 的
+新鲜 gate 8/8 checks 通过，证据哈希见 M9 验收报告。

@@ -448,8 +448,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", default="6.2")
     parser.add_argument("--cores", type=int, default=1)
+    parser.add_argument("--evidence-path", default=None)
     arguments = parser.parse_args()
-    print(json.dumps(asyncio.run(run(arguments.version, arguments.cores)), indent=2))
+    result = asyncio.run(run(arguments.version, arguments.cores))
+    if arguments.evidence_path:
+        target = Path(arguments.evidence_path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

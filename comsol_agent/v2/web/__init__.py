@@ -10,7 +10,9 @@ from .contracts import (
     VerificationLevel,
 )
 from .session import (
+    JsonSessionStore,
     RunControl,
+    SessionStore,
     TurnRequest,
     TurnResult,
     V2RunDriver,
@@ -22,6 +24,8 @@ __all__ = [
     "EvidenceGate",
     "EvidenceState",
     "RunControl",
+    "SessionStore",
+    "JsonSessionStore",
     "SessionStatus",
     "TurnRequest",
     "TurnResult",

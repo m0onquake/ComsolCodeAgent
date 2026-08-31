@@ -12,6 +12,9 @@
 | [BEARING_DOMAIN.md](BEARING_DOMAIN.md) | M7 轴承规格、最小路由、Builder、Auditor 和真实支持边界是什么？ |
 | [LLM_GATEWAY_AND_PLANNING.md](LLM_GATEWAY_AND_PLANNING.md) | M7.5 如何受控接入真实 LLM、Intake、Planner、RAG 和局部修复？ |
 | [WEB_CLI_OBSERVABILITY.md](WEB_CLI_OBSERVABILITY.md) | M8 如何展示事件、区分状态并提供 Web/CLI 控制？ |
+| [NEW_BEARING_FAMILY_PLUGIN_GUIDE.md](NEW_BEARING_FAMILY_PLUGIN_GUIDE.md) | 如何新增轴承族插件而不污染 Kernel，并完成真实验收？ |
+| [M9_RELEASE_MIGRATION_ROLLBACK.md](M9_RELEASE_MIGRATION_ROLLBACK.md) | M9 如何发布、迁移持久状态和安全回滚？ |
+| [M9_ACCEPTANCE_REPORT.md](M9_ACCEPTANCE_REPORT.md) | 当前 M9 证据、指标、未通过项和复现命令是什么？ |
 | [THIRD_PARTY_COMSOL_RUNTIME.md](THIRD_PARTY_COMSOL_RUNTIME.md) | M5 评估了哪些本地/外部实现及其许可证？ |
 | [TEST_AND_ACCEPTANCE.md](TEST_AND_ACCEPTANCE.md) | 如何证明代码、运行和物理结果正确？ |
 | [ROADMAP.md](ROADMAP.md) | 应按什么依赖顺序开发，每个里程碑交付什么？ |

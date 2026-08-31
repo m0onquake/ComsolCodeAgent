@@ -475,7 +475,14 @@ class ComsolRuntime:
                 else StageState.FAILED
             )
             records[stage] = current.model_copy(
-                update={"state": state, "finished_at": utc_now(), "detail": {"code": failure.code}}
+                update={
+                    "state": state,
+                    "finished_at": utc_now(),
+                    "detail": {
+                        "code": failure.code,
+                        "termination_confirmed": failure.termination_confirmed,
+                    },
+                }
             )
             await self._notify_stage(request, records[stage])
             return RuntimeResult(

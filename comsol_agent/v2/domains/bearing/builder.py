@@ -77,23 +77,12 @@ def build_plan(spec: BearingSpec) -> BearingBuildPlan:
 
 def deterministic_model_code(spec: BearingSpec) -> str:
     """Return reviewed V1 setup code specialized without an LLM call."""
-    if _matches_verified_param10_topology(spec):
-        # The verified param10 source is bundled as a content-addressed asset,
-        # so a clean installation does not depend on ignored runtime evidence.
-        code = reviewed_asset_code()
-    else:
-        # Lazy import keeps V1 dependencies outside the V2 Kernel and outside
-        # normal contract-only import paths. This deterministic fallback builds
-        # supported candidate variants; only signatures passing a fresh strict
-        # gate are marked verified.
-        from scripts.run_agent_3d_bearing_full_demo import (
-            _build_verified_3d_full_bearing_code,
-        )
-
-        code = _build_verified_3d_full_bearing_code(
-            roller_count=spec.roller_count,
-            roller_angular_offset_deg=spec.roller_phase_deg,
-        )
+    # Every candidate is derived from the same reviewed, content-addressed
+    # strict asset.  The older V1 variant generator predates the global-contact
+    # and per-roller audit contract, so it is not a valid fallback for a new
+    # topology.  Candidate variants remain unverified until a fresh strict gate
+    # passes; specializing the reviewed loop bounds does not promote them.
+    code = _specialize_reviewed_topology(reviewed_asset_code(), spec)
     replacements = {
         "inner_diameter": f"{spec.inner_diameter_mm:.12g}[mm]",
         "outer_diameter": f"{spec.outer_diameter_mm:.12g}[mm]",
@@ -248,6 +237,39 @@ def deterministic_model_code(spec: BearingSpec) -> str:
     return code
 
 
+def _specialize_reviewed_topology(code: str, spec: BearingSpec) -> str:
+    assignments = {
+        "pitch_radius_mm": spec.pitch_radius_mm,
+        "roller_diameter_mm": spec.roller_diameter_mm,
+        "roller_length_mm": spec.roller_length_mm,
+        "offset_deg": spec.roller_phase_deg,
+    }
+    for name, value in assignments.items():
+        pattern = rf"(?m)^{name} = [-+0-9.eE]+$"
+        replacement = f"{name} = {float(value):.15g}"
+        code, count = re.subn(pattern, replacement, code)
+        if count != 2:
+            raise RuntimeError(
+                f"reviewed bearing asset expected two {name} assignments, found {count}"
+            )
+    scalar_replacements = {
+        r"model\.param\(\)\.set\('roller_count',\s*'10'\)": (
+            f"model.param().set('roller_count', '{spec.roller_count}')"
+        ),
+        r"(?m)^num_rollers = 10$": f"num_rollers = {spec.roller_count}",
+        r"(?m)^roller_count = 10$": f"roller_count = {spec.roller_count}",
+        r"for i in range\(10\):": f"for i in range({spec.roller_count}):",
+    }
+    for pattern, replacement in scalar_replacements.items():
+        code, count = re.subn(pattern, replacement, code)
+        if count != 1:
+            raise RuntimeError(
+                "reviewed bearing asset topology specialization conflict for "
+                f"{pattern}: expected 1 match, found {count}"
+            )
+    return code
+
+
 def _replace_exact(code: str, pattern: str, replacement: str, *, label: str) -> str:
     updated, count = re.subn(pattern, replacement, code)
     if count != 1:
@@ -271,33 +293,6 @@ def _replace_or_prepend_parameter(
         f"deterministic builder replacement conflict for model parameter {name}: "
         f"expected 0 or 1 matches, found {count}"
     )
-
-
-def _matches_verified_param10_topology(spec: BearingSpec) -> bool:
-    expected = {
-        "roller_count": 10,
-        "inner_diameter_mm": 45.0,
-        "outer_diameter_mm": 90.0,
-        "bearing_width_mm": 20.0,
-        "roller_diameter_mm": 7.5,
-        "roller_length_mm": 17.0,
-        "pitch_radius_mm": 34.0,
-        "inner_race_outer_radius_mm": 29.5,
-        "outer_race_inner_radius_mm": 38.5,
-        "cage_inner_radius_mm": 29.8,
-        "cage_outer_radius_mm": 38.2,
-        "cage_pocket_clearance_mm": 0.3,
-        "radial_clearance_mm": 1.5,
-        "roller_phase_deg": 7.5,
-    }
-    for field, value in expected.items():
-        actual = getattr(spec, field)
-        if isinstance(value, float):
-            if not abs(float(actual) - value) <= 1e-12:
-                return False
-        elif actual != value:
-            return False
-    return True
 
 
 class CylindricalRollerBearingBuilder:

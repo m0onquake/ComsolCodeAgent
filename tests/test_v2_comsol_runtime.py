@@ -38,6 +38,8 @@ from comsol_agent.v2.runtime.comsol import (
     MphBackendAdapter,
     ParameterPatchRequest,
     PinnedExecutionCatalog,
+    ProcessComsolBackendProxy,
+    RecyclableProcessWorkerExecutor,
     RegisteredHandlerBinding,
     RuntimeOperation,
     RuntimeRunRequest,
@@ -158,6 +160,12 @@ class FakeBackend:
 
     async def audit(self, model_name: str) -> dict[str, Any]:
         return {"passed": True, "checks": ["finite"]}
+
+
+def make_process_fake_backend(*, block_solve: bool = False) -> FakeBackend:
+    backend = FakeBackend()
+    backend.block_solve = block_solve
+    return backend
 
 
 def run_request(**overrides: Any) -> RuntimeRunRequest:
@@ -861,6 +869,88 @@ async def test_blocking_sync_builder_does_not_block_timeout_or_cancellation(
             await task
         assert cancelled.value.termination_confirmed is False
         assert cancel_worker.quarantined
+
+
+@pytest.mark.asyncio
+async def test_recyclable_process_worker_hard_cancels_and_restarts_cleanly() -> None:
+    capabilities = BackendCapabilities(
+        backend="process-fake",
+        backend_version="1.0",
+        comsol_version="fixture",
+        hard_cancel=True,
+    )
+    proxy = ProcessComsolBackendProxy(
+        "tests.test_v2_comsol_runtime:make_process_fake_backend",
+        factory_kwargs={"block_solve": True},
+        capabilities=capabilities,
+        startup_timeout_seconds=5.0,
+    )
+    worker = RecyclableProcessWorkerExecutor(proxy)
+    await proxy.start()
+    await proxy.create_model("blocked-model")
+    original_pid = proxy.process_id
+    token = CancellationToken()
+    task = asyncio.create_task(
+        worker.execute(
+            RuntimeOperation.SOLVE,
+            lambda: proxy.solve("blocked-model"),
+            timeout_seconds=10.0,
+            cancellation=token,
+        )
+    )
+    await asyncio.sleep(0.05)
+    token.cancel("hard cancel fixture")
+
+    with pytest.raises(WorkerCancellationError) as cancelled:
+        await task
+    assert cancelled.value.termination_confirmed is True
+    assert not proxy.alive
+    assert worker.quarantined is False
+
+    proxy.factory_kwargs["block_solve"] = False
+    await worker.execute(
+        RuntimeOperation.CREATE_MODEL,
+        lambda: proxy.create_model("replacement-model"),
+        timeout_seconds=5.0,
+        cancellation=CancellationToken(),
+    )
+    assert proxy.alive
+    assert proxy.process_id != original_pid
+    assert (await proxy.status())["models"] == ["replacement-model"]
+    await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_backend_runs_full_runtime_with_child_owned_model_state(
+    tmp_path: Path,
+) -> None:
+    capabilities = BackendCapabilities(
+        backend="process-fake",
+        backend_version="1.0",
+        comsol_version="fixture",
+        hard_cancel=True,
+    )
+    proxy = ProcessComsolBackendProxy(
+        "tests.test_v2_comsol_runtime:make_process_fake_backend",
+        capabilities=capabilities,
+        startup_timeout_seconds=5.0,
+    )
+    service = ComsolRuntime(
+        backend=proxy,
+        artifacts=ArtifactStore(tmp_path),
+        worker=RecyclableProcessWorkerExecutor(proxy),
+    )
+
+    result = await service.run(run_request(), CancellationToken())
+
+    assert result.success is True
+    assert all(record.state == StageState.PASSED for record in result.stage_records.values())
+    assert proxy.alive
+    assert result.checkpoint is not None
+    assert Path(result.checkpoint.artifact.path).is_file()
+    assert any(Path(item.path).name == "solved.mph" for item in result.artifacts)
+    await service.stop()
+    assert not proxy.alive
 
 
 @pytest.mark.asyncio

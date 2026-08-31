@@ -297,3 +297,14 @@ snapshot 版本一致。
 正确跳过 A/B，但 C 在 1200 s 超时且 `termination_confirmed=false`。该运行是失败
 证据，不得用于声明 -Y/10 N 物理支持；也说明生产环境仍需要可回收进程
 Worker 才能提供确定硬取消。
+
+## 18. M9 可回收进程 Worker
+
+`ProcessComsolBackendProxy` 通过 spawn 子进程持有完整 MPh backend，并只接受类型化 backend RPC。
+spawn-safe factory 在子进程内构建 Registry snapshot、PinnedExecutionCatalog 和 Auditor；父子版本
+不一致时在 COMSOL 前拒绝。`RecyclableProcessWorkerExecutor` 只有在 terminate/join/kill 确认子进程
+退出后才报告硬取消成功，后续调用创建新 PID，不复用旧模型状态。
+
+确定性测试已覆盖完整 A–D child-owned 状态、阻塞调用取消和进程重建。2026-08-26
+的真实 gate 在 C solve `running` 后取消，确认子进程终止、无 solved artifact，且后续新 COMSOL
+lifecycle 通过；[ADR 0010](adr/0010-durable-sessions-and-recyclable-comsol-worker.md) 因此 Accepted。

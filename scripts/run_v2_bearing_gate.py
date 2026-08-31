@@ -12,6 +12,8 @@ import asyncio
 import hashlib
 import json
 import math
+import os
+import signal
 import subprocess
 import sys
 from datetime import datetime
@@ -41,6 +43,45 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _run_bounded_process_group(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout_seconds: float,
+) -> tuple[subprocess.CompletedProcess[str], bool]:
+    """Run a gate command and terminate its whole process group on timeout."""
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate(timeout=10.0)
+    return (
+        subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
+        timed_out,
+    )
 
 
 async def _v2_audits(spec: BearingSpec, summary: dict[str, Any]) -> dict[str, Any]:
@@ -181,13 +222,10 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         f"{spec.solver_relative_tolerance:.15g}",
     ]
     started = datetime.now().astimezone()
-    process = subprocess.run(
+    process, timed_out = _run_bounded_process_group(
         command,
         cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        capture_output=True,
-        timeout=arguments.timeout_seconds,
-        check=False,
+        timeout_seconds=arguments.timeout_seconds,
     )
     summary_path = evidence_dir / "direct_3d_bearing_summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {}
@@ -225,6 +263,9 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         },
         "process": {
             "returncode": process.returncode,
+            "timed_out": timed_out,
+            "timeout_seconds": arguments.timeout_seconds,
+            "termination_scope": "process_group",
             "stdout_tail": process.stdout[-8000:],
             "stderr_tail": process.stderr[-8000:],
         },

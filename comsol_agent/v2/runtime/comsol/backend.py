@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
+import multiprocessing
+import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
+from uuid import uuid4
 
 from comsol_agent.v2.extensions import ExtensionKind, ExtensionSnapshot, ResolutionContext
 from comsol_agent.v2.kernel import CancellationToken
@@ -256,6 +260,336 @@ class InProcessWorkerExecutor:
         if cancelled:
             raise WorkerCancellationError(message, termination_confirmed=confirmed)
         raise WorkerTimeoutError(message, termination_confirmed=confirmed)
+
+
+class ProcessBackendError(RuntimeError):
+    """Structured remote-backend failure with the child cause preserved."""
+
+    def __init__(self, message: str, *, exception_type: str, remote_traceback: str) -> None:
+        super().__init__(message)
+        self.exception_type = exception_type
+        self.remote_traceback = remote_traceback
+
+
+def _load_factory(reference: str) -> Callable[..., ComsolBackend]:
+    module_name, separator, attribute = reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise ValueError("backend factory must use 'module:attribute' syntax")
+    factory = getattr(importlib.import_module(module_name), attribute)
+    if not callable(factory):
+        raise TypeError(f"backend factory is not callable: {reference}")
+    return factory
+
+
+def _process_backend_main(
+    connection: Any, factory_ref: str, factory_kwargs: dict[str, Any]
+) -> None:
+    """Own one backend and event loop for the complete lifetime of a worker process."""
+
+    backend: ComsolBackend | None = None
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        backend = _load_factory(factory_ref)(**factory_kwargs)
+        connection.send({"kind": "ready"})
+        while True:
+            request = connection.recv()
+            if request.get("method") == "__shutdown__":
+                connection.send({"id": request["id"], "ok": True, "result": None})
+                break
+            try:
+                method = getattr(backend, request["method"])
+                result = method(*request.get("args", ()), **request.get("kwargs", {}))
+                if inspect.isawaitable(result):
+                    result = loop.run_until_complete(result)
+                connection.send({"id": request["id"], "ok": True, "result": result})
+            except BaseException as exc:
+                connection.send(
+                    {
+                        "id": request["id"],
+                        "ok": False,
+                        "error": {
+                            "exception_type": type(exc).__name__,
+                            "message": str(exc),
+                            "traceback": traceback.format_exc(),
+                        },
+                    }
+                )
+    except BaseException as exc:
+        try:
+            connection.send(
+                {
+                    "kind": "startup_error",
+                    "error": {
+                        "exception_type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    },
+                }
+            )
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        if backend is not None:
+            try:
+                result = backend.stop()
+                if inspect.isawaitable(result):
+                    loop.run_until_complete(result)
+            except BaseException:
+                pass
+        loop.close()
+        connection.close()
+
+
+class ProcessComsolBackendProxy:
+    """Typed RPC proxy whose complete COMSOL backend lives in a spawn child process."""
+
+    def __init__(
+        self,
+        factory: str,
+        *,
+        factory_kwargs: dict[str, Any] | None = None,
+        capabilities: BackendCapabilities,
+        startup_timeout_seconds: float = 60.0,
+    ) -> None:
+        _load_factory(factory)
+        self.factory = factory
+        self.factory_kwargs = dict(factory_kwargs or {})
+        self.capabilities = capabilities
+        self.startup_timeout_seconds = startup_timeout_seconds
+        self._context = multiprocessing.get_context("spawn")
+        self._process: multiprocessing.Process | None = None
+        self._connection: Any | None = None
+        self._rpc_lock = asyncio.Lock()
+        self._execution_catalog: PinnedExecutionCatalog | None = None
+
+    @property
+    def execution_catalog(self) -> PinnedExecutionCatalog | None:
+        return self._execution_catalog
+
+    @execution_catalog.setter
+    def execution_catalog(self, catalog: PinnedExecutionCatalog) -> None:
+        if self.alive:
+            raise RuntimeError("cannot replace execution catalog in a running worker")
+        self._execution_catalog = catalog
+        self.factory_kwargs["expected_versions"] = catalog.versions
+
+    @property
+    def process_id(self) -> int | None:
+        return self._process.pid if self._process is not None else None
+
+    @property
+    def alive(self) -> bool:
+        return bool(self._process is not None and self._process.is_alive())
+
+    async def ensure_started(self) -> None:
+        if self.alive:
+            return
+        parent, child = self._context.Pipe()
+        process = self._context.Process(
+            target=_process_backend_main,
+            args=(child, self.factory, self.factory_kwargs),
+            name="comsol-v2-worker",
+            daemon=False,
+        )
+        process.start()
+        child.close()
+        self._process = process
+        self._connection = parent
+        try:
+            ready = await asyncio.wait_for(
+                asyncio.to_thread(parent.recv), timeout=self.startup_timeout_seconds
+            )
+        except BaseException:
+            await self.terminate()
+            raise
+        if ready.get("kind") != "ready":
+            await self.terminate()
+            error = ready.get("error", {})
+            raise ProcessBackendError(
+                str(error.get("message", "worker startup failed")),
+                exception_type=str(error.get("exception_type", "WorkerStartupError")),
+                remote_traceback=str(error.get("traceback", "")),
+            )
+
+    async def terminate(self) -> bool:
+        process, connection = self._process, self._connection
+        self._process = None
+        self._connection = None
+        if connection is not None:
+            connection.close()
+        if process is None:
+            return True
+        if process.is_alive():
+            process.terminate()
+            await asyncio.to_thread(process.join, 10.0)
+        if process.is_alive():
+            process.kill()
+            await asyncio.to_thread(process.join, 10.0)
+        confirmed = not process.is_alive()
+        process.close()
+        return confirmed
+
+    async def _rpc(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        async with self._rpc_lock:
+            await self.ensure_started()
+            assert self._connection is not None
+            request_id = uuid4().hex
+            try:
+                self._connection.send(
+                    {"id": request_id, "method": method, "args": args, "kwargs": kwargs}
+                )
+                response = await asyncio.to_thread(self._connection.recv)
+            except (BrokenPipeError, EOFError, OSError) as exc:
+                raise ProcessBackendError(
+                    "COMSOL worker process disconnected",
+                    exception_type=type(exc).__name__,
+                    remote_traceback="",
+                ) from exc
+            if response.get("id") != request_id:
+                raise ProcessBackendError(
+                    "COMSOL worker returned an out-of-order response",
+                    exception_type="ProtocolError",
+                    remote_traceback="",
+                )
+            if not response.get("ok"):
+                error = response.get("error", {})
+                raise ProcessBackendError(
+                    str(error.get("message", "remote backend failed")),
+                    exception_type=str(error.get("exception_type", "RemoteError")),
+                    remote_traceback=str(error.get("traceback", "")),
+                )
+            return response.get("result")
+
+    async def start(self) -> None:
+        await self._rpc("start")
+
+    async def stop(self) -> None:
+        if not self.alive:
+            return
+        try:
+            assert self._connection is not None
+            request_id = uuid4().hex
+            self._connection.send({"id": request_id, "method": "__shutdown__"})
+            await asyncio.to_thread(self._connection.recv)
+        finally:
+            await self.terminate()
+
+    async def status(self) -> dict[str, Any]:
+        return dict(await self._rpc("status"))
+
+    async def create_model(self, model_name: str) -> None:
+        await self._rpc("create_model", model_name)
+
+    async def load_model(self, model_name: str, path: Path) -> None:
+        await self._rpc("load_model", model_name, path)
+
+    async def save_model(self, model_name: str, path: Path) -> None:
+        await self._rpc("save_model", model_name, path)
+
+    async def close_model(self, model_name: str) -> None:
+        await self._rpc("close_model", model_name)
+
+    async def apply_parameters(self, model_name: str, parameters: dict[str, str]) -> None:
+        await self._rpc("apply_parameters", model_name, parameters)
+
+    async def execute_registered(
+        self,
+        model_name: str,
+        extension_id: str,
+        extension_version: str,
+        extension_kind: str,
+        capability: str,
+        specification: dict[str, Any],
+    ) -> dict[str, Any]:
+        return dict(
+            await self._rpc(
+                "execute_registered",
+                model_name,
+                extension_id,
+                extension_version,
+                extension_kind,
+                capability,
+                specification,
+            )
+        )
+
+    async def build(self, model_name: str) -> dict[str, Any]:
+        return dict(await self._rpc("build", model_name))
+
+    async def mesh(self, model_name: str) -> dict[str, Any]:
+        return dict(await self._rpc("mesh", model_name))
+
+    async def solve(self, model_name: str) -> dict[str, Any]:
+        return dict(await self._rpc("solve", model_name))
+
+    async def evaluate(self, model_name: str, expressions: tuple[str, ...]) -> dict[str, Any]:
+        return dict(await self._rpc("evaluate", model_name, expressions))
+
+    async def export(self, model_name: str, target: Path) -> None:
+        await self._rpc("export", model_name, target)
+
+    async def audit(self, model_name: str) -> dict[str, Any]:
+        return dict(await self._rpc("audit", model_name))
+
+
+class RecyclableProcessWorkerExecutor:
+    """Hard-cancel a dedicated backend process and permit a clean replacement."""
+
+    def __init__(self, backend: ProcessComsolBackendProxy) -> None:
+        self.backend = backend
+        self.capabilities = BackendCapabilities(
+            backend=backend.capabilities.backend,
+            backend_version=backend.capabilities.backend_version,
+            comsol_version=backend.capabilities.comsol_version,
+            hard_cancel=True,
+        )
+        self.quarantined = False
+
+    async def execute(
+        self,
+        operation: RuntimeOperation,
+        call: Callable[[], Awaitable[Any]],
+        *,
+        timeout_seconds: float,
+        cancellation: CancellationToken,
+    ) -> Any:
+        cancellation.raise_if_cancelled()
+        task = asyncio.create_task(call())
+        deadline = monotonic() + timeout_seconds
+        try:
+            while not task.done():
+                if cancellation.cancelled:
+                    await self._terminate_task(task)
+                    raise WorkerCancellationError(
+                        cancellation.reason, termination_confirmed=True
+                    )
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    await self._terminate_task(task)
+                    raise WorkerTimeoutError(
+                        f"{operation} exceeded {timeout_seconds:.3f}s",
+                        termination_confirmed=True,
+                    )
+                await asyncio.wait({task}, timeout=min(0.01, remaining))
+            return await task
+        except asyncio.CancelledError:
+            await self._terminate_task(task)
+            raise WorkerCancellationError(
+                "asyncio task cancelled and worker process terminated",
+                termination_confirmed=True,
+            ) from None
+
+    async def _terminate_task(self, task: asyncio.Task[Any]) -> None:
+        confirmed = await self.backend.terminate()
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, ProcessBackendError):
+            pass
+        if not confirmed:
+            self.quarantined = True
+            raise RuntimeError("failed to terminate COMSOL worker process")
 
 
 # Compatibility alias used by deterministic fake-backend tests.

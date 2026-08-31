@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +55,60 @@ class V2RunDriver(Protocol):
     ) -> TurnResult: ...
 
 
+class SessionStore(Protocol):
+    """Durable boundary for replayable V2 session facts."""
+
+    def load(self) -> list[tuple[SessionSnapshot, list[V2Event]]]: ...
+
+    def save(self, snapshot: SessionSnapshot, events: list[V2Event]) -> None: ...
+
+
+class JsonSessionStore:
+    """Atomic JSON store; one independently recoverable file per session."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+
+    def load(self) -> list[tuple[SessionSnapshot, list[V2Event]]]:
+        if not self.root.exists():
+            return []
+        loaded: list[tuple[SessionSnapshot, list[V2Event]]] = []
+        for path in sorted(self.root.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                snapshot = SessionSnapshot.model_validate(payload["snapshot"])
+                events = [V2Event.model_validate(item) for item in payload["events"]]
+                if any(
+                    event.session_id != snapshot.session_id
+                    or event.sequence != index
+                    for index, event in enumerate(events, start=1)
+                ):
+                    raise ValueError("session event sequence or owner mismatch")
+                loaded.append((snapshot, events))
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                # A corrupt session is isolated; it cannot poison other recoverable sessions.
+                continue
+        return loaded
+
+    def save(self, snapshot: SessionSnapshot, events: list[V2Event]) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        target = self.root / f"{snapshot.session_id}.json"
+        temporary = self.root / f".{snapshot.session_id}.{uuid4().hex}.tmp"
+        payload = {
+            "schema_version": "1.0.0",
+            "snapshot": snapshot.model_dump(mode="json"),
+            "events": [event.model_dump(mode="json") for event in events],
+        }
+        try:
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 class RunControl:
     """Pause at declared safe points; cancellation is end-to-end and cooperative."""
 
@@ -62,6 +118,7 @@ class RunControl:
         self._resume.set()
         self.pause_requested = False
         self.paused = False
+        self.termination_confirmed: bool | None = None
 
     def request_pause(self) -> None:
         self.pause_requested = True
@@ -75,6 +132,10 @@ class RunControl:
     def cancel(self, reason: str) -> None:
         self.cancellation.cancel(reason)
         self._resume.set()
+
+    def report_termination(self, confirmed: bool | None) -> None:
+        if confirmed is not None:
+            self.termination_confirmed = confirmed
 
     async def safe_point(self) -> bool:
         self.cancellation.raise_if_cancelled()
@@ -98,9 +159,21 @@ class _Session:
 
 
 class V2SessionManager:
-    def __init__(self, driver: V2RunDriver) -> None:
+    def __init__(self, driver: V2RunDriver, *, store: SessionStore | None = None) -> None:
         self.driver = driver
         self._sessions: dict[str, _Session] = {}
+        self.store = store
+        if store is not None:
+            for snapshot, events in store.load():
+                session = _Session(snapshot=snapshot, events=events)
+                self._sessions[snapshot.session_id] = session
+                if snapshot.status in {
+                    SessionStatus.RUNNING,
+                    SessionStatus.PAUSE_REQUESTED,
+                    SessionStatus.PAUSED,
+                    SessionStatus.CANCELLING,
+                }:
+                    self._mark_interrupted_by_restart(session)
 
     async def create(self, requirement: str, *, mode: str = "live") -> dict[str, Any]:
         if not requirement.strip():
@@ -110,6 +183,7 @@ class V2SessionManager:
         session_id = uuid4().hex
         session = _Session(snapshot=new_snapshot(session_id))
         self._sessions[session_id] = session
+        self._persist(session)
         await self._start_turn(session, requirement, mode)
         return public_snapshot(session.snapshot)
 
@@ -186,13 +260,13 @@ class V2SessionManager:
             async with session.condition:
                 await session.condition.wait_for(
                     lambda: len(session.events) > cursor
-                    or (session.task is not None and session.task.done())
+                    or self._is_terminal(session)
                 )
                 pending = session.events[cursor:]
                 cursor = len(session.events)
             for event in pending:
                 yield event
-            if session.task is not None and session.task.done() and cursor == len(session.events):
+            if self._is_terminal(session) and cursor == len(session.events):
                 return
 
     def artifact(self, session_id: str, artifact_id: str) -> tuple[ArtifactView, Path]:
@@ -235,6 +309,7 @@ class V2SessionManager:
             checkpoint=session.snapshot.checkpoint,
         )
         session.task = asyncio.create_task(self._run_turn(session, request))
+        self._persist(session)
         await asyncio.sleep(0)
 
     async def _run_turn(self, session: _Session, request: TurnRequest) -> None:
@@ -258,7 +333,12 @@ class V2SessionManager:
             message: str,
             data: dict[str, Any],
         ) -> V2Event:
-            if kind != V2EventKind.SESSION:
+            terminal_runtime_evidence = bool(
+                session.control.cancellation.cancelled
+                and kind == V2EventKind.COMSOL_STAGE
+                and status in {"cancelled", "timed_out", "failed"}
+            )
+            if kind != V2EventKind.SESSION and not terminal_runtime_evidence:
                 if session.control.pause_requested:
                     await self._emit(
                         session,
@@ -324,7 +404,9 @@ class V2SessionManager:
                 message=session.control.cancellation.reason if cancelled else str(exc),
                 stage="control" if cancelled else "adapter",
                 retryable=False,
-                termination_confirmed=True if cancelled else None,
+                termination_confirmed=(
+                    session.control.termination_confirmed if cancelled else None
+                ),
                 evidence={"exception_type": type(exc).__name__},
             )
             if session.snapshot.failure is None:
@@ -375,9 +457,72 @@ class V2SessionManager:
             )
             session.events.append(event)
             apply_event(session.snapshot, event)
+            self._persist(session)
         async with session.condition:
             session.condition.notify_all()
         return event
+
+    @staticmethod
+    def _is_terminal(session: _Session) -> bool:
+        return session.snapshot.status in {
+            SessionStatus.CANCELLED,
+            SessionStatus.FAILED,
+            SessionStatus.COMPLETED,
+        } and (session.task is None or session.task.done())
+
+    def _persist(self, session: _Session) -> None:
+        if self.store is not None:
+            try:
+                self.store.save(session.snapshot, session.events)
+            except OSError as exc:
+                # Storage is an independent evidence gate. Preserve the runtime/
+                # physics truth already projected in memory instead of replacing
+                # it with an adapter failure. Restart recovery will still fail
+                # honestly when the latest state was not durable.
+                session.snapshot.budget["session_store"] = {
+                    "degraded": True,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                    "failed_event_sequence": session.snapshot.event_count,
+                }
+
+    def _mark_interrupted_by_restart(self, session: _Session) -> None:
+        turn_id = session.snapshot.active_turn_id or "recovery"
+        failure = V2Event(
+            sequence=len(session.events) + 1,
+            session_id=session.snapshot.session_id,
+            turn_id=turn_id,
+            kind=V2EventKind.FAILURE,
+            phase="service_restart",
+            status="failed",
+            source="v2_session_store",
+            message="Active turn was interrupted by service restart and was not resumed.",
+            data={
+                "error_class": "runtime_unavailable",
+                "code": "SERVICE_RESTART_INTERRUPTED",
+                "message": "Active turn was interrupted by service restart and was not resumed.",
+                "stage": "service_restart",
+                "retryable": True,
+                "termination_confirmed": None,
+                "evidence": {"recovered_event_count": len(session.events)},
+            },
+        )
+        session.events.append(failure)
+        apply_event(session.snapshot, failure)
+        terminal = V2Event(
+            sequence=len(session.events) + 1,
+            session_id=session.snapshot.session_id,
+            turn_id=turn_id,
+            kind=V2EventKind.SESSION,
+            phase="service_restart",
+            status=SessionStatus.FAILED,
+            source="v2_session_store",
+            message="Recovered session is terminal; submit a new turn to retry safely.",
+            data={"termination_confirmed": None, "automatic_resume": False},
+        )
+        session.events.append(terminal)
+        apply_event(session.snapshot, terminal)
+        self._persist(session)
 
     def _get(self, session_id: str) -> _Session:
         try:

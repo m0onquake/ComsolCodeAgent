@@ -430,3 +430,39 @@ V2 达到可用状态至少要求：
 - 真实 M8 gate 直接使用 `V2SessionManager`，而 HTTP/SSE 组合测试注入 fake driver；本里程碑
   不声明已经验证真实浏览器→HTTP→SSE→Agent 传输链。该 smoke gate、跨服务重启的会话/
   事件持久化，以及独立进程 Worker 强取消归入 M9。
+
+## 21. M9 进行中验收记录
+
+日期：2026-08-27。状态：未完成。
+
+- 最终普通回归在移除常见外部 LLM key 的进程中运行：core 203、bearing 14、web 13、完整 416 passed，
+  1 个既有 Starlette/httpx 弃用 warning；JUnit 与 SHA-256 见
+  [M9_ACCEPTANCE_REPORT.md](M9_ACCEPTANCE_REPORT.md)；
+- 修改范围 Ruff、`node --check`、持久 session/restart 和子进程 Worker 定向测试通过；真实
+  lifecycle 与真实 `INVALID_PROPERTY`—checkpoint—repair—verify 分别 1/1 通过；
+- 新真实 HTTP client gate 使用新 session/model、两次显式 DeepSeek 调用、Kernel、固定 Registry、
+  spawn Worker 和 COMSOL 6.2。A/B/C 首次通过，1 action、0 retry、0 repair；事件 1–20 连续，
+  服务重启后 snapshot 相等并 replay 尾部 3 个事件；
+- D 在本次目录保存 solved MPH 时遇到 `ENOSPC`。严格 checkpoint 证明 initialization 与 force solve
+  成功，但没有 solved MPH/原生图/完整审计 artifact，因此严格物理门必须判失败；
+- session store 同时发生的 I/O 二级故障曾覆盖原失败，现已修复为独立
+  `session_store.degraded`，并有回归测试；该修复不改变本次 D 失败事实；
+- 第二次新鲜强取消 gate 在真实 C solve 进入 `running` 后等待 2 s 取消：A/B passed、C
+  `cancelled`、`termination_confirmed=true`、无 solved artifact，取消后新 COMSOL lifecycle 通过；
+  8/8 checks 通过，ADR 0010 改为 Accepted；
+- 全仓 Ruff 命令报告 3,138 个跨越大量非 M9 文件的错误；M9 修改范围 Ruff、前端语法和
+  `git diff --check` 通过，但不替代全仓门；
+- M9 仍缺核心物理矩阵与成功 D 审计，且全仓 Ruff 未通过。未晋升 verified memory，
+  ROADMAP 状态保持 `in_progress`。
+
+2026-08-28 增量记录：
+
+- 修改后最终非 COMSOL 全套 420 passed，1 个已知 Starlette/httpx 弃用 warning；
+- 全新生产 HTTP/SSE 自然语言 gate 通过 A–D 与严格物理审计，且重启恢复与
+  tail replay 通过；另一条 12 滚子 10.1 N 独立直连 gate 也通过；
+- 101 N 同拓扑 checkpoint 复用确认 A/B skipped、C/D 和物理 gate passed，但累计
+  3895.31 s 超过 2400 s 会话预算，最终 session failed；
+- 15° 相位例完成真实求解与产物导出，但外圈接触合力 9.8097336 N 对目标
+  10.1 N 未通过严格平衡门；不得晋升 verified memory；
+- 方向/尺寸/数量矩阵与真实非收敛 solver-strategy 证据仍未齐备，M9 继续保持
+  `in_progress`。

@@ -218,7 +218,11 @@ class BearingWorkflowTool:
             resume_checkpoint=request.resume_checkpoint,
         )
         result = await self.runtime.run(runtime_request, cancellation)
-        audits = await self._audits(request.requested, result.data.get("audit", {}), pins)
+        audits = (
+            await self._audits(request.requested, result.data.get("audit", {}), pins)
+            if result.success
+            else {}
+        )
         strict = bool(result.success and audits and all(item["passed"] for item in audits.values()))
         data = BearingWorkflowResult(
             route=request.route,

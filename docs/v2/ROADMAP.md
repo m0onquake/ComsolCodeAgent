@@ -403,6 +403,8 @@ M7.5.1 补验记录：
 
 目标：完成 [TEST_AND_ACCEPTANCE.md](TEST_AND_ACCEPTANCE.md) 中的最终门槛。
 
+状态：`in_progress`（2026-08-28）。
+
 交付物：
 
 - 完整非 COMSOL 测试；
@@ -418,6 +420,24 @@ M7.5.1 补验记录：
 验收：最终 Definition of Done 全部满足，包括普通回归不调用外部 LLM、真实 LLM gate
 显式 opt-in、Prompt/schema/provider/model/usage/Trace 可追溯、LLM 输出不能越过 Policy/
 Registry/COMSOL/Auditor，且至少一条自然语言到严格物理审计的真实 E2E 可重放。
+
+当前记录：
+
+- 本次最终非 COMSOL 全套 420 passed，1 个已知依赖弃用 warning；修改范围 Ruff 和前端语法通过；
+- 持久 session/event、服务重启 replay 和可回收 spawn COMSOL Worker 已实现并通过确定性测试；
+- 本次真实 lifecycle 与 `INVALID_PROPERTY` 局部修复通过并保存 JSON；
+- 全新真实 HTTP→SSE→Agent→进程 Worker→COMSOL gate 的 A–D、严格物理审计、
+  事件连续和重启 replay 通过；早先 `ENOSPC` 失败证据仍保留但不再是唯一 E2E 结果；
+- 真实阻塞 C solve 在 `running` 后的进程级取消、终止确认及取消后新 COMSOL lifecycle
+  已通过，ADR 0010 Accepted；
+- 12 滚子 10.1 N 独立基准严格通过；101 N checkpoint 复用的 C/D 与物理审计通过，
+  但 session 因累计时间预算失败；15° 例真实求解完成但外圈接触平衡失败；
+  其余方向/尺寸/数量和非收敛 strategy 仍在进行；
+- 全仓 Ruff 存在 3,138 个跨越大量非 M9 文件的既有错误；里程碑规定的修改范围 Ruff 通过，
+  全仓结果作为技术债披露而非单独 M9 阻断项；
+- 新轴承族插件指南、release candidate 发布/迁移/回滚说明与 M9 验收报告已补齐；
+- 证据、指标、复现命令和未通过项见 [M9_ACCEPTANCE_REPORT.md](M9_ACCEPTANCE_REPORT.md)。M9 不得
+  标记 complete，也未发生 verified memory 晋升。
 
 ## 3. 状态维护
 

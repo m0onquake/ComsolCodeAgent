@@ -49,6 +49,11 @@ def _cause_chain(error: BaseException) -> list[CauseFrame]:
         causes.append(
             CauseFrame(exception_type=type(current).__name__, message=_safe_message(current))
         )
+        remote_type = getattr(current, "exception_type", None)
+        if remote_type:
+            causes.append(
+                CauseFrame(exception_type=str(remote_type), message=_safe_message(current))
+            )
         current = current.__cause__ or current.__context__
     return causes
 

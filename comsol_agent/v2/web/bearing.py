@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -34,14 +35,35 @@ from comsol_agent.v2.model_gateway import ModelGateway, ProviderBackend
 from comsol_agent.v2.repair import ObservationRepairRouter, RepairExecutionContext
 from comsol_agent.v2.runtime.comsol import (
     ArtifactStore,
+    BackendCapabilities,
+    Checkpoint,
     ComsolRuntime,
     InProcessWorkerExecutor,
     MphBackendAdapter,
+    ProcessComsolBackendProxy,
+    RecyclableProcessWorkerExecutor,
+    RuntimeStage,
     RuntimeStageEvent,
 )
 
 from .contracts import FailureView, V2EventKind
 from .session import Emit, RunControl, TurnRequest, TurnResult
+
+_MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def _model_id_for_checkpoint(checkpoint_path: str | None) -> str:
+    if checkpoint_path is None:
+        return f"m8-bearing-{uuid4().hex[:12]}"
+    checkpoint = Checkpoint.model_validate_json(
+        Path(checkpoint_path).read_text(encoding="utf-8")
+    )
+    if checkpoint.stage != RuntimeStage.BUILD:
+        raise ValueError("Web parameter override requires a B_build checkpoint")
+    model_id = checkpoint.provenance.model_id
+    if not _MODEL_ID_PATTERN.fullmatch(model_id):
+        raise ValueError("checkpoint provenance contains an invalid model_id")
+    return model_id
 
 
 class BearingV2Driver:
@@ -54,11 +76,13 @@ class BearingV2Driver:
         comsol_version: str = "6.2",
         cores: int = 1,
         timeout_seconds: float = 1800,
+        process_worker: bool = True,
     ) -> None:
         self.output_root = Path(output_root).resolve()
         self.comsol_version = comsol_version
         self.cores = cores
         self.timeout_seconds = timeout_seconds
+        self.process_worker = process_worker
 
     async def run(
         self,
@@ -140,7 +164,7 @@ class BearingV2Driver:
             objective="Build and strictly audit the requested cylindrical roller bearing",
             constraints={
                 "full_model_llm_rewrite": False,
-                "model_id": f"m8-bearing-{uuid4().hex[:12]}",
+                "model_id": _model_id_for_checkpoint(request.checkpoint),
                 "timeout_seconds": self.timeout_seconds,
                 "resume_checkpoint": request.checkpoint,
             },
@@ -152,6 +176,8 @@ class BearingV2Driver:
 
         async def stage_sink(stage_event: RuntimeStageEvent) -> None:
             record = stage_event.record
+            if "termination_confirmed" in record.detail:
+                control.report_termination(record.detail.get("termination_confirmed"))
             await emit(
                 V2EventKind.COMSOL_STAGE,
                 record.stage.value,
@@ -169,21 +195,45 @@ class BearingV2Driver:
 
         if request.mode == "live":
             run_root = self.output_root / request.session_id
-            collector = ReviewedStrictAuditCollector(
-                specification,
-                run_root / request.turn_id / "strict_audit",
-                case_id=f"V2-M8-WEB-{request.turn_id[:8]}",
-            )
-            backend = MphBackendAdapter(
-                version=self.comsol_version,
-                cores=self.cores,
-                port=0,
-                auditor=collector,
-            )
+            audit_root = run_root / request.turn_id / "strict_audit"
+            case_id = f"V2-M9-WEB-{request.turn_id[:8]}"
+            if self.process_worker:
+                backend = ProcessComsolBackendProxy(
+                    (
+                        "comsol_agent.v2.domains.bearing.process_backend:"
+                        "create_bearing_process_backend"
+                    ),
+                    factory_kwargs={
+                        "specification": specification_payload,
+                        "audit_root": str(audit_root),
+                        "case_id": case_id,
+                        "version": self.comsol_version,
+                        "cores": self.cores,
+                        "port": 0,
+                    },
+                    capabilities=BackendCapabilities(
+                        backend="MPh-process",
+                        backend_version="spawn-rpc-1",
+                        comsol_version=self.comsol_version,
+                        hard_cancel=True,
+                    ),
+                )
+                worker = RecyclableProcessWorkerExecutor(backend)
+            else:
+                collector = ReviewedStrictAuditCollector(
+                    specification, audit_root, case_id=case_id
+                )
+                backend = MphBackendAdapter(
+                    version=self.comsol_version,
+                    cores=self.cores,
+                    port=0,
+                    auditor=collector,
+                )
+                worker = InProcessWorkerExecutor(backend)
             runtime = ComsolRuntime(
                 backend=backend,
                 artifacts=ArtifactStore(run_root),
-                worker=InProcessWorkerExecutor(backend),
+                worker=worker,
                 stage_sink=stage_sink,
             )
         workflow = BearingWorkflowTool(runtime or SimpleNamespace())
