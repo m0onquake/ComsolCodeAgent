@@ -371,7 +371,10 @@ class ComsolRuntime:
                             request.continuation_extension_version or "",
                             "deterministic_path",
                             request.continuation_extension_capability or "",
-                            {"spec": request.specification},
+                            {
+                                "spec": request.specification,
+                                **request.continuation_options,
+                            },
                         ),
                         timeout_seconds=request.timeout_seconds,
                         cancellation=cancellation,

@@ -75,6 +75,22 @@ mock、fixture 或历史 artifact 代替。验收项为：
 只有 `strict_verified` 模式要求 2.5 全部通过，也只有该模式可晋升 VerifiedCase/
 verified memory。预览通过不能写为“严格物理审计通过”。
 
+宽参数生成默认给 `engineering_preview` 预留 `5400 s` 总预算。它使用独立的稀疏、目标缩放
+延续 profile 和可追溯的预览级求解容差；不得仅通过提高超时伪装稳定性。验收证据必须记录
+profile、实际延续点、实际求解器容差、是否回退以及每次真实尝试的耗时。严格平衡所需的
+逐滚子接触力、支承反力和稳定力积分在 preview 中可作为非阻断后处理跳过，但目标步、正确
+应力源、有限正应力、原生图和 solved MPH 仍是阻断项。
+
+2026-09-01 本次新鲜真实回归：标准 10 滚子 `+X/1 N` 生产预览在 `154.26 s` 完成，
+目标步 `solid.mises/1[Pa] = 84529.135 Pa`，A--D、结构审计、原生图和 solved MPH 通过；
+证据为 `reports/v2_parameter_range_repair/production_preview_reference_x/
+326348a808a3402fb2b4d4a04242e101/v2_m8_web_e2e.json`。8 滚子小尺寸 `+Y/0.2 N`
+在 A/B 和新鲜 B checkpoint 通过后，于 C 阶段运行 `3622.66 s` 返回
+`NON_CONVERGENCE`；审计未启动，未产生应力，不得算作 preview 通过。证据为
+`reports/v2_parameter_range_repair/production_preview_small_y/
+bce4fd27dcbe403fb225e5475f9cba39/v2_m8_web_e2e.json`。该失败证明方向性接触收敛仍是
+明确未通过项；增加核心数或仅放宽总超时不能替代后续求解器修复。
+
 ## 3. 常用本地命令
 
 ```bash

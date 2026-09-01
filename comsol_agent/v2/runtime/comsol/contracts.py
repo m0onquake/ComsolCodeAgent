@@ -149,6 +149,7 @@ class RuntimeRunRequest(ModelRequestBase):
     continuation_extension_version: str | None = Field(
         default=None, pattern=r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
     )
+    continuation_options: dict[str, Any] = Field(default_factory=dict)
     expressions: tuple[str, ...] = Field(default_factory=tuple)
     timeout_seconds: float = Field(default=3600.0, gt=0, le=86400)
     resume_checkpoint: str | None = None

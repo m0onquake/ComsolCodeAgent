@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .continuation import ContinuationPlan, build_continuation
+from .continuation import ContinuationPlan, ContinuationProfile, build_continuation
 from .models import BearingChangeSet, BearingSpec, ChangeRoute, classify_changes
 from .solver import apply_solver_relative_tolerance
 
@@ -64,22 +64,44 @@ class ParameterOverridePath:
             sign = "-" if direction.value.startswith("-") else ""
             load_vector = ["0", "0", "0"]
             preload_vector = ["0", "0", "0"]
+            preload_direction = ["0", "0", "0"]
+            guidance_vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
             load_vector[axis] = sign + "radial_load/(pi*inner_diameter*bearing_width)"
             preload_vector[axis] = sign + "inner_radial_displacement"
+            preload_direction[axis] = "1"
+            guidance_vector[axis] = "1e4[N/m^3]"
             solid = handle.mph_model.java.component("comp1").physics("solid")
             solid.feature("load_inner_bore").set("FperArea", load_vector)
             solid.feature("preload_inner_radial").set("U0", preload_vector)
+            solid.feature("preload_inner_radial").set("Direction", preload_direction)
+            solid.feature("spring_inner_ring_guidance").set(
+                "kPerArea", guidance_vector
+            )
         handle.is_modified = True
         return plan
 
 
 class DynamicLoadContinuation:
-    def plan(self, spec: BearingSpec, *, last_converged_n: float | None = None) -> ContinuationPlan:
-        return build_continuation(spec, last_converged_n=last_converged_n)
+    def plan(
+        self,
+        spec: BearingSpec,
+        *,
+        last_converged_n: float | None = None,
+        profile: ContinuationProfile | str = ContinuationProfile.STRICT_VERIFIED,
+    ) -> ContinuationPlan:
+        return build_continuation(
+            spec, last_converged_n=last_converged_n, profile=profile
+        )
 
     def execute_model(self, handle: Any, specification: dict[str, Any]) -> dict[str, Any]:
         spec = BearingSpec.model_validate(specification["spec"])
-        continuation = self.plan(spec, last_converged_n=specification.get("last_converged_n"))
+        continuation = self.plan(
+            spec,
+            last_converged_n=specification.get("last_converged_n"),
+            profile=specification.get(
+                "profile", ContinuationProfile.STRICT_VERIFIED
+            ),
+        )
         stat = handle.mph_model.java.study("std1").feature("stat")
         values = " ".join(
             f"{value:.15g}" for chunk in continuation.chunks for value in chunk.values_n
@@ -91,8 +113,15 @@ class DynamicLoadContinuation:
         stat.set("pcontinuationmode", "manual")
         stat.set("pcontinuation", "radial_load")
         stat.set("preusesol", "yes")
+        bindings = apply_solver_relative_tolerance(
+            handle.mph_model.java,
+            continuation.effective_solver_relative_tolerance,
+        )
         handle.is_modified = True
-        return continuation.model_dump(mode="json")
+        return {
+            **continuation.model_dump(mode="json"),
+            "solver_relative_tolerance_bindings": list(bindings),
+        }
 
 
 def _parameter_source_field(parameter: str) -> str:

@@ -17,6 +17,7 @@ from comsol_agent.v2.domains.bearing import (
     BearingSelectionAuditor,
     BearingSpec,
     ChangeRoute,
+    ContinuationProfile,
     DynamicLoadContinuation,
     LoadDirection,
     ParameterOverridePath,
@@ -232,12 +233,19 @@ def test_builder_direction_and_continuation_are_deterministic(direction: LoadDir
     axis = 0 if direction.value.endswith("X") else 1
     sign = "-" if direction.value.startswith("-") else ""
     vector = ["0", "0", "0"]
+    direction_vector = ["0", "0", "0"]
+    guidance_vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
     vector[axis] = sign + "radial_load/(pi*inner_diameter*bearing_width)"
+    direction_vector[axis] = "1"
+    guidance_vector[axis] = "1e4[N/m^3]"
     assert f"set('FperArea', {vector!r})" in code
+    assert f"preload_inner_radial.set('Direction', {direction_vector!r})" in code
+    assert f"spring_inner_ring_guidance.set('kPerArea', {guidance_vector!r})" in code
     continuation = DynamicLoadContinuation().plan(spec)
     assert continuation.target_n == spec.target_radial_load_n
     assert continuation.chunks[-1].values_n[-1] == spec.target_radial_load_n
     assert continuation.max_solves == len(continuation.chunks)
+    assert continuation.max_solves <= 2
 
 
 class _FakeNode:
@@ -446,6 +454,63 @@ def test_dynamic_continuation_execute_binds_all_values_and_inheritance() -> None
     assert stat["preusesol"] == "yes"
     assert float(stat["plistarr"][0].split()[-1]) == spec.target_radial_load_n
     assert result["target_n"] == 2.0
+
+
+def test_engineering_preview_uses_one_sparse_scaled_solve_and_preview_tolerance() -> None:
+    spec = variant(
+        target_radial_load_n=5.0,
+        load_direction=LoadDirection.POSITIVE_Y,
+        solver_relative_tolerance=1.0e-3,
+    )
+    mph_model = _FakeMphModel()
+    handle = SimpleNamespace(mph_model=mph_model, is_modified=False)
+    result = DynamicLoadContinuation().execute_model(
+        handle,
+        {
+            "spec": spec_input(spec),
+            "profile": ContinuationProfile.ENGINEERING_PREVIEW,
+        },
+    )
+    assert result["profile"] == "engineering_preview"
+    assert result["max_solves"] == 1
+    assert result["chunks"] == [
+        {
+            "values_n": [0.0001, 0.05, 0.5, 5.0],
+            "reuse_previous_solution": True,
+        }
+    ]
+    assert result["effective_solver_relative_tolerance"] == 1.0e-2
+    assert result["success_criteria"][-1] == "engineering_preview_audit_passed"
+    assert mph_model.java.solutions["sol1"].stationary.properties["stol"] == 1.0e-2
+
+
+def test_engineering_preview_collector_does_not_enter_legacy_strict_resolve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from comsol_agent.v2.domains.bearing import runtime_audit
+
+    collector = runtime_audit.ReviewedStrictAuditCollector(
+        BearingSpec(),
+        tmp_path,
+        case_id="preview-no-resolve",
+        acceptance_mode="engineering_preview",
+    )
+    legacy_marker = object()
+    monkeypatch.setattr(runtime_audit, "_reviewed_runtime_module", lambda: legacy_marker)
+    monkeypatch.setattr(
+        collector,
+        "_engineering_preview",
+        lambda handle, legacy: {
+            "passed": True,
+            "same_handle": handle == "already-solved",
+            "same_legacy": legacy is legacy_marker,
+        },
+    )
+    assert collector("already-solved") == {
+        "passed": True,
+        "same_handle": True,
+        "same_legacy": True,
+    }
 
 
 def test_builder_rejects_ambiguous_critical_replacements(monkeypatch: pytest.MonkeyPatch) -> None:

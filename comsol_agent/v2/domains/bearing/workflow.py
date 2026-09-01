@@ -54,7 +54,7 @@ class BearingWorkflowRequest(ContractModel):
     previous: BearingSpec | None = None
     resume_checkpoint: str | None = None
     bindings: tuple[CapabilityPin, ...] = Field(min_length=1)
-    timeout_seconds: float = Field(default=3600, gt=0, le=86400)
+    timeout_seconds: float = Field(default=5400, gt=0, le=86400)
     acceptance_mode: BearingAcceptanceMode = BearingAcceptanceMode.ENGINEERING_PREVIEW
     preview_policy: EngineeringStressPolicy = Field(
         default_factory=EngineeringStressPolicy
@@ -70,6 +70,8 @@ class BearingWorkflowResult(ContractModel):
     engineering_preview_passed: bool = False
     strict_audit_passed: bool = False
     comsol_called: bool = False
+    failure: dict[str, Any] | None = None
+    repair: dict[str, Any] | None = None
 
 
 class BearingWorkflowTool:
@@ -224,6 +226,7 @@ class BearingWorkflowTool:
             continuation_extension_id=continuation.extension_id,
             continuation_extension_capability=continuation.capability,
             continuation_extension_version=continuation.extension_version,
+            continuation_options={"profile": request.acceptance_mode.value},
             expressions=("solid.mises", "solid.disp"),
             timeout_seconds=request.timeout_seconds,
             resume_checkpoint=request.resume_checkpoint,
@@ -382,7 +385,7 @@ class BearingWorkflowTool:
             artifacts=artifacts or [],
             audits=list(data.audits.values()),
             error_class=error_class,
-            retryable=False,
+            retryable=bool((runtime_failure or {}).get("retryable", False)),
             checkpoint=checkpoint,
             duration_ms=(monotonic() - started) * 1000,
             source=SourceRef(

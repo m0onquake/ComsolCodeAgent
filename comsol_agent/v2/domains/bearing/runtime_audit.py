@@ -13,20 +13,31 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .auditors import engineering_preview_report
+from .auditors import BearingAcceptanceMode, engineering_preview_report
 from .models import BearingSpec
+from .results import evaluate_target_results
 
 
 class ReviewedStrictAuditCollector:
-    def __init__(self, spec: BearingSpec, artifact_root: Path, *, case_id: str) -> None:
+    def __init__(
+        self,
+        spec: BearingSpec,
+        artifact_root: Path,
+        *,
+        case_id: str,
+        acceptance_mode: BearingAcceptanceMode | str = BearingAcceptanceMode.STRICT_VERIFIED,
+    ) -> None:
         self.spec = spec
         self.artifact_root = artifact_root
         self.case_id = case_id
+        self.acceptance_mode = BearingAcceptanceMode(acceptance_mode)
 
     def __call__(self, handle: Any) -> dict[str, Any]:
         # Import lazily: this is a trusted, explicitly configured compatibility
         # adapter, not executable content discovered from memory or RAG.
         legacy = _reviewed_runtime_module()
+        if self.acceptance_mode == BearingAcceptanceMode.ENGINEERING_PREVIEW:
+            return self._engineering_preview(handle, legacy)
         strict_bearing_variant = legacy.StrictBearingVariant
         run_strict = legacy._run_strict_generated_global_contact_solve
 
@@ -110,6 +121,132 @@ class ReviewedStrictAuditCollector:
                 "acceptance_mode": "engineering_preview",
             }
         )
+        return payload
+
+    def _engineering_preview(self, handle: Any, legacy: Any) -> dict[str, Any]:
+        """Collect preview evidence from the already solved V2 model.
+
+        This deliberately does not call the legacy strict routine, because that
+        routine performs another displacement initialization and force solve.
+        """
+        spec = self.spec
+        self.artifact_root.mkdir(parents=True, exist_ok=True)
+        java = handle.mph_model.java
+        selection_tags = [
+            "sel_inner_raceway_contact",
+            "sel_outer_raceway_contact",
+            "sel_all_roller_inner_contacts",
+            "sel_all_roller_outer_contacts",
+            "sel_inner_bore_load_surface",
+            "sel_outer_support_surface",
+            *[f"sel_roller_{index}_body" for index in range(1, spec.roller_count + 1)],
+        ]
+        selections: dict[str, Any] = {}
+        for tag in selection_tags:
+            try:
+                entities = [
+                    int(value)
+                    for value in java.component("comp1").selection(tag).entities()
+                ]
+            except Exception as error:
+                entities = []
+                selections[tag] = {"entity_count": 0, "error": str(error)}
+            else:
+                selections[tag] = {
+                    "entity_count": len(entities),
+                    "entities": entities,
+                }
+        pairs: dict[str, Any] = {}
+        for tag in ("cp_all_rollers_inner", "cp_all_rollers_outer"):
+            try:
+                pair = java.component("comp1").pair(tag)
+                source = [int(value) for value in pair.source().entities()]
+                destination = [int(value) for value in pair.destination().entities()]
+                pairs[tag] = {
+                    "source_named": str(pair.source().named()),
+                    "destination_named": str(pair.destination().named()),
+                    "source_entity_count": len(source),
+                    "destination_entity_count": len(destination),
+                }
+            except Exception as error:
+                pairs[tag] = {"error": str(error)}
+
+        dataset_tags = [str(value) for value in java.result().dataset().tags()]
+        dataset = dataset_tags[-1] if dataset_tags else "dset2"
+        target_results = evaluate_target_results(
+            java,
+            dataset=dataset,
+            target_load_n=spec.target_radial_load_n,
+        )
+        solved_mph = self.artifact_root / "engineering_preview_solved.mph"
+        handle.mph_model.save(str(solved_mph))
+        solution_number = target_results.get("solution_number")
+        plot = legacy._export_native_3d_stage_volume_plot(
+            handle.name,
+            stage_name=(
+                "engineering_preview_target_"
+                + str(spec.target_radial_load_n).replace(".", "p")
+                + "N"
+            ),
+            output_dir=self.artifact_root,
+            solution_level=(
+                int(solution_number) if isinstance(solution_number, int) else None
+            ),
+        )
+        plot.update(
+            {
+                "unit": "Pa",
+                "solution_number": solution_number,
+                "target_parameter_name": "radial_load",
+                "target_parameter_value_n": target_results.get(
+                    "selected_parameter_value_n"
+                ),
+                "numerical_max_pa": (target_results.get("stress") or {}).get(
+                    "value"
+                ),
+                "result_source": "same dataset/solution as java:MaxVolume.getReal",
+            }
+        )
+        axis = spec.comsol_parameters()["load_axis"]
+        sign = int(spec.comsol_parameters()["load_sign"])
+        payload = {
+            "passed": False,
+            "strict_passed": False,
+            "acceptance_mode": BearingAcceptanceMode.ENGINEERING_PREVIEW.value,
+            "selections": selections,
+            "pairs": pairs,
+            "metrics": {
+                "returned_target_load_n": target_results.get(
+                    "selected_parameter_value_n"
+                ),
+                "applied_load_n": None,
+                "support_reaction_n": None,
+                "outer_contact_resultant_n": None,
+                "stabilization_force_n": None,
+                "loaded_zone_direction": ("+" if sign > 0 else "-") + axis.upper(),
+            },
+            "result_evidence": target_results,
+            "native_plot": str(plot.get("filepath") or "")
+            if plot.get("success")
+            else "",
+            "native_plot_evidence": plot,
+            "solver_evidence": {
+                "profile": "engineering_preview",
+                "strict_balance_postprocessing_skipped": True,
+            },
+            "solved_mph": str(solved_mph) if solved_mph.is_file() else "",
+            "reviewed_v1_adapter": {
+                "kind": "engineering_preview_existing_solution",
+                "case_id": self.case_id,
+                "strict_resolve_performed": False,
+                "reuse_scope": "native target result binding and plot export only",
+            },
+        }
+        preview = engineering_preview_report(
+            {"spec": spec, **payload}
+        ).model_dump(mode="json")
+        payload["engineering_preview"] = preview
+        payload["passed"] = bool(preview["passed"])
         return payload
 
 

@@ -47,6 +47,7 @@ class WorkflowBackend:
         self.build_calls = 0
         self.spec = _SPEC
         self.outer_contact_scale = 1.0
+        self.solve_error: Exception | None = None
 
     async def start(self) -> None:
         self.calls.append(("start", None))
@@ -108,6 +109,8 @@ class WorkflowBackend:
 
     async def solve(self, model_name: str) -> dict[str, Any]:
         self.calls.append(("solve", model_name))
+        if self.solve_error is not None:
+            raise self.solve_error
         return {"converged": True}
 
     async def evaluate(self, model_name: str, expressions: tuple[str, ...]) -> dict[str, Any]:
@@ -374,6 +377,34 @@ async def test_strict_mode_still_rejects_the_same_balance_failure(tmp_path: Path
     assert observation.data["accepted"] is False
     assert observation.data["engineering_preview_passed"] is True
     assert observation.data["strict_audit_passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_nonconvergence_remains_typed_and_retryable_through_registry(
+    tmp_path: Path,
+) -> None:
+    backend, snapshot = await _setup(tmp_path)
+    backend.solve_error = RuntimeError("nonlinear solver did not converge")
+    try:
+        goal = GoalSpec(
+            objective="build preview",
+            constraints={
+                "model_id": "bearing-preview-nonconvergence",
+                "acceptance_mode": "engineering_preview",
+            },
+        )
+        planned = await _plan(snapshot, goal, None, _SPEC)
+        manifest = await AgentKernel(RegistryToolExecutor(snapshot)).run(
+            goal, planned.plan
+        )
+    finally:
+        await snapshot.close()
+
+    observation = manifest.action_records[0].observation
+    assert manifest.status == RunStatus.FAILED
+    assert observation.error_class == "solve_or_convergence_error"
+    assert observation.retryable is True
+    assert observation.data["failure"]["code"] == "NON_CONVERGENCE"
 
 
 @pytest.mark.asyncio

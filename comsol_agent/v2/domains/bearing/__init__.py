@@ -11,6 +11,7 @@ from .auditors import (
     engineering_preview_report,
 )
 from .builder import CylindricalRollerBearingBuilder
+from .continuation import ContinuationProfile
 from .extensions import bearing_extensions
 from .intake import (
     BearingIntakeResult,
@@ -63,6 +64,7 @@ __all__ = [
     "ChangeClass",
     "ChangeRoute",
     "CylindricalRollerBearingBuilder",
+    "ContinuationProfile",
     "DynamicLoadContinuation",
     "EngineeringStressPolicy",
     "IntakeStatus",

@@ -139,8 +139,12 @@ def deterministic_model_code(spec: BearingSpec) -> str:
     )
     load_vector = ["0", "0", "0"]
     preload_vector = ["0", "0", "0"]
+    preload_direction = ["0", "0", "0"]
+    guidance_vector = ["1[N/m^3]", "1[N/m^3]", "1[N/m^3]"]
     load_vector[axis] = sign + "radial_load/(pi*inner_diameter*bearing_width)"
     preload_vector[axis] = sign + "inner_radial_displacement"
+    preload_direction[axis] = "1"
+    guidance_vector[axis] = "1e4[N/m^3]"
     code = _replace_exact(
         code,
         r"set\('FperArea',\s*\[[^\]]+\]\)",
@@ -152,6 +156,18 @@ def deterministic_model_code(spec: BearingSpec) -> str:
         r"set\('U0',\s*\[[^\]]+\]\)",
         f"set('U0', {preload_vector!r})",
         label="preload displacement vector",
+    )
+    code = _replace_exact(
+        code,
+        r"preload_inner_radial\.set\('Direction',\s*\[[^\]]+\]\)",
+        f"preload_inner_radial.set('Direction', {preload_direction!r})",
+        label="preload direction vector",
+    )
+    code = _replace_exact(
+        code,
+        r"spring_inner_ring_guidance\.set\('kPerArea',\s*\[[^\n]+\]\)",
+        f"spring_inner_ring_guidance.set('kPerArea', {guidance_vector!r})",
+        label="inner-ring guidance vector",
     )
     continuation = build_continuation(spec)
     load_values = " ".join(

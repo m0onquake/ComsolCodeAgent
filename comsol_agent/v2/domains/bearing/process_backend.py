@@ -22,6 +22,7 @@ from comsol_agent.v2.runtime.comsol import (
     RegisteredHandlerBinding,
 )
 
+from .auditors import BearingAcceptanceMode
 from .extensions import bearing_extensions
 from .models import BearingSpec
 from .runtime_audit import ReviewedStrictAuditCollector
@@ -53,6 +54,7 @@ def create_bearing_process_backend(
     cores: int = 1,
     port: int = 0,
     expected_versions: dict[str, str] | None = None,
+    acceptance_mode: BearingAcceptanceMode | str = BearingAcceptanceMode.ENGINEERING_PREVIEW,
 ) -> BearingProcessBackend:
     """Construct all trusted executable state inside the dedicated child process."""
 
@@ -97,7 +99,10 @@ def create_bearing_process_backend(
             )
         )
     collector = ReviewedStrictAuditCollector(
-        BearingSpec.model_validate(specification), Path(audit_root), case_id=case_id
+        BearingSpec.model_validate(specification),
+        Path(audit_root),
+        case_id=case_id,
+        acceptance_mode=acceptance_mode,
     )
     return BearingProcessBackend(
         version=version,

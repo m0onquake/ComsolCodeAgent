@@ -8,6 +8,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from comsol_agent.v2.domains.bearing import BearingAcceptanceMode
 from comsol_agent.v2.web import BearingV2Driver, V2SessionManager
 
 DEFAULT_REQUIREMENT = (
@@ -27,6 +28,7 @@ async def run(arguments: argparse.Namespace) -> dict:
         comsol_version=arguments.comsol_version,
         cores=arguments.cores,
         timeout_seconds=arguments.timeout_seconds,
+        acceptance_mode=arguments.acceptance_mode,
     )
     manager = V2SessionManager(driver)
     created = await manager.create(arguments.requirement, mode="live")
@@ -44,9 +46,14 @@ async def run(arguments: argparse.Namespace) -> dict:
         "C_solve": "passed",
         "D_results_audit": "passed",
     }
+    expected_verification = (
+        "physical_audit_passed"
+        if arguments.acceptance_mode == BearingAcceptanceMode.STRICT_VERIFIED.value
+        else "engineering_preview_accepted"
+    )
     success = bool(
         snapshot["status"] == "completed"
-        and snapshot["verification_level"] == "physical_audit_passed"
+        and snapshot["verification_level"] == expected_verification
         and all(stages.get(stage) == state for stage, state in expected.items())
         and snapshot["artifacts"]
     )
@@ -166,7 +173,12 @@ def main() -> None:
     parser.add_argument("--output-root", default="reports/v2_m8_web_evidence")
     parser.add_argument("--comsol-version", default="6.2")
     parser.add_argument("--cores", type=int, default=1)
-    parser.add_argument("--timeout-seconds", type=float, default=1800)
+    parser.add_argument("--timeout-seconds", type=float, default=5400)
+    parser.add_argument(
+        "--acceptance-mode",
+        choices=[mode.value for mode in BearingAcceptanceMode],
+        default=BearingAcceptanceMode.ENGINEERING_PREVIEW.value,
+    )
     result = asyncio.run(run(parser.parse_args()))
     print(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result["success"] else 1)

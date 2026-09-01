@@ -77,7 +77,7 @@ class BearingV2Driver:
         output_root: Path | str = "reports/v2_m8_web_evidence",
         comsol_version: str = "6.2",
         cores: int = 1,
-        timeout_seconds: float = 1800,
+        timeout_seconds: float = 5400,
         process_worker: bool = True,
         acceptance_mode: BearingAcceptanceMode | str = (
             BearingAcceptanceMode.ENGINEERING_PREVIEW
@@ -228,6 +228,7 @@ class BearingV2Driver:
                         "version": self.comsol_version,
                         "cores": self.cores,
                         "port": 0,
+                        "acceptance_mode": self.acceptance_mode.value,
                     },
                     capabilities=BackendCapabilities(
                         backend="MPh-process",
@@ -239,7 +240,10 @@ class BearingV2Driver:
                 worker = RecyclableProcessWorkerExecutor(backend)
             else:
                 collector = ReviewedStrictAuditCollector(
-                    specification, audit_root, case_id=case_id
+                    specification,
+                    audit_root,
+                    case_id=case_id,
+                    acceptance_mode=self.acceptance_mode,
                 )
                 backend = MphBackendAdapter(
                     version=self.comsol_version,

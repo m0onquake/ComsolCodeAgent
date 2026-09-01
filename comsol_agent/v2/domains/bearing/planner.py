@@ -237,7 +237,7 @@ def _execution_plan(
                         "resume_checkpoint": goal.constraints.get("resume_checkpoint"),
                         "bindings": [pin.model_dump(mode="json") for pin in pins],
                         "timeout_seconds": float(
-                            goal.constraints.get("timeout_seconds", 3600)
+                            goal.constraints.get("timeout_seconds", 5400)
                         ),
                         "acceptance_mode": str(
                             goal.constraints.get(

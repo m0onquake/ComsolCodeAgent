@@ -154,47 +154,25 @@ def _strict_force_continuation_chunks(
     directional_variant: bool = False,
     roller_count: int = VERIFIED_ROLLER_COUNT,
 ) -> tuple[list[float], list[list[float]]]:
-    # Directional variants need extra resolution at first force transfer because
-    # the active load-side roller set can rotate or change sign relative to the
-    # original +X tuning.
-    official_force_steps = [
-        1.0e-6,
-        1.0e-4,
-        0.005,
-        0.01,
-        0.015,
-        0.02,
-        0.035,
-        0.05,
-        0.08,
-        0.1,
-        0.1001,
-        0.1005,
-        0.101,
-        0.2,
-        0.5,
-        1.0,
-    ] if directional_variant else [
-        1.0e-6,
-        1.0e-4,
-        0.01,
-        0.02,
-        0.05,
-        0.08,
-        0.1,
-        0.1001,
-        0.1005,
-        0.101,
-        0.2,
-        0.5,
-        1.0,
-    ]
-    while official_force_steps[-1] * 2.0 < target_load_n * (1.0 - 1.0e-12):
-        official_force_steps.append(official_force_steps[-1] * 2.0)
-    if target_load_n > official_force_steps[-1] * (1.0 + 1.0e-12):
-        official_force_steps.append(float(target_load_n))
-    else:
-        official_force_steps[-1] = float(target_load_n)
+    del roller_count  # Scaling replaces the old count-specific absolute schedule.
+    target = float(target_load_n)
+    if not math.isfinite(target) or target <= 0:
+        raise ValueError("target_load_n must be finite and positive")
+    fractions = (
+        (0.001, 0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0)
+        if directional_variant
+        else (0.001, 0.01, 0.05, 0.1, 0.5, 1.0)
+    )
+    official_force_steps = [min(1.0e-4, target * 0.001)]
+    official_force_steps.extend(target * fraction for fraction in fractions)
+    official_force_steps.append(target)
+    official_force_steps = sorted(
+        {
+            float(value)
+            for value in official_force_steps
+            if 0 < value <= target * (1.0 + 1.0e-12)
+        }
+    )
 
     reaction_force = float(reaction_force_n or 0.0)
     reaction_force_is_valid = math.isfinite(reaction_force) and reaction_force > 1.0e-6
@@ -215,55 +193,26 @@ def _strict_force_continuation_chunks(
 
     combined_force_steps: list[float] = []
     for value in transfer_force_steps:
-        if not combined_force_steps or not math.isclose(value, combined_force_steps[-1], rel_tol=1e-12, abs_tol=1e-15):
+        if not combined_force_steps or not math.isclose(
+            value,
+            combined_force_steps[-1],
+            rel_tol=1e-12,
+            abs_tol=1e-15,
+        ):
             combined_force_steps.append(float(value))
 
-    if directional_variant:
-        chunks = [
-            [value for value in combined_force_steps if value <= 0.02 * (1.0 + 1.0e-12)],
-            [
-                value
-                for value in combined_force_steps
-                if 0.02 * (1.0 + 1.0e-12) < value <= 0.08 * (1.0 + 1.0e-12)
-            ],
-            [
-                value
-                for value in combined_force_steps
-                if 0.08 * (1.0 + 1.0e-12) < value <= 0.101 * (1.0 + 1.0e-12)
-            ],
-        ]
-        chunks.extend([value] for value in combined_force_steps if value > 0.101 * (1.0 + 1.0e-12))
-        chunks = [chunk for chunk in chunks if chunk]
-    elif int(roller_count) <= 6 and target_load_n <= 1.0 * (1.0 + 1.0e-12):
-        sparse_steps: list[float] = []
-        for value in (1.0e-6, 1.0e-4, 0.02, 0.08, 0.101, 0.5, float(target_load_n)):
-            if value <= target_load_n * (1.0 + 1.0e-12) and (
-                not sparse_steps or not math.isclose(value, sparse_steps[-1], rel_tol=1e-12, abs_tol=1e-15)
-            ):
-                sparse_steps.append(float(value))
-        combined_force_steps = sparse_steps or [float(target_load_n)]
-        chunks = [
-            [value for value in combined_force_steps if value <= 0.02 * (1.0 + 1.0e-12)],
-            [
-                value
-                for value in combined_force_steps
-                if 0.02 * (1.0 + 1.0e-12) < value <= 0.101 * (1.0 + 1.0e-12)
-            ],
-        ]
-        chunks.extend([value] for value in combined_force_steps if value > 0.101 * (1.0 + 1.0e-12))
-        chunks = [chunk for chunk in chunks if chunk]
-    else:
-        low_contact_chunk = [value for value in combined_force_steps if value <= 0.101 * (1.0 + 1.0e-12)]
-        if not low_contact_chunk:
-            low_contact_chunk = [combined_force_steps[0]]
-        high_design_chunk: list[float] = []
-        for value in (1.0, float(target_load_n)):
-            preceding_value = high_design_chunk[-1] if high_design_chunk else low_contact_chunk[-1]
-            if value > preceding_value * (1.0 + 1.0e-12):
-                high_design_chunk.append(float(value))
-        chunks = [low_contact_chunk]
-        if high_design_chunk:
-            chunks.append(high_design_chunk)
+    cutoff = target * 0.1
+    low_contact_chunk = [
+        value
+        for value in combined_force_steps
+        if value <= cutoff * (1.0 + 1.0e-12)
+    ]
+    high_design_chunk = [
+        value
+        for value in combined_force_steps
+        if value > cutoff * (1.0 + 1.0e-12)
+    ]
+    chunks = [chunk for chunk in (low_contact_chunk, high_design_chunk) if chunk]
     return combined_force_steps, chunks
 
 
@@ -8332,7 +8281,10 @@ def _run_strict_generated_global_contact_solve(
     load_axis = load_axis.lower()
     preload_direction = _unsigned_axis_direction(load_axis)
     signed_preload_vector = _signed_axis_vector(load_axis, load_sign, "inner_radial_displacement")
-    directional_variant = load_axis != "x" or int(load_sign) < 0 or abs(float(roller_angular_offset_deg)) > 1.0e-12
+    # Roller phase rotates the geometry but does not change the load coordinate
+    # system. Treating every non-zero phase as a direction variant previously
+    # created up to seven fresh solver sequences and exhausted the run budget.
+    directional_variant = load_axis != "x" or int(load_sign) < 0
     selection_marker_start = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_START"
     selection_marker_end = "STRICT_GLOBAL_SELECTION_AUDIT_JSON_END"
     selection_audit_code = f"""
@@ -8453,6 +8405,12 @@ for diagnostic_preload_tag in [
         diagnostic_preload.active(True)
     except Exception:
         pass
+try:
+    model.component('comp1').physics('solid').feature(
+        'spring_inner_ring_guidance'
+    ).set('kPerArea', {_axis_guidance_vector(load_axis)!r})
+except Exception:
+    pass
 model.param().set('inner_radial_displacement', '1e-4[um]')
 diagnostic_parametric_found = False
 for diagnostic_parametric_tag in ['stat', 'pstep', 'param', 'pcont', 'p1']:
@@ -8561,6 +8519,12 @@ for diagnostic_solver_path, diagnostic_solver_key, diagnostic_solver_value in [
         roller_count=variant.roller_count,
     )
     report["force_continuation_requested_checkpoints_n"] = list(combined_force_steps)
+    report["force_continuation_policy"] = {
+        "version": "scaled-two-chunk-v1",
+        "directional_variant": directional_variant,
+        "max_chunks": 2,
+        "target_scaled": True,
+    }
     combined_force_steps = force_continuation_chunks[0]
     force_step_text = " ".join(f"{value:.15g}" for value in combined_force_steps)
     report["force_continuation_chunks_n"] = force_continuation_chunks

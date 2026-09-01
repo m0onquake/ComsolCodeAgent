@@ -2571,21 +2571,32 @@ class TestSimulationSkills:
             reaction_force_n=None,
             directional_variant=True,
         )
-        assert 0.005 not in regular_steps
-        assert 0.005 in directional_steps
+        assert regular_steps == [0.0001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0]
+        assert directional_steps == [
+            0.0001,
+            0.01,
+            0.05,
+            0.2,
+            0.5,
+            1.0,
+            2.5,
+            5.0,
+            10.0,
+        ]
         assert regular_chunks[-1][-1] == 10.0
         assert directional_chunks[-1][-1] == 10.0
-        assert directional_chunks[0] == [1e-06, 0.0001, 0.005, 0.01, 0.015, 0.02]
-        assert directional_chunks[1] == [0.035, 0.05, 0.08]
-        assert directional_chunks[2] == [0.1, 0.1001, 0.1005, 0.101]
+        assert len(regular_chunks) == 2
+        assert len(directional_chunks) == 2
+        assert directional_chunks[0] == [0.0001, 0.01, 0.05, 0.2, 0.5, 1.0]
+        assert directional_chunks[1] == [2.5, 5.0, 10.0]
         low_roller_steps, low_roller_chunks = _strict_force_continuation_chunks(
             target_load_n=1.0,
             reaction_force_n=None,
             directional_variant=False,
             roller_count=6,
         )
-        assert low_roller_steps == [1e-06, 0.0001, 0.02, 0.08, 0.101, 0.5, 1.0]
-        assert low_roller_chunks == [[1e-06, 0.0001, 0.02], [0.08, 0.101], [0.5], [1.0]]
+        assert low_roller_steps == [0.0001, 0.001, 0.01, 0.05, 0.1, 0.5, 1.0]
+        assert low_roller_chunks == [[0.0001, 0.001, 0.01, 0.05, 0.1], [0.5, 1.0]]
 
     def test_segment_validation_uses_variant_terminal_roller_count(self):
         from comsol_agent.simulation.bearing_3d import (
